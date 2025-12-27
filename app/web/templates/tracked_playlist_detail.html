@@ -84,7 +84,70 @@
           <p>Run a manual scan using stored targets.</p>
         </div>
         <div class="panel-body">
-          <div class="panel-placeholder">Basic scan controls will appear here.</div>
+          <div class="basic-scan" data-basic-scan>
+            <div class="basic-scan-config">
+              <div class="scan-config-row">
+                <span class="scan-config-label">Countries</span>
+                <div class="pill-list" data-basic-scan-countries>
+                  {% if playlist.target_countries %}
+                    {% for country in playlist.target_countries %}
+                      {% set label = playlist.target_country_labels.get(country|upper, country) %}
+                      <span class="chip chip-locked">
+                        <span class="chip-label">{{ label }}</span>
+                      </span>
+                    {% endfor %}
+                  {% else %}
+                    <span class="scan-config-empty">No target countries</span>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="scan-config-row">
+                <span class="scan-config-label">Keywords</span>
+                <div class="pill-list" data-basic-scan-keywords>
+                  {% if playlist.target_keywords %}
+                    {% for keyword in playlist.target_keywords %}
+                      <span class="chip chip-locked">
+                        <span class="chip-label">{{ keyword }}</span>
+                      </span>
+                    {% endfor %}
+                  {% else %}
+                    <span class="scan-config-empty">No target keywords</span>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+            <div class="basic-scan-actions" data-basic-scan-actions>
+              <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
+            </div>
+            <div class="basic-scan-progress" data-basic-scan-progress hidden>
+              <div class="progress-bar">
+                <div class="progress-fill" data-basic-scan-progress-fill></div>
+              </div>
+              <div class="progress-status" data-basic-scan-progress-status>Starting scan…</div>
+              <div class="progress-log" data-basic-scan-progress-log></div>
+            </div>
+            <div class="basic-scan-results" data-basic-scan-results hidden>
+              <div class="results-actions">
+                <button class="btn btn-secondary" type="button" data-basic-scan-jump-summary>
+                  Jump to Summary
+                </button>
+                <button class="btn btn-secondary" type="button" data-basic-scan-jump-detailed>
+                  Jump to Detailed Insights
+                </button>
+                <a class="btn btn-ghost" data-basic-scan-export-summary>Download Summary CSV</a>
+                <a class="btn btn-ghost" data-basic-scan-export-detailed>Download Detailed CSV</a>
+              </div>
+              <div class="results-section" id="basic-scan-summary">
+                <h3>Summary</h3>
+                <div class="summary-lead" data-basic-scan-summary-lead></div>
+                <div class="summary-list" data-basic-scan-summary-list></div>
+              </div>
+              <div class="results-section" id="basic-scan-detailed">
+                <h3>Detailed Scan Insights</h3>
+                <div class="detailed-insights" data-basic-scan-detailed></div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -185,6 +248,265 @@
           refreshButton.disabled = false;
         }
       });
+
+      const availableMarkets = {{ available_markets | tojson }};
+      const marketLabelMap = new Map(
+        availableMarkets.map((market) => [market.code.toUpperCase(), market.label])
+      );
+
+      const resolveMarketLabel = (code) => marketLabelMap.get((code || '').toUpperCase()) || code;
+
+      const formatTimestamp = (value) => {
+        if (!value) {
+          return '—';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return value;
+        }
+        return new Intl.DateTimeFormat('sv-SE', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        }).format(date);
+      };
+
+      const flagEmoji = (code) => {
+        const upper = (code || '').toUpperCase();
+        if (upper.length !== 2) {
+          return '';
+        }
+        return upper.replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt()));
+      };
+
+      const setupBasicScan = () => {
+        const scanRoot = document.querySelector('[data-basic-scan]');
+        if (!scanRoot) {
+          return;
+        }
+        const runButton = scanRoot.querySelector('[data-basic-scan-run]');
+        const progressWrap = scanRoot.querySelector('[data-basic-scan-progress]');
+        const progressFill = scanRoot.querySelector('[data-basic-scan-progress-fill]');
+        const progressStatus = scanRoot.querySelector('[data-basic-scan-progress-status]');
+        const progressLog = scanRoot.querySelector('[data-basic-scan-progress-log]');
+        const resultsWrap = scanRoot.querySelector('[data-basic-scan-results]');
+        const summaryLead = scanRoot.querySelector('[data-basic-scan-summary-lead]');
+        const summaryList = scanRoot.querySelector('[data-basic-scan-summary-list]');
+        const detailedWrap = scanRoot.querySelector('[data-basic-scan-detailed]');
+        const jumpSummary = scanRoot.querySelector('[data-basic-scan-jump-summary]');
+        const jumpDetailed = scanRoot.querySelector('[data-basic-scan-jump-detailed]');
+        const exportSummary = scanRoot.querySelector('[data-basic-scan-export-summary]');
+        const exportDetailed = scanRoot.querySelector('[data-basic-scan-export-detailed]');
+
+        let activeScanId = null;
+        let eventSource = null;
+
+        const setProgress = (current, total, message) => {
+          if (!progressWrap) {
+            return;
+          }
+          const percent = total ? Math.min((current / total) * 100, 100) : 0;
+          if (progressFill) {
+            progressFill.style.width = `${percent}%`;
+          }
+          if (progressStatus) {
+            progressStatus.textContent = message || 'Scanning...';
+          }
+        };
+
+        const appendLog = (message) => {
+          if (!progressLog || !message) {
+            return;
+          }
+          const entry = document.createElement('div');
+          entry.className = 'progress-log-entry';
+          entry.textContent = message;
+          progressLog.appendChild(entry);
+          progressLog.scrollTop = progressLog.scrollHeight;
+        };
+
+        const renderSummary = (scan) => {
+          if (!summaryLead || !summaryList) {
+            return;
+          }
+          const follower = scan.follower_snapshot ?? '—';
+          summaryLead.textContent = `At ${formatTimestamp(
+            scan.started_at
+          )}, your playlist follower count was ${follower}.`;
+          summaryList.innerHTML = '';
+          (scan.summary || []).forEach((item) => {
+            const row = document.createElement('div');
+            row.className = `summary-row ${item.tracked_found_in_top20 ? '' : 'summary-row-missing'}`;
+            const countryLabel = resolveMarketLabel(item.country);
+            const searchedAt = formatTimestamp(item.searched_at);
+            const rankText = item.tracked_found_in_top20
+              ? `your playlist rank was #${item.tracked_rank}.`
+              : 'Not found in top 20.';
+            row.textContent = `At ${searchedAt}, for country ${countryLabel} and keyword '${item.keyword}', ${rankText}`;
+            summaryList.appendChild(row);
+          });
+        };
+
+        const renderDetailed = (scan) => {
+          if (!detailedWrap) {
+            return;
+          }
+          detailedWrap.innerHTML = '';
+          const detailed = scan.detailed || {};
+          Object.values(detailed).forEach((countryData) => {
+            const countryCode = countryData.country;
+            const countryDetails = document.createElement('details');
+            countryDetails.className = 'accordion';
+            const summary = document.createElement('summary');
+            summary.textContent = `${flagEmoji(countryCode)} ${resolveMarketLabel(countryCode)}`;
+            countryDetails.appendChild(summary);
+
+            const keywordContainer = document.createElement('div');
+            keywordContainer.className = 'accordion-body';
+
+            Object.entries(countryData.keywords || {}).forEach(([keyword, keywordData]) => {
+              const keywordDetails = document.createElement('details');
+              keywordDetails.className = 'accordion nested';
+              const keywordSummary = document.createElement('summary');
+              keywordSummary.textContent = `${keyword} · ${formatTimestamp(keywordData.searched_at)}`;
+              keywordDetails.appendChild(keywordSummary);
+
+              const table = document.createElement('table');
+              table.className = 'results-table';
+              table.innerHTML = `
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Playlist</th>
+                    <th>Owner</th>
+                    <th>Followers</th>
+                    <th>Songs</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              `;
+              const tbody = table.querySelector('tbody');
+              (keywordData.results || []).forEach((result) => {
+                const row = document.createElement('tr');
+                if (result.is_tracked_playlist) {
+                  row.classList.add('tracked-highlight');
+                }
+                row.innerHTML = `
+                  <td>${result.rank ?? '—'}</td>
+                  <td>
+                    ${
+                      result.playlist_url
+                        ? `<a href="${result.playlist_url}" target="_blank" rel="noopener noreferrer">${result.playlist_name || '—'}</a>`
+                        : result.playlist_name || '—'
+                    }
+                  </td>
+                  <td>${result.playlist_owner || '—'}</td>
+                  <td>${result.playlist_followers ?? '—'}</td>
+                  <td>${result.songs_count ?? '—'}</td>
+                `;
+                tbody.appendChild(row);
+              });
+
+              const keywordBody = document.createElement('div');
+              keywordBody.className = 'accordion-body';
+              keywordBody.appendChild(table);
+              keywordDetails.appendChild(keywordBody);
+              keywordContainer.appendChild(keywordDetails);
+            });
+
+            countryDetails.appendChild(keywordContainer);
+            detailedWrap.appendChild(countryDetails);
+          });
+        };
+
+        const loadResults = async (scanId) => {
+          const response = await fetch(`/api/basic-rank-checker/scans/${scanId}`);
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.detail || 'Failed to load scan results.');
+          }
+          renderSummary(data);
+          renderDetailed(data);
+          if (exportSummary) {
+            exportSummary.href = `/api/basic-rank-checker/scans/${scanId}/export/summary.csv`;
+          }
+          if (exportDetailed) {
+            exportDetailed.href = `/api/basic-rank-checker/scans/${scanId}/export/detailed.csv`;
+          }
+        };
+
+        const startScan = async () => {
+          runButton.disabled = true;
+          progressWrap.hidden = false;
+          resultsWrap.hidden = true;
+          progressLog.innerHTML = '';
+          setProgress(0, 0, 'Starting scan…');
+          statusArea?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+          try {
+            const response = await fetch('/api/basic-rank-checker/scans', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tracked_playlist_id: '{{ playlist.id }}' }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.detail || 'Failed to start scan.');
+            }
+            activeScanId = data.scan_id;
+            if (eventSource) {
+              eventSource.close();
+            }
+            eventSource = new EventSource(
+              `/api/basic-rank-checker/scans/${activeScanId}/events`
+            );
+            eventSource.onmessage = async (event) => {
+              const payload = JSON.parse(event.data);
+              if (payload.type === 'progress') {
+                setProgress(payload.step, payload.total, payload.message);
+                appendLog(payload.message);
+              }
+              if (payload.type === 'done') {
+                eventSource.close();
+                setProgress(payload.total || 1, payload.total || 1, 'Scan completed.');
+                await loadResults(activeScanId);
+                resultsWrap.hidden = false;
+                progressWrap.hidden = true;
+                runButton.disabled = false;
+              }
+              if (payload.type === 'error') {
+                eventSource.close();
+                appendLog(payload.message || 'Scan failed.');
+                setProgress(0, 1, payload.message || 'Scan failed.');
+                runButton.disabled = false;
+              }
+            };
+          } catch (error) {
+            progressWrap.hidden = true;
+            runButton.disabled = false;
+            setStatus(error.message || 'Failed to start scan.', 'status-error');
+          }
+        };
+
+        runButton?.addEventListener('click', startScan);
+
+        jumpSummary?.addEventListener('click', () => {
+          document.getElementById('basic-scan-summary')?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start',
+          });
+        });
+        jumpDetailed?.addEventListener('click', () => {
+          document.getElementById('basic-scan-detailed')?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start',
+          });
+        });
+      };
+
+      setupBasicScan();
     </script>
   </body>
 </html>
