@@ -57,7 +57,7 @@
           <span class="tracked-tag-label">Countries</span>
           {% if playlist.target_countries %}
             {% for country in playlist.target_countries %}
-              {% set label = country %}
+              {% set label = playlist.target_country_labels.get(country|upper, country) %}
               {% set badge_variant = 'country' %}
               {% include "_components/badge.html" with context %}
             {% endfor %}
@@ -96,10 +96,14 @@
           <label class="field">
             <span class="field-label">Target Countries</span>
             <div class="field-inline">
-              <select name="edit_target_countries_select" data-edit-country-select></select>
+              <select
+                name="edit_target_countries_select"
+                class="market-select"
+                data-edit-country-select
+              ></select>
               <button class="btn btn-secondary" type="button" data-edit-country-add>Add</button>
             </div>
-            <div class="pill-list" data-edit-country-pills></div>
+            <div class="pill-list market-pill-list" data-edit-country-pills></div>
             <div class="info-box" data-edit-country-info hidden>
               You have reached the maximum of 5 target countries.
             </div>

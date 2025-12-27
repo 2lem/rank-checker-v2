@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+import pycountry
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -21,6 +22,213 @@ WEB_DIR = Path(__file__).resolve().parents[1]
 TEMPLATES_DIR = WEB_DIR / "templates"
 
 _templates = Jinja2Templates(directory=str(TEMPLATES_DIR)) if TEMPLATES_DIR.exists() else None
+
+AVAILABLE_MARKETS = [
+    "AD",
+    "AE",
+    "AG",
+    "AL",
+    "AM",
+    "AO",
+    "AR",
+    "AT",
+    "AU",
+    "AZ",
+    "BA",
+    "BB",
+    "BD",
+    "BE",
+    "BF",
+    "BG",
+    "BH",
+    "BI",
+    "BJ",
+    "BN",
+    "BO",
+    "BR",
+    "BS",
+    "BT",
+    "BW",
+    "BY",
+    "BZ",
+    "CA",
+    "CD",
+    "CG",
+    "CH",
+    "CI",
+    "CL",
+    "CM",
+    "CO",
+    "CR",
+    "CV",
+    "CW",
+    "CY",
+    "CZ",
+    "DE",
+    "DJ",
+    "DK",
+    "DM",
+    "DO",
+    "DZ",
+    "EC",
+    "EE",
+    "EG",
+    "ES",
+    "FI",
+    "FJ",
+    "FM",
+    "FR",
+    "GA",
+    "GB",
+    "GD",
+    "GE",
+    "GH",
+    "GM",
+    "GN",
+    "GQ",
+    "GR",
+    "GT",
+    "GW",
+    "GY",
+    "HK",
+    "HN",
+    "HR",
+    "HT",
+    "HU",
+    "ID",
+    "IE",
+    "IL",
+    "IN",
+    "IQ",
+    "IS",
+    "IT",
+    "JM",
+    "JO",
+    "JP",
+    "KE",
+    "KG",
+    "KH",
+    "KI",
+    "KM",
+    "KN",
+    "KR",
+    "KW",
+    "KZ",
+    "LA",
+    "LB",
+    "LC",
+    "LI",
+    "LK",
+    "LR",
+    "LS",
+    "LT",
+    "LU",
+    "LV",
+    "LY",
+    "MA",
+    "MC",
+    "MD",
+    "ME",
+    "MG",
+    "MH",
+    "MK",
+    "ML",
+    "MN",
+    "MO",
+    "MR",
+    "MT",
+    "MU",
+    "MV",
+    "MW",
+    "MX",
+    "MY",
+    "MZ",
+    "NA",
+    "NE",
+    "NG",
+    "NI",
+    "NL",
+    "NO",
+    "NP",
+    "NR",
+    "NZ",
+    "OM",
+    "PA",
+    "PE",
+    "PG",
+    "PH",
+    "PK",
+    "PL",
+    "PS",
+    "PT",
+    "PW",
+    "PY",
+    "QA",
+    "RO",
+    "RS",
+    "RW",
+    "SA",
+    "SB",
+    "SC",
+    "SE",
+    "SG",
+    "SI",
+    "SK",
+    "SL",
+    "SM",
+    "SN",
+    "SR",
+    "ST",
+    "SV",
+    "SZ",
+    "TD",
+    "TG",
+    "TH",
+    "TJ",
+    "TL",
+    "TN",
+    "TO",
+    "TR",
+    "TT",
+    "TV",
+    "TW",
+    "TZ",
+    "UA",
+    "UG",
+    "US",
+    "UY",
+    "UZ",
+    "VC",
+    "VE",
+    "VN",
+    "VU",
+    "WS",
+    "XK",
+    "ZA",
+    "ZM",
+    "ZW",
+]
+
+_MARKET_OVERRIDES = {
+    "XK": "Kosovo",
+}
+
+
+def _market_label(code: str) -> str:
+    normalized = (code or "").strip().upper()
+    if not normalized:
+        return code
+    if normalized in _MARKET_OVERRIDES:
+        return _MARKET_OVERRIDES[normalized]
+    country = pycountry.countries.get(alpha_2=normalized)
+    return country.name if country else normalized
+
+
+def _available_markets_with_labels() -> list[dict[str, str]]:
+    markets = []
+    for code in AVAILABLE_MARKETS:
+        markets.append({"code": code, "label": _market_label(code)})
+    return markets
 
 
 def _ensure_utc(value: datetime | None) -> datetime | None:
@@ -76,6 +284,9 @@ def _playlist_to_view_model(playlist) -> dict:
         "scanned_display": _format_relative_time(playlist.last_meta_scan_at),
         "last_updated_display": _format_relative_time(playlist.playlist_last_updated_at),
         "target_countries": playlist.target_countries or [],
+        "target_country_labels": {
+            (code or "").upper(): _market_label(code) for code in (playlist.target_countries or [])
+        },
         "target_keywords": playlist.target_keywords or [],
     }
 
@@ -95,6 +306,7 @@ def tracked_playlists_page(request: Request, db: Session = Depends(get_db)) -> H
         "tracked_playlists.html",
         {
             "playlists": playlists,
+            "available_markets": _available_markets_with_labels(),
         },
     )
 
@@ -117,5 +329,6 @@ def tracked_playlist_detail_page(
         "tracked_playlist_detail.html",
         {
             "playlist": _playlist_to_view_model(playlist),
+            "available_markets": _available_markets_with_labels(),
         },
     )

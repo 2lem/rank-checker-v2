@@ -53,10 +53,10 @@
           <label class="field">
             <span class="field-label">Target Countries</span>
             <div class="field-inline">
-              <select name="target_countries_select" data-country-select></select>
+              <select name="target_countries_select" class="market-select" data-country-select></select>
               <button class="btn btn-secondary" type="button" data-country-add>Add</button>
             </div>
-            <div class="pill-list" data-country-pills></div>
+            <div class="pill-list market-pill-list" data-country-pills></div>
             <div class="info-box" data-country-info hidden>
               You have reached the maximum of 5 target countries.
             </div>
@@ -121,21 +121,12 @@
       const addButton = document.querySelector('[data-panel-target="add-playlist"]');
       const addCancelButton = document.querySelector('[data-panel-target="add-playlist-cancel"]');
 
-      const availableMarkets = [
-        'AD', 'AE', 'AG', 'AL', 'AM', 'AO', 'AR', 'AT', 'AU', 'AZ', 'BA', 'BB', 'BD', 'BE', 'BF',
-        'BG', 'BH', 'BI', 'BJ', 'BN', 'BO', 'BR', 'BS', 'BT', 'BW', 'BY', 'BZ', 'CA', 'CD', 'CG',
-        'CH', 'CI', 'CL', 'CM', 'CO', 'CR', 'CV', 'CW', 'CY', 'CZ', 'DE', 'DJ', 'DK', 'DM', 'DO',
-        'DZ', 'EC', 'EE', 'EG', 'ES', 'FI', 'FJ', 'FM', 'FR', 'GA', 'GB', 'GD', 'GE', 'GH', 'GM',
-        'GN', 'GQ', 'GR', 'GT', 'GW', 'GY', 'HK', 'HN', 'HR', 'HT', 'HU', 'ID', 'IE', 'IL', 'IN',
-        'IQ', 'IS', 'IT', 'JM', 'JO', 'JP', 'KE', 'KG', 'KH', 'KI', 'KM', 'KN', 'KR', 'KW', 'KZ',
-        'LA', 'LB', 'LC', 'LI', 'LK', 'LR', 'LS', 'LT', 'LU', 'LV', 'LY', 'MA', 'MC', 'MD', 'ME',
-        'MG', 'MH', 'MK', 'ML', 'MN', 'MO', 'MR', 'MT', 'MU', 'MV', 'MW', 'MX', 'MY', 'MZ', 'NA',
-        'NE', 'NG', 'NI', 'NL', 'NO', 'NP', 'NR', 'NZ', 'OM', 'PA', 'PE', 'PG', 'PH', 'PK', 'PL',
-        'PS', 'PT', 'PW', 'PY', 'QA', 'RO', 'RS', 'RW', 'SA', 'SB', 'SC', 'SE', 'SG', 'SI', 'SK',
-        'SL', 'SM', 'SN', 'SR', 'ST', 'SV', 'SZ', 'TD', 'TG', 'TH', 'TJ', 'TL', 'TN', 'TO', 'TR',
-        'TT', 'TV', 'TW', 'TZ', 'UA', 'UG', 'US', 'UY', 'UZ', 'VC', 'VE', 'VN', 'VU', 'WS', 'XK',
-        'ZA', 'ZM', 'ZW',
-      ];
+      const availableMarkets = {{ available_markets | tojson }};
+      const marketLabelMap = new Map(
+        availableMarkets.map((market) => [market.code.toUpperCase(), market.label])
+      );
+
+      const resolveMarketLabel = (code) => marketLabelMap.get((code || '').toUpperCase()) || code;
 
       const setStatus = (message, variant) => {
         statusArea.textContent = message;
@@ -170,6 +161,7 @@
         lockedValues = [],
         normalize,
         compare,
+        getLabel,
       }) => {
         let values = [...lockedValues];
 
@@ -180,7 +172,7 @@
             const removable = !isLocked;
             listElement.appendChild(
               createChip({
-                label: value,
+                label: getLabel ? getLabel(value) : value,
                 locked: isLocked,
                 removable,
                 onRemove: () => {
@@ -256,10 +248,10 @@
         defaultOption.selected = true;
         countrySelect.appendChild(defaultOption);
 
-        availableMarkets.forEach((code) => {
+        availableMarkets.forEach((market) => {
           const option = document.createElement('option');
-          option.value = code;
-          option.textContent = code;
+          option.value = market.code;
+          option.textContent = market.label;
           countrySelect.appendChild(option);
         });
 
@@ -270,6 +262,7 @@
           lockedValues: [],
           normalize: (value) => (value || '').trim().toUpperCase(),
           compare: (a, b) => a.toUpperCase() === b.toUpperCase(),
+          getLabel: resolveMarketLabel,
         });
 
         const keywordManager = createSelectionManager({
@@ -382,10 +375,10 @@
           defaultEditOption.selected = true;
           editCountrySelect.appendChild(defaultEditOption);
 
-          availableMarkets.forEach((code) => {
+          availableMarkets.forEach((market) => {
             const option = document.createElement('option');
-            option.value = code;
-            option.textContent = code;
+            option.value = market.code;
+            option.textContent = market.label;
             editCountrySelect.appendChild(option);
           });
 
@@ -396,6 +389,7 @@
             lockedValues: existingCountries.map((value) => value.toUpperCase()),
             normalize: (value) => (value || '').trim().toUpperCase(),
             compare: (a, b) => a.toUpperCase() === b.toUpperCase(),
+            getLabel: resolveMarketLabel,
           });
 
           const editKeywordManager = createSelectionManager({
@@ -413,8 +407,10 @@
             if (!isOpen) {
               managePanel.classList.remove('is-focused');
               editPanel.classList.remove('is-open', 'is-focused');
+              card.scrollIntoView({ behavior: 'smooth', block: 'start' });
             } else {
               managePanel.classList.add('is-focused');
+              managePanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
           });
 
@@ -422,8 +418,10 @@
             editPanel.classList.toggle('is-open');
             if (editPanel.classList.contains('is-open')) {
               editPanel.classList.add('is-focused');
+              editPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
             } else {
               editPanel.classList.remove('is-focused');
+              card.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
           });
 
@@ -448,6 +446,7 @@
             editCountryManager.setValues(existingCountries.map((value) => value.toUpperCase()));
             editKeywordManager.setValues(existingKeywords);
             editPanel.classList.remove('is-open', 'is-focused');
+            card.scrollIntoView({ behavior: 'smooth', block: 'start' });
           });
 
           editForm?.addEventListener('submit', async (event) => {
@@ -493,6 +492,9 @@
         }
         const isOpen = addPanel.classList.toggle('is-open');
         addPanel.classList.toggle('is-focused', isOpen);
+        if (isOpen) {
+          addPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
       });
 
       setupAddPanel();

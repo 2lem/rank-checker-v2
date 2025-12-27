@@ -106,6 +106,8 @@
     <script>
       const toolbarButtons = document.querySelectorAll('[data-panel-target]');
       const panels = document.querySelectorAll('.panel');
+      const toolbar = document.querySelector('.toolbar');
+      let lastAnchor = toolbar;
 
       const togglePanel = (targetId) => {
         let activePanel = null;
@@ -123,8 +125,14 @@
         panels.forEach((panel) => panel.classList.remove('is-active'));
 
         if (!isActive) {
+          lastAnchor = toolbar || document.body;
           activePanel.classList.add('is-active');
           activePanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          return;
+        }
+
+        if (lastAnchor) {
+          lastAnchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
       };
 
