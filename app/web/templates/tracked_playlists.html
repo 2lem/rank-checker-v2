@@ -394,6 +394,7 @@
           const editKeywordAdd = card.querySelector('[data-edit-keyword-add]');
           const editKeywordPills = card.querySelector('[data-edit-keyword-pills]');
           const editKeywordInfo = card.querySelector('[data-edit-keyword-info]');
+          const refreshButton = card.querySelector('[data-refresh-stats]');
           const playlistId = card.dataset.playlistId;
 
           const existingCountries = JSON.parse(card.dataset.targetCountries || '[]');
@@ -540,6 +541,35 @@
               window.location.reload();
             } catch (error) {
               setStatus('Network error while updating playlist.', 'status-error');
+            }
+          });
+
+          refreshButton?.addEventListener('click', async () => {
+            refreshButton.disabled = true;
+            setStatus('Fetching data from Spotify… please wait', 'status-loading');
+
+            try {
+              const response = await fetch(`/api/playlists/${playlistId}/refresh-stats`, {
+                method: 'POST',
+              });
+
+              const data = await response.json().catch(() => ({}));
+
+              if (!response.ok) {
+                const detail = data.detail || 'Unable to refresh playlist metadata.';
+                const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
+                setStatus(message, 'status-error');
+                refreshButton.disabled = false;
+                return;
+              }
+
+              const refreshedAt = data.refreshed_at ? new Date(data.refreshed_at) : null;
+              const timeLabel = refreshedAt ? refreshedAt.toLocaleString() : 'just now';
+              setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
+              window.location.reload();
+            } catch (error) {
+              setStatus('Network error while refreshing playlist.', 'status-error');
+              refreshButton.disabled = false;
             }
           });
         });

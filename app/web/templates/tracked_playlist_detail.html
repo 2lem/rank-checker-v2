@@ -15,6 +15,7 @@
           <p class="page-subtitle">Playlist ID: {{ playlist.playlist_id }}</p>
         </div>
         <div class="page-header-actions">
+          <button class="btn btn-primary" type="button" data-refresh-stats>Refresh Stats</button>
           {% set label = 'Back to Tracked Playlists' %}
           {% set button_variant = 'ghost' %}
           {% set href = '/' %}
@@ -22,15 +23,20 @@
         </div>
       </header>
 
+      <section class="ui-card status-card">
+        <div class="status-card-header">
+          <h2>Status</h2>
+          <p class="status-card-subtitle">Live feedback for playlist actions.</p>
+        </div>
+        <div id="playlist-status" class="status-area" role="status" aria-live="polite">
+          Ready to refresh playlist metadata.
+        </div>
+      </section>
+
       {% set variant = 'detail' %}
       {% include "_components/tracked_card.html" %}
 
       <section class="toolbar">
-        {% set label = 'Refresh Stats' %}
-        {% set button_variant = 'primary' %}
-        {% set data_target = 'panel-refresh' %}
-        {% include "_components/button.html" %}
-
         {% set label = 'Manage' %}
         {% set button_variant = 'secondary' %}
         {% set data_target = 'panel-manage' %}
@@ -50,16 +56,6 @@
         {% set button_variant = 'secondary' %}
         {% set data_target = 'panel-export' %}
         {% include "_components/button.html" %}
-      </section>
-
-      <section class="panel" id="panel-refresh">
-        <div class="panel-header">
-          <h2>Refresh Stats</h2>
-          <p>Trigger an updated snapshot of playlist metadata.</p>
-        </div>
-        <div class="panel-body">
-          <div class="panel-placeholder">Refresh stats functionality will be wired in a future step.</div>
-        </div>
       </section>
 
       <section class="panel" id="panel-manage">
@@ -104,6 +100,8 @@
     </main>
 
     <script>
+      const statusArea = document.getElementById('playlist-status');
+      const refreshButton = document.querySelector('[data-refresh-stats]');
       const toolbarButtons = document.querySelectorAll('[data-panel-target]');
       const panels = document.querySelectorAll('.panel');
       const toolbar = document.querySelector('.toolbar');
@@ -145,6 +143,48 @@
       if (panels.length) {
         panels[0].classList.add('is-active');
       }
+
+      const setStatus = (message, variant) => {
+        if (!statusArea) {
+          return;
+        }
+        statusArea.textContent = message;
+        statusArea.classList.remove('status-success', 'status-error', 'status-loading');
+        if (variant) {
+          statusArea.classList.add(variant);
+        }
+      };
+
+      refreshButton?.addEventListener('click', async () => {
+        if (!refreshButton) {
+          return;
+        }
+        refreshButton.disabled = true;
+        setStatus('Fetching data from Spotify… please wait', 'status-loading');
+
+        try {
+          const response = await fetch(`/api/playlists/{{ playlist.id }}/refresh-stats`, {
+            method: 'POST',
+          });
+          const data = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            const detail = data.detail || 'Unable to refresh playlist metadata.';
+            const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
+            setStatus(message, 'status-error');
+            refreshButton.disabled = false;
+            return;
+          }
+
+          const refreshedAt = data.refreshed_at ? new Date(data.refreshed_at) : null;
+          const timeLabel = refreshedAt ? refreshedAt.toLocaleString() : 'just now';
+          setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
+          window.location.reload();
+        } catch (error) {
+          setStatus('Network error while refreshing playlist.', 'status-error');
+          refreshButton.disabled = false;
+        }
+      });
     </script>
   </body>
 </html>

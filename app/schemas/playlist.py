@@ -15,12 +15,16 @@ class TrackedPlaylistOut(BaseModel):
     playlist_id: str
     playlist_url: str | None
     name: str | None
+    description: str | None = None
     cover_image_url_small: str | None = None
+    cover_image_url_large: str | None = None
     owner_name: str | None = None
     followers_total: int | None = None
     tracks_count: int | None = None
     last_meta_scan_at: datetime | None = None
+    last_meta_refresh_at: datetime | None = None
     playlist_last_updated_at: datetime | None = None
+    stats_updated_at: datetime | None = None
     target_countries: list[str]
     target_keywords: list[str]
     created_at: datetime
@@ -32,3 +36,9 @@ class TrackedPlaylistOut(BaseModel):
 class TrackedPlaylistTargetsUpdate(BaseModel):
     target_countries: list[str] | None = None
     target_keywords: list[str] | None = None
+
+
+class RefreshPlaylistResponse(BaseModel):
+    ok: bool
+    refreshed_at: datetime
+    playlist: TrackedPlaylistOut

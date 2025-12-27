@@ -281,7 +281,7 @@ def _playlist_to_view_model(playlist) -> dict:
         "owner_name": playlist.owner_name or "—",
         "followers_total": _format_count(playlist.followers_total),
         "tracks_count": _format_count(playlist.tracks_count),
-        "scanned_display": _format_relative_time(playlist.last_meta_scan_at),
+        "scanned_display": _format_relative_time(playlist.stats_updated_at),
         "last_updated_display": _format_relative_time(playlist.playlist_last_updated_at),
         "target_countries": playlist.target_countries or [],
         "target_country_labels": {

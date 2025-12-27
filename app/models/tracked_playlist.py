@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, func, text
+from sqlalchemy import DateTime, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import Mapped, mapped_column
@@ -18,11 +18,14 @@ class TrackedPlaylist(Base):
     playlist_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     playlist_url: Mapped[str | None] = mapped_column(String, nullable=True)
     name: Mapped[str | None] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     cover_image_url_small: Mapped[str | None] = mapped_column(String, nullable=True)
+    cover_image_url_large: Mapped[str | None] = mapped_column(String, nullable=True)
     owner_name: Mapped[str | None] = mapped_column(String, nullable=True)
     followers_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tracks_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_meta_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_meta_refresh_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     playlist_last_updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -41,3 +44,11 @@ class TrackedPlaylist(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    @property
+    def stats_updated_at(self) -> datetime | None:
+        candidates = [self.last_meta_refresh_at, self.last_meta_scan_at]
+        candidates = [candidate for candidate in candidates if candidate is not None]
+        if not candidates:
+            return None
+        return max(candidates)
