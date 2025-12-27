@@ -383,6 +383,7 @@
           const managePanel = card.querySelector('[data-manage-panel]');
           const editToggle = card.querySelector('[data-edit-toggle]');
           const editPanel = card.querySelector('[data-edit-panel]');
+          const manageClose = card.querySelector('[data-manage-close]');
           const editForm = card.querySelector('[data-edit-form]');
           const editCancel = card.querySelector('[data-edit-cancel]');
           const editCountrySelect = card.querySelector('[data-edit-country-select]');
@@ -471,6 +472,10 @@
             } else {
               openPanels();
             }
+          });
+
+          manageClose?.addEventListener('click', () => {
+            closePanels({ restoreScroll: true });
           });
 
           editToggle?.addEventListener('click', () => {

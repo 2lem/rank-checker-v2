@@ -307,9 +307,19 @@
 }
 
 .tracked-manage-actions {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 12px;
+}
+
+.tracked-manage-actions .tracked-manage-close {
+  margin-left: auto;
+}
+
+.tracked-manage-actions .tracked-manage-close:focus {
+  outline: none;
+  box-shadow: none;
 }
 
 .tracked-edit-panel {
