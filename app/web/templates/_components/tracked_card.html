@@ -1,0 +1,106 @@
+{% set variant = variant|default('list') %}
+<div class="tracked-card {% if variant == 'detail' %}detail-header-card{% endif %}">
+  <div class="tracked-card-inner {% if variant == 'detail' %}detail-header-grid{% endif %}">
+    <div class="tracked-thumb">
+      {% if playlist.image_url %}
+        <img src="{{ playlist.image_url }}" alt="Playlist artwork" />
+      {% else %}
+        <span class="tracked-thumb-fallback">♪</span>
+      {% endif %}
+    </div>
+    <div class="tracked-card-content">
+      <div class="tracked-pill-row">
+        {% if variant == 'detail' %}
+          {% if playlist.playlist_url %}
+            <a class="pill pill-spotify" href="{{ playlist.playlist_url }}" target="_blank" rel="noopener noreferrer">
+              View on Spotify
+            </a>
+          {% endif %}
+        {% else %}
+          <a class="pill pill-primary" href="/playlists/{{ playlist.id }}">Open Dashboard</a>
+          <a class="pill pill-secondary" href="/playlists/{{ playlist.id }}">Manage</a>
+        {% endif %}
+      </div>
+      <div class="tracked-title" title="{{ playlist.name }}">{{ playlist.name }}</div>
+      <div class="tracked-meta-line tracked-meta-subtle">
+        <span class="tracked-meta-group">
+          <span class="tracked-meta-label">Playlist ID:</span>
+          <span class="tracked-meta-value">{{ playlist.playlist_id }}</span>
+        </span>
+        <span class="tracked-meta-group">
+          <span class="tracked-meta-label">URL:</span>
+          <a class="tracked-link" href="{{ playlist.playlist_url }}" target="_blank" rel="noopener noreferrer">
+            {{ playlist.playlist_url }}
+          </a>
+        </span>
+      </div>
+      <div class="tracked-meta-line">
+        <span class="tracked-meta-group">
+          <span class="tracked-meta-label">Owner:</span>
+          <span class="tracked-meta-value">{{ playlist.owner }}</span>
+        </span>
+        <span class="tracked-meta-group">
+          <span class="tracked-meta-label">Followers:</span>
+          <span class="tracked-meta-value">{{ playlist.followers }}</span>
+        </span>
+        <span class="tracked-meta-group">
+          <span class="tracked-meta-label">Songs Count:</span>
+          <span class="tracked-meta-value">{{ playlist.songs_count }}</span>
+        </span>
+      </div>
+      <div class="tracked-meta-line tracked-meta-subtle">
+        <span class="tracked-meta-group">
+          <span class="tracked-meta-label">Scanned:</span>
+          <span class="tracked-meta-value">{{ playlist.scanned_display }}</span>
+        </span>
+        <span class="tracked-meta-group">
+          <span class="tracked-meta-label">Last Updated:</span>
+          <span class="tracked-meta-value">{{ playlist.last_updated }}</span>
+        </span>
+      </div>
+      <div class="tracked-tag-group">
+        <div class="tracked-tag-row">
+          <span class="tracked-tag-label">Countries</span>
+          {% if playlist.target_countries %}
+            {% for country in playlist.target_countries %}
+              {% set label = country %}
+              {% set badge_variant = 'country' %}
+              {% include "_components/badge.html" with context %}
+            {% endfor %}
+          {% else %}
+            <span class="tracked-tag-empty">No target countries</span>
+          {% endif %}
+        </div>
+        <div class="tracked-tag-row">
+          <span class="tracked-tag-label">Keywords</span>
+          {% if playlist.target_keywords %}
+            {% for keyword in playlist.target_keywords %}
+              {% set label = keyword %}
+              {% set badge_variant = 'keyword' %}
+              {% include "_components/badge.html" with context %}
+            {% endfor %}
+          {% else %}
+            <span class="tracked-tag-empty">No target keywords</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% if variant != 'detail' %}
+    <div class="tracked-card-actions">
+      {% set label = 'Manage' %}
+      {% set button_variant = 'primary' %}
+      {% set href = '/playlists/' ~ playlist.id %}
+      {% set extra_class = 'tracked-card-action' %}
+      {% include "_components/button.html" %}
+      {% if playlist.playlist_url %}
+        {% set label = 'Open Spotify' %}
+        {% set button_variant = 'secondary' %}
+        {% set href = playlist.playlist_url %}
+        {% set target = '_blank' %}
+        {% set extra_class = 'tracked-card-action' %}
+        {% include "_components/button.html" %}
+      {% endif %}
+    </div>
+  {% endif %}
+</div>

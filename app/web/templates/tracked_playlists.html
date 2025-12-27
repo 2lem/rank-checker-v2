@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tracked Playlists</title>
+    <link rel="stylesheet" href="/static/ui.css" />
+    <link rel="stylesheet" href="/static/tracked.css" />
+  </head>
+  <body class="app-body">
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <h1>Tracked Playlists</h1>
+          <p class="page-subtitle">Monitor playlists and manage their tracking configuration.</p>
+        </div>
+      </header>
+
+      <section class="ui-card status-card">
+        <div class="status-card-header">
+          <h2>Status</h2>
+          <p class="status-card-subtitle">Use this space for feedback messages.</p>
+        </div>
+        <div id="playlist-status" class="status-area" role="status" aria-live="polite">
+          Ready to add a playlist.
+        </div>
+      </section>
+
+      <section class="ui-card form-card" id="add-playlist">
+        <div class="section-header">
+          <h2>Add New Playlist</h2>
+          <p class="section-subtitle">Paste a Spotify playlist URL and optional targeting details.</p>
+        </div>
+        <form id="add-playlist-form" class="form-grid">
+          <label class="field">
+            <span class="field-label">Playlist URL</span>
+            <input name="playlist_url" type="url" placeholder="https://open.spotify.com/playlist/..." required />
+          </label>
+          <label class="field">
+            <span class="field-label">Target Countries</span>
+            <input name="target_countries" type="text" placeholder="US, CA, GB" />
+            <span class="field-help">Comma-separated country codes.</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Target Keywords</span>
+            <input name="target_keywords" type="text" placeholder="lofi, focus, chill" />
+            <span class="field-help">Comma-separated keywords to scan for.</span>
+          </label>
+          <div class="form-actions">
+            {% set label = 'Add Playlist' %}
+            {% set button_variant = 'primary' %}
+            {% set type = 'submit' %}
+            {% set extra_class = 'full-width' %}
+            {% include "_components/button.html" %}
+          </div>
+        </form>
+      </section>
+
+      <section class="tracked-section">
+        <div class="section-header">
+          <h2>Tracked Playlists</h2>
+          <p class="section-subtitle">Click Manage to view details for a playlist.</p>
+        </div>
+        <div class="tracked-card-list">
+          {% if playlists %}
+            {% for playlist in playlists %}
+              {% set variant = 'list' %}
+              {% include "_components/tracked_card.html" %}
+            {% endfor %}
+          {% else %}
+            <div class="empty-state">
+              <h3>No tracked playlists yet</h3>
+              <p>Add one above to begin collecting results.</p>
+            </div>
+          {% endif %}
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById('add-playlist-form');
+      const statusArea = document.getElementById('playlist-status');
+
+      const setStatus = (message, variant) => {
+        statusArea.textContent = message;
+        statusArea.classList.remove('status-success', 'status-error', 'status-loading');
+        if (variant) {
+          statusArea.classList.add(variant);
+        }
+      };
+
+      const parseList = (value) =>
+        value
+          .split(',')
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+
+      form?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        const payload = {
+          playlist_url: formData.get('playlist_url'),
+          target_countries: parseList(formData.get('target_countries') || ''),
+          target_keywords: parseList(formData.get('target_keywords') || ''),
+        };
+
+        setStatus('Adding playlist...', 'status-loading');
+
+        try {
+          const response = await fetch('/api/playlists', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+          });
+
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            const detail = data.detail || 'Unable to add playlist.';
+            const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
+            setStatus(message, 'status-error');
+            return;
+          }
+
+          setStatus('Playlist added successfully. Reloading...', 'status-success');
+          window.location.reload();
+        } catch (error) {
+          setStatus('Network error while adding playlist.', 'status-error');
+        }
+      });
+    </script>
+  </body>
+</html>

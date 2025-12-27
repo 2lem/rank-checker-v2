@@ -10,6 +10,12 @@ def get_tracked_playlist_by_playlist_id(db: Session, playlist_id: str) -> Tracke
     ).scalar_one_or_none()
 
 
+def get_tracked_playlist_by_id(db: Session, tracked_playlist_id: str) -> TrackedPlaylist | None:
+    return db.execute(
+        select(TrackedPlaylist).where(TrackedPlaylist.id == tracked_playlist_id)
+    ).scalar_one_or_none()
+
+
 def list_tracked_playlists(db: Session) -> list[TrackedPlaylist]:
     return db.execute(select(TrackedPlaylist).order_by(TrackedPlaylist.created_at.desc())).scalars().all()
 

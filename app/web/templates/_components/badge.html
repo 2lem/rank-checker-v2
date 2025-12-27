@@ -1,0 +1,4 @@
+{% set resolved_variant = badge_variant|default(variant|default('default')) %}
+<span class="badge badge-{{ resolved_variant }}">
+  {{ label }}
+</span>
