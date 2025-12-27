@@ -307,7 +307,7 @@
 
         addCancelButton?.addEventListener('click', () => {
           form.reset();
-          addPanel.classList.remove('is-open', 'is-focused');
+          addPanel.classList.remove('is-open');
         });
 
         form.addEventListener('submit', async (event) => {
@@ -344,6 +344,36 @@
             setStatus('Network error while adding playlist.', 'status-error');
           }
         });
+      };
+
+      let currentlyOpenId = null;
+      let preOpenScrollY = null;
+
+      const clampScrollTarget = (target) => {
+        const documentHeight = Math.max(
+          document.body.scrollHeight,
+          document.documentElement.scrollHeight
+        );
+        const maxScroll = Math.max(0, documentHeight - window.innerHeight);
+        return Math.min(Math.max(0, target), maxScroll);
+      };
+
+      const scrollToCentered = (element) => {
+        if (!element) {
+          return;
+        }
+        const rect = element.getBoundingClientRect();
+        const target =
+          window.scrollY + rect.top - (window.innerHeight / 2 - rect.height / 2);
+        window.scrollTo({ top: clampScrollTarget(target), behavior: 'smooth' });
+      };
+
+      const restorePreOpenScroll = () => {
+        if (preOpenScrollY === null) {
+          return;
+        }
+        window.scrollTo({ top: clampScrollTarget(preOpenScrollY), behavior: 'smooth' });
+        preOpenScrollY = null;
       };
 
       const setupManagePanels = () => {
@@ -401,27 +431,52 @@
             compare: (a, b) => a.toLowerCase() === b.toLowerCase(),
           });
 
+          const closePanels = ({ restoreScroll }) => {
+            managePanel.classList.remove('is-open');
+            editPanel.classList.remove('is-open');
+            manageToggle?.setAttribute('aria-expanded', 'false');
+            if (restoreScroll) {
+              restorePreOpenScroll();
+              currentlyOpenId = null;
+            }
+          };
+
+          const openPanels = () => {
+            if (currentlyOpenId && currentlyOpenId !== playlistId) {
+              const openCard = document.querySelector(
+                `[data-tracked-card][data-playlist-id="${currentlyOpenId}"]`
+              );
+              if (openCard) {
+                const openManagePanel = openCard.querySelector('[data-manage-panel]');
+                const openEditPanel = openCard.querySelector('[data-edit-panel]');
+                const openManageToggle = openCard.querySelector('[data-manage-toggle]');
+                openManagePanel?.classList.remove('is-open');
+                openEditPanel?.classList.remove('is-open');
+                openManageToggle?.setAttribute('aria-expanded', 'false');
+              }
+            }
+            if (currentlyOpenId === null) {
+              preOpenScrollY = window.scrollY;
+            }
+            currentlyOpenId = playlistId;
+            managePanel.classList.add('is-open');
+            manageToggle?.setAttribute('aria-expanded', 'true');
+            scrollToCentered(managePanel);
+          };
+
           manageToggle?.addEventListener('click', () => {
-            const isOpen = managePanel.classList.toggle('is-open');
-            manageToggle.setAttribute('aria-expanded', String(isOpen));
-            if (!isOpen) {
-              managePanel.classList.remove('is-focused');
-              editPanel.classList.remove('is-open', 'is-focused');
-              card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            const isOpen = managePanel.classList.contains('is-open');
+            if (isOpen) {
+              closePanels({ restoreScroll: true });
             } else {
-              managePanel.classList.add('is-focused');
-              managePanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              openPanels();
             }
           });
 
           editToggle?.addEventListener('click', () => {
-            editPanel.classList.toggle('is-open');
-            if (editPanel.classList.contains('is-open')) {
-              editPanel.classList.add('is-focused');
-              editPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            } else {
-              editPanel.classList.remove('is-focused');
-              card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            const isOpen = editPanel.classList.toggle('is-open');
+            if (isOpen) {
+              scrollToCentered(editPanel);
             }
           });
 
@@ -445,8 +500,7 @@
           editCancel?.addEventListener('click', () => {
             editCountryManager.setValues(existingCountries.map((value) => value.toUpperCase()));
             editKeywordManager.setValues(existingKeywords);
-            editPanel.classList.remove('is-open', 'is-focused');
-            card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            editPanel.classList.remove('is-open');
           });
 
           editForm?.addEventListener('submit', async (event) => {
@@ -477,7 +531,7 @@
               }
 
               setStatus('Configuration saved. Reloading...', 'status-success');
-              editPanel.classList.remove('is-open', 'is-focused');
+              editPanel.classList.remove('is-open');
               window.location.reload();
             } catch (error) {
               setStatus('Network error while updating playlist.', 'status-error');
@@ -491,9 +545,8 @@
           return;
         }
         const isOpen = addPanel.classList.toggle('is-open');
-        addPanel.classList.toggle('is-focused', isOpen);
         if (isOpen) {
-          addPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          scrollToCentered(addPanel);
         }
       });
 
