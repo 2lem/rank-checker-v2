@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,6 +9,7 @@ from app.core.spotify import (
     PLAYLIST_URL,
     extract_playlist_id,
     get_access_token,
+    get_latest_track_added_at,
     normalize_spotify_playlist_url,
     spotify_get,
 )
@@ -21,6 +23,32 @@ from app.schemas.playlist import TrackedPlaylistCreate, TrackedPlaylistOut
 
 router = APIRouter(tags=["playlists"])
 logger = logging.getLogger(__name__)
+
+
+def _select_smallest_image_url(images: list[dict]) -> str | None:
+    if not images:
+        return None
+    sorted_images = sorted(
+        images,
+        key=lambda image: (
+            image.get("width") or image.get("height") or float("inf"),
+            image.get("height") or image.get("width") or float("inf"),
+        ),
+    )
+    return (sorted_images[0].get("url") or "").strip() or None
+
+
+def _parse_spotify_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    cleaned = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(cleaned)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _extract_spotify_error_details(exc: Exception) -> tuple[str | None, str]:
@@ -70,10 +98,12 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
 
     token = get_access_token()
     playlist_api_url = PLAYLIST_URL.format(playlist_id)
-    default_params = {"fields": "name,external_urls.spotify"}
+    default_params = {
+        "fields": "name,external_urls.spotify,followers.total,tracks.total,images,snapshot_id,owner.display_name,owner.id",
+    }
     fallback_market = (payload.target_countries or [None])[0] or "US"
     fallback_params = {
-        "fields": "name,external_urls.spotify",
+        "fields": "name,external_urls.spotify,followers.total,tracks.total,images,snapshot_id,owner.display_name,owner.id",
         "market": fallback_market,
     }
     attempted_urls = []
@@ -114,12 +144,33 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
 
     name = detail.get("name")
     resolved_url = (detail.get("external_urls") or {}).get("spotify") or playlist_url
+    images = detail.get("images") or []
+    cover_image_url_small = _select_smallest_image_url(images)
+    owner_info = detail.get("owner") or {}
+    owner_name = owner_info.get("display_name") or owner_info.get("id")
+    followers_total = (detail.get("followers") or {}).get("total")
+    tracks_count = (detail.get("tracks") or {}).get("total")
+    snapshot_id = detail.get("snapshot_id")
+    playlist_last_updated_at = None
+    if tracks_count and snapshot_id:
+        try:
+            last_track_added_at = get_latest_track_added_at(playlist_id, snapshot_id, token)
+            playlist_last_updated_at = _parse_spotify_timestamp(last_track_added_at)
+        except Exception as exc:
+            logger.warning("Failed to fetch latest track added for %s: %s", playlist_id, exc)
+    last_meta_scan_at = datetime.now(timezone.utc)
 
     return create_tracked_playlist(
         db,
         playlist_id=playlist_id,
         playlist_url=resolved_url,
         name=name,
+        cover_image_url_small=cover_image_url_small,
+        owner_name=owner_name,
+        followers_total=followers_total,
+        tracks_count=tracks_count,
+        last_meta_scan_at=last_meta_scan_at,
+        playlist_last_updated_at=playlist_last_updated_at,
         target_countries=payload.target_countries,
         target_keywords=payload.target_keywords,
     )

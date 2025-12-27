@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -23,10 +23,43 @@ TEMPLATES_DIR = WEB_DIR / "templates"
 _templates = Jinja2Templates(directory=str(TEMPLATES_DIR)) if TEMPLATES_DIR.exists() else None
 
 
-def _format_datetime(value: datetime | None) -> str:
+def _ensure_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _format_relative_time(value: datetime | None, now: datetime | None = None) -> str:
     if not value:
         return "—"
-    return value.strftime("%b %d, %Y")
+    now = _ensure_utc(now or datetime.now(timezone.utc))
+    value = _ensure_utc(value)
+    if not now or not value:
+        return "—"
+    delta_seconds = int((now - value).total_seconds())
+    if delta_seconds < 0:
+        delta_seconds = 0
+    if delta_seconds < 60:
+        return "just now"
+    minutes = delta_seconds // 60
+    if minutes < 60:
+        unit = "minute" if minutes == 1 else "minutes"
+        return f"{minutes} {unit} ago"
+    hours = minutes // 60
+    if hours < 24:
+        unit = "hour" if hours == 1 else "hours"
+        return f"{hours} {unit} ago"
+    days = hours // 24
+    unit = "day" if days == 1 else "days"
+    return f"{days} {unit} ago"
+
+
+def _format_count(value: int | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value:,}"
 
 
 def _playlist_to_view_model(playlist) -> dict:
@@ -36,13 +69,14 @@ def _playlist_to_view_model(playlist) -> dict:
         "playlist_id": playlist.playlist_id,
         "playlist_url": playlist_url,
         "name": playlist.name or "Tracked Playlist",
+        "image_url": playlist.cover_image_url_small or "",
+        "owner_name": playlist.owner_name or "—",
+        "followers_total": _format_count(playlist.followers_total),
+        "tracks_count": _format_count(playlist.tracks_count),
+        "scanned_display": _format_relative_time(playlist.last_meta_scan_at),
+        "last_updated_display": _format_relative_time(playlist.playlist_last_updated_at),
         "target_countries": playlist.target_countries or [],
         "target_keywords": playlist.target_keywords or [],
-        "owner": "—",
-        "followers": "—",
-        "songs_count": "—",
-        "scanned_display": "—",
-        "last_updated": _format_datetime(playlist.created_at),
     }
 
 
