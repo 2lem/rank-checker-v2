@@ -34,6 +34,24 @@ def _extract_spotify_error_details(exc: Exception) -> tuple[str | None, str]:
     return status_code, body_text
 
 
+def _build_spotify_url(url: str, params: dict | None) -> str:
+    request = requests.Request("GET", url, params=params).prepare()
+    return request.url or url
+
+
+def _raise_spotify_request_error(playlist_id: str, exc: Exception) -> None:
+    status_code, body_snippet = _extract_spotify_error_details(exc)
+    status_label = status_code if status_code is not None else "unknown"
+    logger.warning(
+        "Spotify request failed for playlist %s: status=%s, body=%s",
+        playlist_id,
+        status_label,
+        body_snippet or "<empty>",
+    )
+    detail = f"Spotify request failed: status={status_label}, body={body_snippet}"
+    raise HTTPException(status_code=502, detail=detail) from exc
+
+
 @router.get("", response_model=list[TrackedPlaylistOut])
 def get_playlists(db: Session = Depends(get_db)):
     return list_tracked_playlists(db)
@@ -50,24 +68,45 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=409, detail="Playlist already tracked.")
 
+    token = get_access_token()
+    playlist_api_url = PLAYLIST_URL.format(playlist_id)
+    default_params = {"fields": "name,external_urls.spotify"}
+    fallback_params = {"fields": "name,external_urls.spotify", "market": "from_token"}
+    attempted_urls = []
+
     try:
-        token = get_access_token()
-        detail = spotify_get(
-            PLAYLIST_URL.format(playlist_id),
-            token,
-            params={"fields": "name,external_urls.spotify"},
-        )
+        attempted_urls.append(_build_spotify_url(playlist_api_url, default_params))
+        detail = spotify_get(playlist_api_url, token, params=default_params)
+    except requests.HTTPError as exc:
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        if status_code == 404:
+            try:
+                attempted_urls.append(_build_spotify_url(playlist_api_url, fallback_params))
+                detail = spotify_get(playlist_api_url, token, params=fallback_params)
+            except requests.HTTPError as fallback_exc:
+                fallback_status = getattr(
+                    getattr(fallback_exc, "response", None), "status_code", None
+                )
+                if fallback_status == 404:
+                    message = (
+                        "Playlist not accessible via Spotify API (often editorial/region restriction). "
+                        "Try a user playlist or a different market."
+                    )
+                    raise HTTPException(
+                        status_code=422,
+                        detail={
+                            "message": message,
+                            "playlist_id": playlist_id,
+                            "attempted_urls": attempted_urls,
+                        },
+                    ) from fallback_exc
+                _raise_spotify_request_error(playlist_id, fallback_exc)
+            except Exception as fallback_exc:
+                _raise_spotify_request_error(playlist_id, fallback_exc)
+        else:
+            _raise_spotify_request_error(playlist_id, exc)
     except Exception as exc:
-        status_code, body_snippet = _extract_spotify_error_details(exc)
-        status_label = status_code if status_code is not None else "unknown"
-        logger.warning(
-            "Spotify request failed for playlist %s: status=%s, body=%s",
-            playlist_id,
-            status_label,
-            body_snippet or "<empty>",
-        )
-        detail = f"Spotify request failed: status={status_label}, body={body_snippet}"
-        raise HTTPException(status_code=502, detail=detail) from exc
+        _raise_spotify_request_error(playlist_id, exc)
 
     name = detail.get("name")
     resolved_url = (detail.get("external_urls") or {}).get("spotify") or playlist_url
