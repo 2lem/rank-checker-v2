@@ -1,3 +1,6 @@
+import logging
+
+import requests
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -17,6 +20,18 @@ from app.repositories.tracked_playlists import (
 from app.schemas.playlist import TrackedPlaylistCreate, TrackedPlaylistOut
 
 router = APIRouter(tags=["playlists"])
+logger = logging.getLogger(__name__)
+
+
+def _extract_spotify_error_details(exc: Exception) -> tuple[str | None, str]:
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None, ""
+    status_code = getattr(response, "status_code", None)
+    body_text = (getattr(response, "text", "") or "").strip()
+    if len(body_text) > 300:
+        body_text = body_text[:300]
+    return status_code, body_text
 
 
 @router.get("", response_model=list[TrackedPlaylistOut])
@@ -43,7 +58,16 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
             params={"fields": "name,external_urls.spotify"},
         )
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="Spotify request failed.") from exc
+        status_code, body_snippet = _extract_spotify_error_details(exc)
+        status_label = status_code if status_code is not None else "unknown"
+        logger.warning(
+            "Spotify request failed for playlist %s: status=%s, body=%s",
+            playlist_id,
+            status_label,
+            body_snippet or "<empty>",
+        )
+        detail = f"Spotify request failed: status={status_label}, body={body_snippet}"
+        raise HTTPException(status_code=502, detail=detail) from exc
 
     name = detail.get("name")
     resolved_url = (detail.get("external_urls") or {}).get("spotify") or playlist_url
