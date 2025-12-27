@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+from uuid import UUID
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,10 +17,16 @@ from app.core.spotify import (
 from app.core.db import get_db
 from app.repositories.tracked_playlists import (
     create_tracked_playlist,
+    get_tracked_playlist_by_id,
     get_tracked_playlist_by_playlist_id,
     list_tracked_playlists,
+    update_tracked_playlist_targets,
 )
-from app.schemas.playlist import TrackedPlaylistCreate, TrackedPlaylistOut
+from app.schemas.playlist import (
+    TrackedPlaylistCreate,
+    TrackedPlaylistOut,
+    TrackedPlaylistTargetsUpdate,
+)
 
 router = APIRouter(tags=["playlists"])
 logger = logging.getLogger(__name__)
@@ -78,6 +85,30 @@ def _raise_spotify_request_error(playlist_id: str, exc: Exception) -> None:
     )
     detail = f"Spotify request failed: status={status_label}, body={body_snippet}"
     raise HTTPException(status_code=502, detail=detail) from exc
+
+
+def _normalize_list(values: list[str] | None, *, upper: bool = False) -> list[str]:
+    if values is None:
+        return []
+    cleaned: list[str] = []
+    for entry in values:
+        value = (entry or "").strip()
+        if not value:
+            continue
+        if upper:
+            value = value.upper()
+        if value not in cleaned:
+            cleaned.append(value)
+    return cleaned
+
+
+def _ensure_no_removals(existing: list[str], incoming: list[str], label: str) -> None:
+    missing = [entry for entry in existing if entry not in incoming]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Existing {label} cannot be removed. Please contact support.",
+        )
 
 
 @router.get("", response_model=list[TrackedPlaylistOut])
@@ -173,4 +204,44 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
         playlist_last_updated_at=playlist_last_updated_at,
         target_countries=payload.target_countries,
         target_keywords=payload.target_keywords,
+    )
+
+
+@router.patch("/{tracked_playlist_id}/targets", response_model=TrackedPlaylistOut)
+def update_playlist_targets(
+    tracked_playlist_id: UUID,
+    payload: TrackedPlaylistTargetsUpdate,
+    db: Session = Depends(get_db),
+):
+    tracked = get_tracked_playlist_by_id(db, tracked_playlist_id)
+    if not tracked:
+        raise HTTPException(status_code=404, detail="Tracked playlist not found.")
+
+    existing_countries = _normalize_list(tracked.target_countries, upper=True)
+    existing_keywords = _normalize_list(tracked.target_keywords)
+
+    incoming_countries = (
+        _normalize_list(payload.target_countries, upper=True)
+        if payload.target_countries is not None
+        else existing_countries
+    )
+    incoming_keywords = (
+        _normalize_list(payload.target_keywords)
+        if payload.target_keywords is not None
+        else existing_keywords
+    )
+
+    _ensure_no_removals(existing_countries, incoming_countries, "target countries")
+    _ensure_no_removals(existing_keywords, incoming_keywords, "target keywords")
+
+    if len(incoming_countries) > 5:
+        raise HTTPException(status_code=400, detail="You can select up to 5 target countries.")
+    if len(incoming_keywords) > 5:
+        raise HTTPException(status_code=400, detail="You can select up to 5 target keywords.")
+
+    return update_tracked_playlist_targets(
+        db,
+        tracked,
+        target_countries=incoming_countries,
+        target_keywords=incoming_keywords,
     )
