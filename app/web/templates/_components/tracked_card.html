@@ -85,6 +85,7 @@
       <div class="tracked-manage-actions">
         <button class="btn btn-primary" type="button" data-edit-toggle>Edit Configuration</button>
         <button class="btn btn-secondary" type="button" data-refresh-stats>Refresh Stats</button>
+        <button class="btn btn-secondary" type="button" data-basic-scan-toggle>Basic Scan</button>
         <button class="btn btn-secondary" type="button" disabled>Delete Playlist</button>
         <button class="btn btn-ghost tracked-manage-close" type="button" data-manage-close>Close</button>
       </div>
@@ -135,6 +136,64 @@
             <button class="btn btn-secondary full-width" type="button" data-edit-cancel>Cancel</button>
           </div>
         </form>
+      </div>
+      <div class="tracked-basic-scan" data-basic-scan-panel hidden>
+        <div class="section-header">
+          <h3>Basic Scan (Manual)</h3>
+          <p class="section-subtitle">Run a manual scan for this playlist’s keywords and countries.</p>
+        </div>
+        <div class="basic-scan-config compact">
+          <div class="scan-config-row">
+            <span class="scan-config-label">Countries</span>
+            <div class="pill-list">
+              {% if playlist.target_countries %}
+                {% for country in playlist.target_countries %}
+                  {% set label = playlist.target_country_labels.get(country|upper, country) %}
+                  <span class="chip chip-locked">
+                    <span class="chip-label">{{ label }}</span>
+                  </span>
+                {% endfor %}
+              {% else %}
+                <span class="scan-config-empty">No target countries</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="scan-config-row">
+            <span class="scan-config-label">Keywords</span>
+            <div class="pill-list">
+              {% if playlist.target_keywords %}
+                {% for keyword in playlist.target_keywords %}
+                  <span class="chip chip-locked">
+                    <span class="chip-label">{{ keyword }}</span>
+                  </span>
+                {% endfor %}
+              {% else %}
+                <span class="scan-config-empty">No target keywords</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="basic-scan-actions">
+          <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
+        </div>
+        <div class="basic-scan-progress" data-basic-scan-progress hidden>
+          <div class="progress-bar">
+            <div class="progress-fill" data-basic-scan-progress-fill></div>
+          </div>
+          <div class="progress-status" data-basic-scan-progress-status>Starting scan…</div>
+          <div class="progress-log" data-basic-scan-progress-log></div>
+        </div>
+        <div class="basic-scan-results" data-basic-scan-results hidden>
+          <div class="results-section">
+            <h4>Summary</h4>
+            <div class="summary-lead" data-basic-scan-summary-lead></div>
+            <div class="summary-list" data-basic-scan-summary-list></div>
+            <div class="results-actions">
+              <a class="btn btn-ghost" data-basic-scan-export-summary>Download Summary CSV</a>
+              <a class="btn btn-ghost" data-basic-scan-export-detailed>Download Detailed CSV</a>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   {% endif %}
