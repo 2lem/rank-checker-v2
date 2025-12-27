@@ -71,7 +71,11 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
     token = get_access_token()
     playlist_api_url = PLAYLIST_URL.format(playlist_id)
     default_params = {"fields": "name,external_urls.spotify"}
-    fallback_params = {"fields": "name,external_urls.spotify", "market": "from_token"}
+    fallback_market = (payload.target_countries or [None])[0] or "US"
+    fallback_params = {
+        "fields": "name,external_urls.spotify",
+        "market": fallback_market,
+    }
     attempted_urls = []
 
     try:
