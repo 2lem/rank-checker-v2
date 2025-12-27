@@ -1,8 +1,7 @@
-import os
-
-import psycopg2
+from sqlalchemy import text
 from fastapi import APIRouter
 
+from app.core.db import engine, get_database_url
 from app.core.spotify import get_access_token_payload
 
 router = APIRouter()
@@ -10,17 +9,14 @@ router = APIRouter()
 
 @router.get("/db-ping")
 def db_ping():
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
+    if not get_database_url():
         return {"ok": False, "error": "DATABASE_URL not set"}
 
     try:
-        conn = psycopg2.connect(database_url, connect_timeout=5)
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT 1")
-        finally:
-            conn.close()
+        if engine is None:
+            raise RuntimeError("Database engine not configured")
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
     except Exception:
         return {"ok": False, "error": "Database connection failed"}
 
