@@ -250,7 +250,7 @@ def _format_relative_time(value: datetime | None, now: datetime | None = None) -
     if delta_seconds < 0:
         delta_seconds = 0
     if delta_seconds < 60:
-        return "just now"
+        return "Just Now"
     minutes = delta_seconds // 60
     if minutes < 60:
         unit = "minute" if minutes == 1 else "minutes"
