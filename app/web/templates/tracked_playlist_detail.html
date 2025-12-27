@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ playlist.name }} · Tracked Playlist</title>
+    <link rel="stylesheet" href="/static/ui.css" />
+    <link rel="stylesheet" href="/static/tracked.css" />
+  </head>
+  <body class="app-body">
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <h1>{{ playlist.name }}</h1>
+          <p class="page-subtitle">Playlist ID: {{ playlist.playlist_id }}</p>
+        </div>
+        <div class="page-header-actions">
+          {% set label = 'Back to Tracked Playlists' %}
+          {% set button_variant = 'ghost' %}
+          {% set href = '/' %}
+          {% include "_components/button.html" %}
+        </div>
+      </header>
+
+      {% set variant = 'detail' %}
+      {% include "_components/tracked_card.html" %}
+
+      <section class="toolbar">
+        {% set label = 'Refresh Stats' %}
+        {% set button_variant = 'primary' %}
+        {% set data_target = 'panel-refresh' %}
+        {% include "_components/button.html" %}
+
+        {% set label = 'Manage' %}
+        {% set button_variant = 'secondary' %}
+        {% set data_target = 'panel-manage' %}
+        {% include "_components/button.html" %}
+
+        {% set label = 'Edit Configuration' %}
+        {% set button_variant = 'secondary' %}
+        {% set data_target = 'panel-edit' %}
+        {% include "_components/button.html" %}
+
+        {% set label = 'Basic Scan (Manual)' %}
+        {% set button_variant = 'secondary' %}
+        {% set data_target = 'panel-scan' %}
+        {% include "_components/button.html" %}
+
+        {% set label = 'CSV Export' %}
+        {% set button_variant = 'secondary' %}
+        {% set data_target = 'panel-export' %}
+        {% include "_components/button.html" %}
+      </section>
+
+      <section class="panel" id="panel-refresh">
+        <div class="panel-header">
+          <h2>Refresh Stats</h2>
+          <p>Trigger an updated snapshot of playlist metadata.</p>
+        </div>
+        <div class="panel-body">
+          <div class="panel-placeholder">Refresh stats functionality will be wired in a future step.</div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-manage">
+        <div class="panel-header">
+          <h2>Manage Panel</h2>
+          <p>View current tracking info and manage playlist settings.</p>
+        </div>
+        <div class="panel-body">
+          <div class="panel-placeholder">Manage tools will appear here.</div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-edit">
+        <div class="panel-header">
+          <h2>Edit Configuration Panel</h2>
+          <p>Update target countries and keyword tracking.</p>
+        </div>
+        <div class="panel-body">
+          <div class="panel-placeholder">Configuration editing will appear here.</div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-scan">
+        <div class="panel-header">
+          <h2>Basic Scan Panel</h2>
+          <p>Run a manual scan using stored targets.</p>
+        </div>
+        <div class="panel-body">
+          <div class="panel-placeholder">Basic scan controls will appear here.</div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-export">
+        <div class="panel-header">
+          <h2>Export Panel</h2>
+          <p>Download exports for tracked playlist data.</p>
+        </div>
+        <div class="panel-body">
+          <div class="panel-placeholder">Export tools will appear here.</div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const toolbarButtons = document.querySelectorAll('[data-panel-target]');
+      const panels = document.querySelectorAll('.panel');
+
+      const togglePanel = (targetId) => {
+        let activePanel = null;
+        panels.forEach((panel) => {
+          if (panel.id === targetId) {
+            activePanel = panel;
+          }
+        });
+
+        if (!activePanel) {
+          return;
+        }
+
+        const isActive = activePanel.classList.contains('is-active');
+        panels.forEach((panel) => panel.classList.remove('is-active'));
+
+        if (!isActive) {
+          activePanel.classList.add('is-active');
+          activePanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      };
+
+      toolbarButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          togglePanel(button.dataset.panelTarget);
+        });
+      });
+
+      if (panels.length) {
+        panels[0].classList.add('is-active');
+      }
+    </script>
+  </body>
+</html>
