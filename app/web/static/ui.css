@@ -246,6 +246,10 @@ body {
   margin: 8px 0 4px;
 }
 
+.is-hidden {
+  display: none;
+}
+
 .panel {
   display: none;
   background: var(--surface);

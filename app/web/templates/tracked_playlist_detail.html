@@ -37,6 +37,7 @@
       {% include "_components/tracked_card.html" %}
 
       <section class="toolbar">
+        {% set href = None %}
         {% set label = 'Manage' %}
         {% set button_variant = 'secondary' %}
         {% set data_target = 'panel-manage' %}
@@ -47,10 +48,9 @@
         {% set data_target = 'panel-edit' %}
         {% include "_components/button.html" %}
 
-        {% set label = 'Basic Scan (Manual)' %}
-        {% set button_variant = 'secondary' %}
-        {% set data_target = 'panel-scan' %}
-        {% include "_components/button.html" %}
+        <button class="btn btn-secondary" type="button" data-basic-scan-toggle aria-expanded="false">
+          Basic Scan (Manual)
+        </button>
 
         {% set label = 'CSV Export' %}
         {% set button_variant = 'secondary' %}
@@ -58,7 +58,7 @@
         {% include "_components/button.html" %}
       </section>
 
-      <section class="panel" id="panel-manage">
+      <section class="panel" id="panel-manage" data-panel>
         <div class="panel-header">
           <h2>Manage Panel</h2>
           <p>View current tracking info and manage playlist settings.</p>
@@ -68,7 +68,7 @@
         </div>
       </section>
 
-      <section class="panel" id="panel-edit">
+      <section class="panel" id="panel-edit" data-panel>
         <div class="panel-header">
           <h2>Edit Configuration Panel</h2>
           <p>Update target countries and keyword tracking.</p>
@@ -78,7 +78,7 @@
         </div>
       </section>
 
-      <section class="panel" id="panel-scan">
+      <section class="panel is-hidden" id="basic-scan-section">
         <div class="panel-header">
           <h2>Basic Scan Panel</h2>
           <p>Run a manual scan using stored targets.</p>
@@ -151,7 +151,7 @@
         </div>
       </section>
 
-      <section class="panel" id="panel-export">
+      <section class="panel" id="panel-export" data-panel>
         <div class="panel-header">
           <h2>Export Panel</h2>
           <p>Download exports for tracked playlist data.</p>
@@ -166,9 +166,12 @@
       const statusArea = document.getElementById('playlist-status');
       const refreshButton = document.querySelector('[data-refresh-stats]');
       const toolbarButtons = document.querySelectorAll('[data-panel-target]');
-      const panels = document.querySelectorAll('.panel');
+      const panels = document.querySelectorAll('.panel[data-panel]');
       const toolbar = document.querySelector('.toolbar');
       let lastAnchor = toolbar;
+      const basicScanToggle = document.querySelector('[data-basic-scan-toggle]');
+      const basicScanSection = document.getElementById('basic-scan-section');
+      let preOpenScrollY = null;
 
       const togglePanel = (targetId) => {
         let activePanel = null;
@@ -206,6 +209,40 @@
       if (panels.length) {
         panels[0].classList.add('is-active');
       }
+
+      const scrollSectionToCenter = (section) => {
+        if (!section) {
+          return;
+        }
+        const rect = section.getBoundingClientRect();
+        const sectionTop = window.scrollY + rect.top;
+        const target =
+          sectionTop - window.innerHeight / 2 + rect.height / 2;
+        window.scrollTo({ top: Math.max(target, 0), behavior: 'smooth' });
+      };
+
+      const toggleBasicScan = () => {
+        if (!basicScanSection || !basicScanToggle) {
+          return;
+        }
+        const isHidden = basicScanSection.classList.contains('is-hidden');
+        if (isHidden) {
+          preOpenScrollY = window.scrollY;
+          basicScanSection.classList.remove('is-hidden');
+          basicScanSection.classList.add('is-active');
+          basicScanToggle.setAttribute('aria-expanded', 'true');
+          scrollSectionToCenter(basicScanSection);
+          return;
+        }
+        basicScanSection.classList.add('is-hidden');
+        basicScanSection.classList.remove('is-active');
+        basicScanToggle.setAttribute('aria-expanded', 'false');
+        if (preOpenScrollY !== null) {
+          window.scrollTo({ top: preOpenScrollY, behavior: 'smooth' });
+        }
+      };
+
+      basicScanToggle?.addEventListener('click', toggleBasicScan);
 
       const setStatus = (message, variant) => {
         if (!statusArea) {
