@@ -22,30 +22,18 @@
         {% endif %}
       </div>
       <div class="tracked-title" title="{{ playlist.name }}">{{ playlist.name }}</div>
-      <div class="tracked-meta-line tracked-meta-subtle">
-        <span class="tracked-meta-group">
-          <span class="tracked-meta-label">Playlist ID:</span>
-          <span class="tracked-meta-value">{{ playlist.playlist_id }}</span>
-        </span>
-        <span class="tracked-meta-group">
-          <span class="tracked-meta-label">URL:</span>
-          <a class="tracked-link" href="{{ playlist.playlist_url }}" target="_blank" rel="noopener noreferrer">
-            {{ playlist.playlist_url }}
-          </a>
-        </span>
-      </div>
       <div class="tracked-meta-line">
         <span class="tracked-meta-group">
           <span class="tracked-meta-label">Owner:</span>
-          <span class="tracked-meta-value">{{ playlist.owner }}</span>
+          <span class="tracked-meta-value">{{ playlist.owner_name }}</span>
         </span>
         <span class="tracked-meta-group">
           <span class="tracked-meta-label">Followers:</span>
-          <span class="tracked-meta-value">{{ playlist.followers }}</span>
+          <span class="tracked-meta-value">{{ playlist.followers_total }}</span>
         </span>
         <span class="tracked-meta-group">
           <span class="tracked-meta-label">Songs Count:</span>
-          <span class="tracked-meta-value">{{ playlist.songs_count }}</span>
+          <span class="tracked-meta-value">{{ playlist.tracks_count }}</span>
         </span>
       </div>
       <div class="tracked-meta-line tracked-meta-subtle">
@@ -55,7 +43,7 @@
         </span>
         <span class="tracked-meta-group">
           <span class="tracked-meta-label">Last Updated:</span>
-          <span class="tracked-meta-value">{{ playlist.last_updated }}</span>
+          <span class="tracked-meta-value">{{ playlist.last_updated_display }}</span>
         </span>
       </div>
       <div class="tracked-tag-group">
@@ -86,21 +74,4 @@
       </div>
     </div>
   </div>
-  {% if variant != 'detail' %}
-    <div class="tracked-card-actions">
-      {% set label = 'Manage' %}
-      {% set button_variant = 'primary' %}
-      {% set href = '/playlists/' ~ playlist.id %}
-      {% set extra_class = 'tracked-card-action' %}
-      {% include "_components/button.html" %}
-      {% if playlist.playlist_url %}
-        {% set label = 'Open Spotify' %}
-        {% set button_variant = 'secondary' %}
-        {% set href = playlist.playlist_url %}
-        {% set target = '_blank' %}
-        {% set extra_class = 'tracked-card-action' %}
-        {% include "_components/button.html" %}
-      {% endif %}
-    </div>
-  {% endif %}
 </div>
