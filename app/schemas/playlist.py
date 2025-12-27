@@ -27,3 +27,8 @@ class TrackedPlaylistOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TrackedPlaylistTargetsUpdate(BaseModel):
+    target_countries: list[str] | None = None
+    target_keywords: list[str] | None = None

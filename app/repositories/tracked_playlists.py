@@ -52,3 +52,20 @@ def create_tracked_playlist(
     db.commit()
     db.refresh(tracked)
     return tracked
+
+
+def update_tracked_playlist_targets(
+    db: Session,
+    tracked: TrackedPlaylist,
+    *,
+    target_countries: list[str] | None = None,
+    target_keywords: list[str] | None = None,
+) -> TrackedPlaylist:
+    if target_countries is not None:
+        tracked.target_countries = target_countries
+    if target_keywords is not None:
+        tracked.target_keywords = target_keywords
+    db.add(tracked)
+    db.commit()
+    db.refresh(tracked)
+    return tracked
