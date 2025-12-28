@@ -228,6 +228,9 @@ def _available_markets_with_labels() -> list[dict[str, str]]:
     markets = []
     for code in AVAILABLE_MARKETS:
         markets.append({"code": code, "label": _market_label(code)})
+
+    # Sorted by English name (not code).
+    markets.sort(key=lambda market: market["label"].casefold())
     return markets
 
 
