@@ -13,16 +13,15 @@
         <div>
           <h1 class="page-title dashboard-title" title="{{ playlist.dashboard_header_title }}">
             <span class="dashboard-title-prefix">Dashboard</span>
-            <span class="pill pill-primary dashboard-title-pill" title="{{ playlist.name }}">
-              {{ playlist.dashboard_playlist_label }}
-            </span>
           </h1>
         </div>
         <div class="page-header-actions">
+          <button class="btn btn-tracked-outline" type="button">Tracked Playlist</button>
           <button class="btn btn-primary" type="button" data-refresh-stats>Refresh Stats</button>
-          {% set label = 'Back to Tracked Playlists' %}
+          {% set label = 'Back To Tracked Playlists' %}
           {% set button_variant = 'ghost' %}
           {% set href = '/' %}
+          {% set extra_class = 'btn-back-blue' %}
           {% include "_components/button.html" %}
         </div>
       </header>
