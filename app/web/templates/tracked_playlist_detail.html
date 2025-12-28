@@ -307,6 +307,23 @@
         return `${year}-${month}-${day}_${hours}-${minutes}`;
       };
 
+      const formatFollowersValue = (value) => {
+        if (value === undefined || value === null || value === '') {
+          return '—';
+        }
+        if (typeof value === 'object') {
+          if ('total' in value) {
+            return formatFollowersValue(value.total);
+          }
+          return '—';
+        }
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) {
+          return numeric.toLocaleString();
+        }
+        return value;
+      };
+
       const flagEmoji = (code) => {
         const upper = (code || '').toUpperCase();
         if (upper.length !== 2) {
@@ -432,16 +449,28 @@
         };
 
         const resolveFollowers = (result) => {
-          const followers = result.followers;
-          const nestedFollowers = followers && typeof followers === 'object' ? followers.total : undefined;
-          return (
+          const nestedFollowers =
+            result.followers && typeof result.followers === 'object'
+              ? result.followers.total
+              : undefined;
+          const nestedPlaylistFollowers =
+            result.playlist && typeof result.playlist === 'object'
+              ? result.playlist.followers || result.playlist.followers_total || result.playlist.follower_count
+              : undefined;
+          const nestedPlaylistFollowersTotal =
+            nestedPlaylistFollowers && typeof nestedPlaylistFollowers === 'object'
+              ? nestedPlaylistFollowers.total
+              : undefined;
+          const candidate =
             result.playlist_followers ??
-            result.followers ??
             result.followers_total ??
             result.followers_count ??
+            result.follower_count ??
             nestedFollowers ??
-            '—'
-          );
+            nestedPlaylistFollowersTotal ??
+            nestedPlaylistFollowers ??
+            result.followers;
+          return formatFollowersValue(candidate);
         };
 
         const renderDetailed = (scan) => {
@@ -450,23 +479,32 @@
           }
           detailedWrap.innerHTML = '';
           const detailed = scan.detailed || {};
+          const countryAccordions = [];
           Object.values(detailed).forEach((countryData) => {
             const countryCode = countryData.country;
             const countryDetails = document.createElement('details');
             countryDetails.className = 'accordion';
             const summary = document.createElement('summary');
             summary.textContent = `${flagEmoji(countryCode)} ${resolveMarketLabel(countryCode)}`;
-            summary.addEventListener('click', () => {
-              requestAnimationFrame(() => {
-                if (countryDetails.open) {
-                  scrollSectionToCenter(countryDetails);
+            countryDetails.addEventListener('toggle', () => {
+              if (!countryDetails.open) {
+                return;
+              }
+              countryAccordions.forEach((openDetails) => {
+                if (openDetails !== countryDetails) {
+                  openDetails.open = false;
                 }
+              });
+              requestAnimationFrame(() => {
+                scrollSectionToCenter(countryDetails);
               });
             });
             countryDetails.appendChild(summary);
+            countryAccordions.push(countryDetails);
 
             const keywordContainer = document.createElement('div');
             keywordContainer.className = 'accordion-body';
+            const keywordAccordions = [];
 
             Object.entries(countryData.keywords || {}).forEach(([keyword, keywordData]) => {
               const keywordDetails = document.createElement('details');
@@ -474,11 +512,17 @@
               const keywordSummary = document.createElement('summary');
               keywordSummary.textContent = `${keyword} · ${formatTimestamp(keywordData.searched_at)}`;
               keywordDetails.appendChild(keywordSummary);
-              keywordSummary.addEventListener('click', () => {
-                requestAnimationFrame(() => {
-                  if (keywordDetails.open) {
-                    scrollSectionToCenter(keywordDetails);
+              keywordDetails.addEventListener('toggle', () => {
+                if (!keywordDetails.open) {
+                  return;
+                }
+                keywordAccordions.forEach((openKeyword) => {
+                  if (openKeyword !== keywordDetails) {
+                    openKeyword.open = false;
                   }
+                });
+                requestAnimationFrame(() => {
+                  scrollSectionToCenter(keywordDetails);
                 });
               });
 
@@ -524,6 +568,7 @@
               keywordBody.appendChild(table);
               keywordDetails.appendChild(keywordBody);
               keywordContainer.appendChild(keywordDetails);
+              keywordAccordions.push(keywordDetails);
             });
 
             countryDetails.appendChild(keywordContainer);
@@ -542,17 +587,17 @@
           const startedAt =
             data.started_at || data.searched_at || data.summary?.[0]?.searched_at;
           const timestamp = formatFileTimestamp(startedAt);
+          const effectiveScanId = data.scan_id || scanId;
+          const filenameBase = timestamp
+            ? `${timestamp}_${effectiveScanId}`
+            : `${effectiveScanId}`;
           if (exportSummary) {
             exportSummary.href = `/api/basic-rank-checker/scans/${scanId}/export/summary.csv`;
-            exportSummary.download = timestamp
-              ? `${timestamp}_${scanId}_summary.csv`
-              : `${scanId}_summary.csv`;
+            exportSummary.download = `${filenameBase}_summary.csv`;
           }
           if (exportDetailed) {
             exportDetailed.href = `/api/basic-rank-checker/scans/${scanId}/export/detailed.csv`;
-            exportDetailed.download = timestamp
-              ? `${timestamp}_${scanId}_detailed.csv`
-              : `${scanId}_detailed.csv`;
+            exportDetailed.download = `${filenameBase}_detailed.csv`;
           }
         };
 
