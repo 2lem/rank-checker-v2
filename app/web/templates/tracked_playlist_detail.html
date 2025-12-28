@@ -563,9 +563,13 @@
                 tbody.appendChild(row);
               });
 
+              const tableScroll = document.createElement('div');
+              tableScroll.className = 'table-scroll';
+              tableScroll.appendChild(table);
+
               const keywordBody = document.createElement('div');
               keywordBody.className = 'accordion-body';
-              keywordBody.appendChild(table);
+              keywordBody.appendChild(tableScroll);
               keywordDetails.appendChild(keywordBody);
               keywordContainer.appendChild(keywordDetails);
               keywordAccordions.push(keywordDetails);
