@@ -3,8 +3,9 @@ from __future__ import annotations
 import csv
 import io
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
@@ -20,6 +21,9 @@ from app.repositories.tracked_playlists import get_tracked_playlist_by_id
 router = APIRouter(tags=["basic-rank-checker"])
 
 
+_ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
+
+
 def _format_dt(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -28,11 +32,20 @@ def _format_dt(value: datetime | None) -> str | None:
     return value.isoformat()
 
 
-def _format_scan_date(scan: BasicScan) -> str:
-    created_at = scan.created_at or datetime.now()
-    if created_at.tzinfo is not None:
-        created_at = created_at.astimezone()
-    return created_at.strftime("%d-%m-%Y")
+def _format_csv_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    localized = value
+    if localized.tzinfo is None:
+        localized = localized.replace(tzinfo=timezone.utc)
+    localized = localized.astimezone(_ISTANBUL_TZ)
+    return localized.strftime("%d-%m-%Y_%H-%M")
+
+
+def _format_scan_timestamp(scan: BasicScan) -> str:
+    timestamp_source = scan.started_at or scan.created_at or datetime.now(timezone.utc)
+    formatted = _format_csv_datetime(timestamp_source)
+    return formatted or "scan"
 
 
 def _csv_response(filename: str, headers: list[str], rows: list[list[object | None]]) -> Response:
@@ -156,7 +169,7 @@ def export_summary_csv(scan_id: str, db: Session = Depends(get_db)):
     for query in queries:
         rows.append(
             [
-                _format_dt(query.searched_at),
+                _format_csv_datetime(query.searched_at),
                 query.keyword,
                 query.country_code,
                 query.tracked_rank,
@@ -165,7 +178,8 @@ def export_summary_csv(scan_id: str, db: Session = Depends(get_db)):
             ]
         )
 
-    filename = f"{_format_scan_date(scan)}_{scan.id}_basic.csv"
+    timestamp = _format_scan_timestamp(scan)
+    filename = f"{timestamp}_{scan.id}_summary.csv"
     return _csv_response(
         filename,
         ["searched_at", "keyword", "country", "rank", "playlist_name", "playlist_followers"],
@@ -221,7 +235,7 @@ def export_detailed_csv(
     for row in db.execute(query).all():
         rows.append(
             [
-                _format_dt(row.searched_at),
+                _format_csv_datetime(row.searched_at),
                 row.keyword,
                 row.country_code,
                 row.rank,
@@ -229,13 +243,14 @@ def export_detailed_csv(
                 row.playlist_owner,
                 row.playlist_followers,
                 row.songs_count,
-                _format_dt(row.playlist_last_added_track_at),
+                _format_csv_datetime(row.playlist_last_added_track_at),
                 row.playlist_description,
                 row.playlist_url,
             ]
         )
 
-    filename = f"{_format_scan_date(scan)}_{scan.id}_detailed.csv"
+    timestamp = _format_scan_timestamp(scan)
+    filename = f"{timestamp}_{scan.id}_detailed.csv"
     return _csv_response(
         filename,
         [

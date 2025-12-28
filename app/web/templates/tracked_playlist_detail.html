@@ -328,7 +328,7 @@
         const day = pad(date.getDate());
         const hours = pad(date.getHours());
         const minutes = pad(date.getMinutes());
-        return `${year}-${month}-${day}_${hours}-${minutes}`;
+        return `${day}-${month}-${year}_${hours}-${minutes}`;
       };
 
       const formatFollowersValue = (value) => {
