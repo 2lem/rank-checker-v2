@@ -85,6 +85,36 @@ def db_ping():
     return {"ok": True}
 
 
+@router.post("/db-terminate-idle-in-txn")
+def db_terminate_idle_in_txn():
+    # TEMP DEBUG: Terminate "idle in transaction" sessions for this service.
+    if engine is None:
+        return {"ok": False, "error": "Database engine not configured"}
+
+    terminated_pids = []
+    try:
+        with engine.connect() as conn:
+            idle_pids = conn.execute(
+                text(
+                    """
+                    SELECT pid
+                    FROM pg_stat_activity
+                    WHERE state = 'idle in transaction'
+                      AND application_name = 'rank-checker-v2-fastapi'
+                      AND datname = current_database();
+                    """
+                )
+            ).scalars()
+
+            for pid in idle_pids:
+                conn.execute(text("SELECT pg_terminate_backend(:pid);"), {"pid": pid})
+                terminated_pids.append(pid)
+    except Exception:
+        return {"ok": False, "error": "Terminate idle transaction query failed"}
+
+    return {"ok": True, "terminated_pids": terminated_pids}
+
+
 @router.get("/spotify-token")
 def spotify_token():
     try:
