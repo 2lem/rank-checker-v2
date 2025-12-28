@@ -19,7 +19,12 @@ def _create_engine():
     database_url = get_database_url()
     if not database_url:
         return None
-    return create_engine(database_url, pool_pre_ping=True)
+    engine_kwargs = {"pool_pre_ping": True}
+
+    if database_url.startswith("postgresql+psycopg2://"):
+        engine_kwargs["connect_args"] = {"application_name": "rank-checker-v2-fastapi"}
+
+    return create_engine(database_url, **engine_kwargs)
 
 
 engine = _create_engine()
