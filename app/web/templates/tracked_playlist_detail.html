@@ -36,91 +36,97 @@
         </div>
       </section>
 
-      {% set variant = 'detail' %}
-      {% include "_components/tracked_card.html" %}
+      <div class="tracked-detail-stack">
+        {% set variant = 'detail' %}
+        {% include "_components/tracked_card.html" %}
 
-      <section class="toolbar-panel">
-        <div class="toolbar-actions">
-          <button class="btn btn-secondary" type="button" data-basic-scan-toggle aria-expanded="false">
-            Basic Scan (Manual)
-          </button>
-        </div>
-      </section>
-
-      <section class="panel basic-scan-panel is-hidden" id="basic-scan-section">
-        <div class="panel-header">
-          <h2>Basic Scan Panel</h2>
-          <p>Run a manual scan using stored targets.</p>
-        </div>
-        <div class="panel-body">
-          <div class="basic-scan" data-basic-scan>
-            <section class="scan-parameters" id="scan-parameters" data-basic-scan-parameters>
-              <div class="scan-config-row">
-                <span class="scan-config-label">Countries</span>
-                <div class="pill-list" data-basic-scan-countries>
-                  {% if playlist.target_countries %}
-                    {% for country in playlist.target_countries %}
-                      {% set label = playlist.target_country_labels.get(country|upper, country) %}
-                      <span class="chip chip-locked">
-                        <span class="chip-label">{{ label }}</span>
-                      </span>
-                    {% endfor %}
-                  {% else %}
-                    <span class="scan-config-empty">No target countries</span>
-                  {% endif %}
-                </div>
-              </div>
-              <div class="scan-config-row">
-                <span class="scan-config-label">Keywords</span>
-                <div class="pill-list" data-basic-scan-keywords>
-                  {% if playlist.target_keywords %}
-                    {% for keyword in playlist.target_keywords %}
-                      <span class="chip chip-locked">
-                        <span class="chip-label">{{ keyword }}</span>
-                      </span>
-                    {% endfor %}
-                  {% else %}
-                    <span class="scan-config-empty">No target keywords</span>
-                  {% endif %}
-                </div>
-              </div>
-              <div class="run-scan-controls" id="run-scan-controls" data-basic-scan-run-controls>
-                <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
-              </div>
-            </section>
-            <section
-              class="run-progress basic-scan-progress"
-              id="basic-scan-progress"
-              data-basic-scan-progress
-              hidden
-            >
-              <div class="progress-bar">
-                <div class="progress-fill" data-basic-scan-progress-fill></div>
-              </div>
-              <div class="progress-status" data-basic-scan-progress-status>Starting scan…</div>
-              <div class="progress-log" data-basic-scan-progress-log></div>
-            </section>
-            <section class="results" id="basic-scan-results" data-basic-scan-results hidden>
-              <div class="results-header">
-                <h3>Basic Scan Results</h3>
-                <div class="download-csv-controls" id="basic-scan-csv-controls" data-basic-scan-csv-controls>
-                  <a class="btn btn-csv" data-basic-scan-export-summary>Download Summary CSV</a>
-                  <a class="btn btn-csv" data-basic-scan-export-detailed>Download Detailed CSV</a>
-                </div>
-              </div>
-              <div class="summary" id="basic-scan-summary">
-                <h3>Summary</h3>
-                <div class="summary-lead" data-basic-scan-summary-lead></div>
-                <div class="summary-list" data-basic-scan-summary-list></div>
-              </div>
-              <div class="detailed-scan-insights" id="basic-scan-detailed">
-                <h3>Detailed Scan Insights</h3>
-                <div class="detailed-insights" data-basic-scan-detailed></div>
-              </div>
-            </section>
+        <section class="toolbar-panel">
+          <div class="toolbar-actions">
+            <button class="btn btn-secondary" type="button" data-basic-scan-toggle aria-expanded="false">
+              Basic Scan (Manual)
+            </button>
           </div>
-        </div>
-      </section>
+        </section>
+
+        <section class="panel basic-scan-panel is-hidden" id="basic-scan-section">
+          <div class="panel-header">
+            <h2>Basic Scan Panel</h2>
+            <p>Run a manual scan using stored targets.</p>
+          </div>
+          <div class="panel-body">
+            <div class="basic-scan" data-basic-scan>
+              <section class="scan-parameters" id="scan-parameters" data-basic-scan-parameters>
+                <div class="scan-config-row">
+                  <span class="scan-config-label">Countries</span>
+                  <div class="pill-list" data-basic-scan-countries>
+                    {% if playlist.target_countries %}
+                      {% for country in playlist.target_countries %}
+                        {% set label = playlist.target_country_labels.get(country|upper, country) %}
+                        <span class="chip chip-locked">
+                          <span class="chip-label">{{ label }}</span>
+                        </span>
+                      {% endfor %}
+                    {% else %}
+                      <span class="scan-config-empty">No target countries</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="scan-config-row">
+                  <span class="scan-config-label">Keywords</span>
+                  <div class="pill-list" data-basic-scan-keywords>
+                    {% if playlist.target_keywords %}
+                      {% for keyword in playlist.target_keywords %}
+                        <span class="chip chip-locked">
+                          <span class="chip-label">{{ keyword }}</span>
+                        </span>
+                      {% endfor %}
+                    {% else %}
+                      <span class="scan-config-empty">No target keywords</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="run-scan-controls" id="run-scan-controls" data-basic-scan-run-controls>
+                  <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
+                </div>
+              </section>
+              <section
+                class="run-progress basic-scan-progress"
+                id="basic-scan-progress"
+                data-basic-scan-progress
+                hidden
+              >
+                <div class="progress-bar">
+                  <div class="progress-fill" data-basic-scan-progress-fill></div>
+                </div>
+                <div class="progress-status" data-basic-scan-progress-status>Starting scan…</div>
+                <div class="progress-log" data-basic-scan-progress-log></div>
+              </section>
+              <section class="results" id="basic-scan-results" data-basic-scan-results hidden>
+                <div class="results-header">
+                  <h3>Basic Scan Results</h3>
+                  <div
+                    class="download-csv-controls basic-scan-download-actions"
+                    id="basic-scan-csv-controls"
+                    data-basic-scan-csv-controls
+                  >
+                    <a class="btn btn-csv" data-basic-scan-export-summary>Download Summary CSV</a>
+                    <a class="btn btn-csv" data-basic-scan-export-detailed>Download Detailed CSV</a>
+                  </div>
+                </div>
+                <div class="summary" id="basic-scan-summary">
+                  <h3>Summary</h3>
+                  <div class="summary-lead" data-basic-scan-summary-lead></div>
+                  <div class="summary-list" data-basic-scan-summary-list></div>
+                </div>
+                <div class="detailed-scan-insights" id="basic-scan-detailed">
+                  <h3>Detailed Scan Insights</h3>
+                  <div class="detailed-insights" data-basic-scan-detailed></div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+      </div>
     </main>
 
     <script>

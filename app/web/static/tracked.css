@@ -547,6 +547,26 @@
   margin-left: auto;
 }
 
+.basic-scan-download-actions {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+}
+
+.tracked-detail-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tracked-detail-stack .toolbar-panel {
+  padding: 6px 12px;
+}
+
+.tracked-detail-stack .panel {
+  padding: 16px;
+}
+
 .summary,
 .detailed-scan-insights {
   display: flex;
@@ -655,5 +675,19 @@
   .tracked-card-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .results-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .basic-scan-download-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .basic-scan-download-actions .btn {
+    width: 100%;
   }
 }
