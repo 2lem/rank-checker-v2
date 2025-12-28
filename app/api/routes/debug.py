@@ -7,6 +7,30 @@ from app.core.spotify import get_access_token_payload
 router = APIRouter()
 
 
+# TEMP DEBUG: Inspect Postgres connection state
+@router.get("/db-activity")
+def db_activity():
+    if engine is None:
+        return {"ok": False, "error": "Database engine not configured"}
+
+    try:
+        with engine.connect() as conn:
+            activity_rows = conn.execute(
+                text("SELECT now(), count(*) AS total, state FROM pg_stat_activity GROUP BY state ORDER BY total DESC;")
+            ).mappings()
+            idle_in_transaction = conn.execute(
+                text("SELECT count(*) FROM pg_stat_activity WHERE state = 'idle in transaction';")
+            ).scalar()
+    except Exception:
+        return {"ok": False, "error": "Database activity query failed"}
+
+    return {
+        "ok": True,
+        "activity": list(activity_rows),
+        "idle_in_transaction": idle_in_transaction,
+    }
+
+
 @router.get("/db-ping")
 def db_ping():
     if not get_database_url():
