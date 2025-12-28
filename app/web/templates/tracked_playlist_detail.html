@@ -36,75 +36,70 @@
       {% set variant = 'detail' %}
       {% include "_components/tracked_card.html" %}
 
-      <section class="toolbar">
-        <button class="btn btn-secondary" type="button" data-basic-scan-toggle aria-expanded="false">
-          Basic Scan (Manual)
-        </button>
+      <section class="toolbar-panel">
+        <div class="toolbar-actions">
+          <button class="btn btn-secondary" type="button" data-basic-scan-toggle aria-expanded="false">
+            Basic Scan (Manual)
+          </button>
+        </div>
       </section>
 
-      <section class="panel is-hidden" id="basic-scan-section">
+      <section class="panel basic-scan-panel is-hidden" id="basic-scan-section">
         <div class="panel-header">
           <h2>Basic Scan Panel</h2>
           <p>Run a manual scan using stored targets.</p>
         </div>
         <div class="panel-body">
           <div class="basic-scan" data-basic-scan>
-            <div class="start-scan" data-basic-scan-start>
-              <div class="scan-parameters">
-                <div class="scan-config-row">
-                  <span class="scan-config-label">Countries</span>
-                  <div class="pill-list" data-basic-scan-countries>
-                    {% if playlist.target_countries %}
-                      {% for country in playlist.target_countries %}
-                        {% set label = playlist.target_country_labels.get(country|upper, country) %}
-                        <span class="chip chip-locked">
-                          <span class="chip-label">{{ label }}</span>
-                        </span>
-                      {% endfor %}
-                    {% else %}
-                      <span class="scan-config-empty">No target countries</span>
-                    {% endif %}
-                  </div>
-                </div>
-                <div class="scan-config-row">
-                  <span class="scan-config-label">Keywords</span>
-                  <div class="pill-list" data-basic-scan-keywords>
-                    {% if playlist.target_keywords %}
-                      {% for keyword in playlist.target_keywords %}
-                        <span class="chip chip-locked">
-                          <span class="chip-label">{{ keyword }}</span>
-                        </span>
-                      {% endfor %}
-                    {% else %}
-                      <span class="scan-config-empty">No target keywords</span>
-                    {% endif %}
-                  </div>
+            <section class="scan-parameters" data-basic-scan-parameters>
+              <div class="scan-config-row">
+                <span class="scan-config-label">Countries</span>
+                <div class="pill-list" data-basic-scan-countries>
+                  {% if playlist.target_countries %}
+                    {% for country in playlist.target_countries %}
+                      {% set label = playlist.target_country_labels.get(country|upper, country) %}
+                      <span class="chip chip-locked">
+                        <span class="chip-label">{{ label }}</span>
+                      </span>
+                    {% endfor %}
+                  {% else %}
+                    <span class="scan-config-empty">No target countries</span>
+                  {% endif %}
                 </div>
               </div>
-              <div class="run-scan-button">
-                <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
+              <div class="scan-config-row">
+                <span class="scan-config-label">Keywords</span>
+                <div class="pill-list" data-basic-scan-keywords>
+                  {% if playlist.target_keywords %}
+                    {% for keyword in playlist.target_keywords %}
+                      <span class="chip chip-locked">
+                        <span class="chip-label">{{ keyword }}</span>
+                      </span>
+                    {% endfor %}
+                  {% else %}
+                    <span class="scan-config-empty">No target keywords</span>
+                  {% endif %}
+                </div>
               </div>
-            </div>
-            <div class="basic-scan-progress" data-basic-scan-progress hidden>
+            </section>
+            <section class="run-scan-controls" data-basic-scan-run-controls>
+              <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
+            </section>
+            <section class="run-progress basic-scan-progress" data-basic-scan-progress hidden>
               <div class="progress-bar">
                 <div class="progress-fill" data-basic-scan-progress-fill></div>
               </div>
               <div class="progress-status" data-basic-scan-progress-status>Starting scan…</div>
               <div class="progress-log" data-basic-scan-progress-log></div>
-            </div>
-            <div class="result-action-buttons" data-basic-scan-results-actions hidden>
-              <div class="results-actions">
-                <button class="btn btn-secondary" type="button" data-basic-scan-jump-summary>
-                  Jump to Summary
-                </button>
-                <button class="btn btn-secondary" type="button" data-basic-scan-jump-detailed>
-                  Jump to Detailed Insights
-                </button>
-                <a class="btn btn-csv" data-basic-scan-export-summary>Download Summary CSV</a>
-                <a class="btn btn-csv" data-basic-scan-export-detailed>Download Detailed CSV</a>
+            </section>
+            <section class="results" data-basic-scan-results hidden>
+              <div class="results-header">
+                <h3>Basic Scan Results</h3>
+                <div class="download-csv-controls">
+                  <a class="btn btn-csv" data-basic-scan-export-summary>Download Summary CSV</a>
+                  <a class="btn btn-csv" data-basic-scan-export-detailed>Download Detailed CSV</a>
+                </div>
               </div>
-            </div>
-            <div class="results" data-basic-scan-results hidden>
               <div class="summary" id="basic-scan-summary">
                 <h3>Summary</h3>
                 <div class="summary-lead" data-basic-scan-summary-lead></div>
@@ -114,7 +109,7 @@
                 <h3>Detailed Scan Insights</h3>
                 <div class="detailed-insights" data-basic-scan-detailed></div>
               </div>
-            </div>
+            </section>
           </div>
         </div>
       </section>
@@ -125,10 +120,11 @@
       const refreshButton = document.querySelector('[data-refresh-stats]');
       const toolbarButtons = document.querySelectorAll('[data-panel-target]');
       const panels = document.querySelectorAll('.panel[data-panel]');
-      const toolbar = document.querySelector('.toolbar');
+      const toolbar = document.querySelector('.toolbar-panel');
       let lastAnchor = toolbar;
       const basicScanToggle = document.querySelector('[data-basic-scan-toggle]');
       const basicScanSection = document.getElementById('basic-scan-section');
+      let basicScanStageController = null;
       let preOpenScrollY = null;
 
       const togglePanel = (targetId) => {
@@ -189,6 +185,11 @@
           basicScanSection.classList.remove('is-hidden');
           basicScanSection.classList.add('is-active');
           basicScanToggle.setAttribute('aria-expanded', 'true');
+          if (basicScanStageController) {
+            const stage = basicScanStageController.getStage();
+            basicScanStageController.setStage(stage, stage === 1 ? basicScanSection : null);
+            return;
+          }
           scrollSectionToCenter(basicScanSection);
           return;
         }
@@ -298,24 +299,50 @@
         if (!scanRoot) {
           return;
         }
-        const startScanWrap = scanRoot.querySelector('[data-basic-scan-start]');
+        const scanParameters = scanRoot.querySelector('[data-basic-scan-parameters]');
+        const runControls = scanRoot.querySelector('[data-basic-scan-run-controls]');
         const runButton = scanRoot.querySelector('[data-basic-scan-run]');
         const progressWrap = scanRoot.querySelector('[data-basic-scan-progress]');
         const progressFill = scanRoot.querySelector('[data-basic-scan-progress-fill]');
         const progressStatus = scanRoot.querySelector('[data-basic-scan-progress-status]');
         const progressLog = scanRoot.querySelector('[data-basic-scan-progress-log]');
-        const resultsActionButtons = scanRoot.querySelector('[data-basic-scan-results-actions]');
         const resultsWrap = scanRoot.querySelector('[data-basic-scan-results]');
         const summaryLead = scanRoot.querySelector('[data-basic-scan-summary-lead]');
         const summaryList = scanRoot.querySelector('[data-basic-scan-summary-list]');
         const detailedWrap = scanRoot.querySelector('[data-basic-scan-detailed]');
-        const jumpSummary = scanRoot.querySelector('[data-basic-scan-jump-summary]');
-        const jumpDetailed = scanRoot.querySelector('[data-basic-scan-jump-detailed]');
         const exportSummary = scanRoot.querySelector('[data-basic-scan-export-summary]');
         const exportDetailed = scanRoot.querySelector('[data-basic-scan-export-detailed]');
+        const summarySection = document.getElementById('basic-scan-summary');
 
         let activeScanId = null;
         let eventSource = null;
+        let currentStage = 1;
+
+        const setStage = (stage, scrollTarget) => {
+          currentStage = stage;
+          const showStage1 = stage === 1;
+          const showStage2 = stage === 2;
+          const showStage3 = stage === 3;
+
+          if (scanParameters) {
+            scanParameters.hidden = !showStage1;
+          }
+          if (runControls) {
+            runControls.hidden = !showStage1;
+          }
+          if (progressWrap) {
+            progressWrap.hidden = !showStage2;
+          }
+          if (resultsWrap) {
+            resultsWrap.hidden = !showStage3;
+          }
+
+          const target =
+            scrollTarget ||
+            (showStage1 ? scanParameters || scanRoot : showStage2 ? progressWrap : summarySection);
+          scrollSectionToCenter(target);
+        };
+        basicScanStageController = { setStage, getStage: () => currentStage };
 
         const setProgress = (current, total, message) => {
           if (!progressWrap) {
@@ -363,6 +390,19 @@
           });
         };
 
+        const resolveFollowers = (result) => {
+          const followers = result.followers;
+          const nestedFollowers = followers && typeof followers === 'object' ? followers.total : undefined;
+          return (
+            result.playlist_followers ??
+            result.followers ??
+            result.followers_total ??
+            result.followers_count ??
+            nestedFollowers ??
+            '—'
+          );
+        };
+
         const renderDetailed = (scan) => {
           if (!detailedWrap) {
             return;
@@ -393,6 +433,13 @@
               const keywordSummary = document.createElement('summary');
               keywordSummary.textContent = `${keyword} · ${formatTimestamp(keywordData.searched_at)}`;
               keywordDetails.appendChild(keywordSummary);
+              keywordSummary.addEventListener('click', () => {
+                requestAnimationFrame(() => {
+                  if (keywordDetails.open) {
+                    scrollSectionToCenter(keywordDetails);
+                  }
+                });
+              });
 
               const table = document.createElement('table');
               table.className = 'results-table';
@@ -410,12 +457,7 @@
               `;
               const tbody = table.querySelector('tbody');
               (keywordData.results || []).forEach((result) => {
-                const followersValue =
-                  result.playlist_followers ??
-                  result.followers ??
-                  result.followers_total ??
-                  result.followers_count ??
-                  '—';
+                const followersValue = resolveFollowers(result);
                 const row = document.createElement('tr');
                 if (result.is_tracked_playlist) {
                   row.classList.add('tracked-highlight');
@@ -475,17 +517,9 @@
 
         const startScan = async () => {
           runButton.disabled = true;
-          if (startScanWrap) {
-            startScanWrap.hidden = true;
-          }
-          progressWrap.hidden = false;
-          resultsWrap.hidden = true;
-          if (resultsActionButtons) {
-            resultsActionButtons.hidden = true;
-          }
           progressLog.innerHTML = '';
           setProgress(0, 0, 'Starting scan…');
-          scrollSectionToCenter(progressWrap);
+          setStage(2);
 
           try {
             const response = await fetch('/api/basic-rank-checker/scans', {
@@ -514,43 +548,25 @@
                 eventSource.close();
                 setProgress(payload.total || 1, payload.total || 1, 'Scan completed.');
                 await loadResults(activeScanId);
-                resultsWrap.hidden = false;
-                if (resultsActionButtons) {
-                  resultsActionButtons.hidden = false;
-                }
-                progressWrap.hidden = true;
-                scrollSectionToCenter(document.getElementById('basic-scan-summary'));
+                setStage(3, summarySection);
                 runButton.disabled = false;
               }
               if (payload.type === 'error') {
                 eventSource.close();
                 appendLog(payload.message || 'Scan failed.');
                 setProgress(0, 1, payload.message || 'Scan failed.');
-                progressWrap.hidden = true;
+                setStage(1);
                 runButton.disabled = false;
-                if (startScanWrap) {
-                  startScanWrap.hidden = false;
-                }
               }
             };
           } catch (error) {
-            progressWrap.hidden = true;
+            setStage(1);
             runButton.disabled = false;
-            if (startScanWrap) {
-              startScanWrap.hidden = false;
-            }
             setStatus(error.message || 'Failed to start scan.', 'status-error');
           }
         };
 
         runButton?.addEventListener('click', startScan);
-
-        jumpSummary?.addEventListener('click', () => {
-          scrollSectionToCenter(document.getElementById('basic-scan-summary'));
-        });
-        jumpDetailed?.addEventListener('click', () => {
-          scrollSectionToCenter(document.getElementById('basic-scan-detailed'));
-        });
       };
 
       setupBasicScan();
