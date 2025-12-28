@@ -1,16 +1,26 @@
 import logging
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.core.db import engine, get_database_url, get_db
 from app.core.spotify import get_access_token_payload
+from app.models.basic_scan import BasicScan
 from app.services.playlist_metadata import refresh_playlist_metadata
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _format_dt(value):
+    if value is None:
+        return None
+    try:
+        return value.isoformat()
+    except AttributeError:
+        return None
 
 
 # TEMP DEBUG: Trigger refresh without browser call to confirm handler logging.
@@ -119,6 +129,36 @@ def db_terminate_idle_in_txn():
         return {"ok": False, "error": "Terminate idle transaction query failed"}
 
     return {"ok": True, "terminated_pids": terminated_pids}
+
+
+@router.get("/latest-scans")
+def latest_basic_scans(limit: int = Query(default=10, ge=1, le=100), db: Session = Depends(get_db)):
+    """TEMP DEBUG: Inspect the latest BasicScan records without modifying them."""
+
+    order_column = getattr(BasicScan, "created_at", None) or BasicScan.id
+    scans = db.execute(select(BasicScan).order_by(order_column.desc()).limit(limit)).scalars().all()
+
+    payload: list[dict] = []
+    for scan in scans:
+        entry = {
+            "id": str(scan.id),
+            "tracked_playlist_id": str(scan.tracked_playlist_id)
+            if scan.tracked_playlist_id
+            else None,
+            "status": getattr(scan, "status", None),
+            "created_at": _format_dt(getattr(scan, "created_at", None)),
+            "started_at": _format_dt(getattr(scan, "started_at", None)),
+            "finished_at": _format_dt(getattr(scan, "finished_at", None)),
+        }
+
+        if hasattr(scan, "state"):
+            entry["state"] = getattr(scan, "state", None)
+        if getattr(scan, "error_message", None):
+            entry["error_message"] = scan.error_message
+
+        payload.append(entry)
+
+    return payload
 
 
 @router.get("/spotify-token")
