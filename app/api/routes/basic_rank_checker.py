@@ -7,7 +7,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -91,7 +91,8 @@ def stream_scan_events(scan_id: str, db: Session = Depends(get_db)):
                 {"type": "error", "message": scan.error_message or "Scan failed."},
             )
 
-    return StreamingResponse(scan_event_manager.stream(scan_id), media_type="text/event-stream")
+    # TEMP DEBUG: disable SSE stream for investigation
+    return JSONResponse({"ok": True, "disabled": True})
 
 
 @router.get("/scans/{scan_id}")
