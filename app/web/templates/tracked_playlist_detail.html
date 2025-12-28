@@ -51,7 +51,7 @@
         </div>
         <div class="panel-body">
           <div class="basic-scan" data-basic-scan>
-            <section class="scan-parameters" data-basic-scan-parameters>
+            <section class="scan-parameters" id="scan-parameters" data-basic-scan-parameters>
               <div class="scan-config-row">
                 <span class="scan-config-label">Countries</span>
                 <div class="pill-list" data-basic-scan-countries>
@@ -82,20 +82,25 @@
                 </div>
               </div>
             </section>
-            <section class="run-scan-controls" data-basic-scan-run-controls>
+            <section class="run-scan-controls" id="run-scan-controls" data-basic-scan-run-controls>
               <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
             </section>
-            <section class="run-progress basic-scan-progress" data-basic-scan-progress hidden>
+            <section
+              class="run-progress basic-scan-progress"
+              id="basic-scan-progress"
+              data-basic-scan-progress
+              hidden
+            >
               <div class="progress-bar">
                 <div class="progress-fill" data-basic-scan-progress-fill></div>
               </div>
               <div class="progress-status" data-basic-scan-progress-status>Starting scan…</div>
               <div class="progress-log" data-basic-scan-progress-log></div>
             </section>
-            <section class="results" data-basic-scan-results hidden>
+            <section class="results" id="basic-scan-results" data-basic-scan-results hidden>
               <div class="results-header">
                 <h3>Basic Scan Results</h3>
-                <div class="download-csv-controls">
+                <div class="download-csv-controls" id="basic-scan-csv-controls" data-basic-scan-csv-controls>
                   <a class="btn btn-csv" data-basic-scan-export-summary>Download Summary CSV</a>
                   <a class="btn btn-csv" data-basic-scan-export-detailed>Download Detailed CSV</a>
                 </div>
@@ -186,11 +191,11 @@
           basicScanSection.classList.add('is-active');
           basicScanToggle.setAttribute('aria-expanded', 'true');
           if (basicScanStageController) {
-            const stage = basicScanStageController.getStage();
-            basicScanStageController.setStage(stage, stage === 1 ? basicScanSection : null);
+            basicScanStageController.setStage(1);
             return;
           }
-          scrollSectionToCenter(basicScanSection);
+          const fallbackTarget = document.getElementById('scan-parameters') || basicScanSection;
+          scrollSectionToCenter(fallbackTarget);
           return;
         }
         basicScanSection.classList.add('is-hidden');
@@ -313,6 +318,7 @@
         const exportSummary = scanRoot.querySelector('[data-basic-scan-export-summary]');
         const exportDetailed = scanRoot.querySelector('[data-basic-scan-export-detailed]');
         const summarySection = document.getElementById('basic-scan-summary');
+        const csvControls = scanRoot.querySelector('[data-basic-scan-csv-controls]');
 
         let activeScanId = null;
         let eventSource = null;
@@ -335,6 +341,9 @@
           }
           if (resultsWrap) {
             resultsWrap.hidden = !showStage3;
+          }
+          if (csvControls) {
+            csvControls.hidden = !showStage3;
           }
 
           const target =
