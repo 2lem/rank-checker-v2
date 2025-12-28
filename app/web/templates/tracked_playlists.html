@@ -402,18 +402,6 @@
           const manageClose = card.querySelector('[data-manage-close]');
           const editForm = card.querySelector('[data-edit-form]');
           const editCancel = card.querySelector('[data-edit-cancel]');
-          const basicScanToggle = card.querySelector('[data-basic-scan-toggle]');
-          const basicScanPanel = card.querySelector('[data-basic-scan-panel]');
-          const basicScanRun = card.querySelector('[data-basic-scan-run]');
-          const basicScanProgress = card.querySelector('[data-basic-scan-progress]');
-          const basicScanProgressFill = card.querySelector('[data-basic-scan-progress-fill]');
-          const basicScanProgressStatus = card.querySelector('[data-basic-scan-progress-status]');
-          const basicScanProgressLog = card.querySelector('[data-basic-scan-progress-log]');
-          const basicScanResults = card.querySelector('[data-basic-scan-results]');
-          const basicScanSummaryLead = card.querySelector('[data-basic-scan-summary-lead]');
-          const basicScanSummaryList = card.querySelector('[data-basic-scan-summary-list]');
-          const basicScanExportSummary = card.querySelector('[data-basic-scan-export-summary]');
-          const basicScanExportDetailed = card.querySelector('[data-basic-scan-export-detailed]');
           const editCountrySelect = card.querySelector('[data-edit-country-select]');
           const editCountryAdd = card.querySelector('[data-edit-country-add]');
           const editCountryPills = card.querySelector('[data-edit-country-pills]');
@@ -464,7 +452,6 @@
           const closePanels = ({ restoreScroll }) => {
             managePanel.classList.remove('is-open');
             editPanel.classList.remove('is-open');
-            basicScanPanel?.setAttribute('hidden', 'true');
             manageToggle?.setAttribute('aria-expanded', 'false');
             if (restoreScroll) {
               restorePreOpenScroll();
@@ -512,136 +499,6 @@
             const isOpen = editPanel.classList.toggle('is-open');
             if (isOpen) {
               scrollToCentered(editPanel);
-            }
-          });
-
-          basicScanToggle?.addEventListener('click', () => {
-            if (!basicScanPanel) {
-              return;
-            }
-            const isHidden = basicScanPanel.hasAttribute('hidden');
-            if (isHidden) {
-              basicScanPanel.removeAttribute('hidden');
-              scrollToCentered(basicScanPanel);
-            } else {
-              basicScanPanel.setAttribute('hidden', 'true');
-            }
-          });
-
-          const setBasicScanProgress = (current, total, message) => {
-            if (!basicScanProgress) {
-              return;
-            }
-            const percent = total ? Math.min((current / total) * 100, 100) : 0;
-            if (basicScanProgressFill) {
-              basicScanProgressFill.style.width = `${percent}%`;
-            }
-            if (basicScanProgressStatus) {
-              basicScanProgressStatus.textContent = message || 'Scanning...';
-            }
-          };
-
-          const appendBasicScanLog = (message) => {
-            if (!basicScanProgressLog || !message) {
-              return;
-            }
-            const entry = document.createElement('div');
-            entry.className = 'progress-log-entry';
-            entry.textContent = message;
-            basicScanProgressLog.appendChild(entry);
-            basicScanProgressLog.scrollTop = basicScanProgressLog.scrollHeight;
-          };
-
-          const renderBasicScanSummary = (scan) => {
-            if (!basicScanSummaryLead || !basicScanSummaryList) {
-              return;
-            }
-            const follower = scan.follower_snapshot ?? '—';
-            basicScanSummaryLead.textContent = `At ${formatTimestamp(
-              scan.started_at
-            )}, your playlist follower count was ${follower}.`;
-            basicScanSummaryList.innerHTML = '';
-            (scan.summary || []).forEach((item) => {
-              const row = document.createElement('div');
-              row.className = `summary-row ${item.tracked_found_in_top20 ? '' : 'summary-row-missing'}`;
-              const countryLabel = resolveMarketLabel(item.country);
-              const searchedAt = formatTimestamp(item.searched_at);
-              const rankText = item.tracked_found_in_top20
-                ? `your playlist rank was #${item.tracked_rank}.`
-                : 'Not found in top 20.';
-              row.textContent = `At ${searchedAt}, for country ${countryLabel} and keyword '${item.keyword}', ${rankText}`;
-              basicScanSummaryList.appendChild(row);
-            });
-          };
-
-          const loadBasicScanResults = async (scanId) => {
-            const response = await fetch(`/api/basic-rank-checker/scans/${scanId}`);
-            const data = await response.json();
-            if (!response.ok) {
-              throw new Error(data.detail || 'Failed to load scan results.');
-            }
-            renderBasicScanSummary(data);
-            if (basicScanExportSummary) {
-              basicScanExportSummary.href = `/api/basic-rank-checker/scans/${scanId}/export/summary.csv`;
-            }
-            if (basicScanExportDetailed) {
-              basicScanExportDetailed.href = `/api/basic-rank-checker/scans/${scanId}/export/detailed.csv`;
-            }
-          };
-
-          basicScanRun?.addEventListener('click', async () => {
-            basicScanRun.disabled = true;
-            basicScanProgress?.removeAttribute('hidden');
-            if (basicScanResults) {
-              basicScanResults.hidden = true;
-            }
-            if (basicScanProgressLog) {
-              basicScanProgressLog.innerHTML = '';
-            }
-            setBasicScanProgress(0, 0, 'Starting scan…');
-            scrollToCentered(managePanel);
-
-            try {
-              const response = await fetch('/api/basic-rank-checker/scans', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tracked_playlist_id: playlistId }),
-              });
-              const data = await response.json();
-              if (!response.ok) {
-                throw new Error(data.detail || 'Failed to start scan.');
-              }
-              const scanId = data.scan_id;
-              const eventSource = new EventSource(
-                `/api/basic-rank-checker/scans/${scanId}/events`
-              );
-              eventSource.onmessage = async (event) => {
-                const payload = JSON.parse(event.data);
-                if (payload.type === 'progress') {
-                  setBasicScanProgress(payload.step, payload.total, payload.message);
-                  appendBasicScanLog(payload.message);
-                }
-                if (payload.type === 'done') {
-                  eventSource.close();
-                  setBasicScanProgress(payload.total || 1, payload.total || 1, 'Scan completed.');
-                  await loadBasicScanResults(scanId);
-                  if (basicScanResults) {
-                    basicScanResults.hidden = false;
-                  }
-                  basicScanProgress?.setAttribute('hidden', 'true');
-                  basicScanRun.disabled = false;
-                }
-                if (payload.type === 'error') {
-                  eventSource.close();
-                  appendBasicScanLog(payload.message || 'Scan failed.');
-                  setBasicScanProgress(0, 1, payload.message || 'Scan failed.');
-                  basicScanRun.disabled = false;
-                }
-              };
-            } catch (error) {
-              basicScanProgress?.setAttribute('hidden', 'true');
-              basicScanRun.disabled = false;
-              setStatus(error.message || 'Failed to start scan.', 'status-error');
             }
           });
 
