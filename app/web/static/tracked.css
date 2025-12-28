@@ -154,6 +154,17 @@
   text-align: center;
 }
 
+@media (min-width: 768px) {
+  .page-header-actions .btn-back-blue.dashboard-action-btn {
+    min-width: unset;
+    width: auto;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+}
+
 .pill-spotify {
   background: #1db954;
   color: #ffffff;
