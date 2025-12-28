@@ -290,6 +290,27 @@
         }).format(date);
       };
 
+      const formatSummaryDateParts = (value) => {
+        if (!value) {
+          return { dateLabel: '—', timeLabel: '—' };
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return { dateLabel: value, timeLabel: value };
+        }
+        const dateLabel = date.toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        });
+        const timeLabel = date.toLocaleTimeString('en-GB', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        });
+        return { dateLabel, timeLabel };
+      };
+
       const formatFileTimestamp = (value) => {
         if (!value) {
           return '';
@@ -439,11 +460,11 @@
             const row = document.createElement('div');
             row.className = `summary-row ${item.tracked_found_in_top20 ? '' : 'summary-row-missing'}`;
             const countryLabel = resolveMarketLabel(item.country);
-            const searchedAt = formatTimestamp(item.searched_at);
+            const { dateLabel, timeLabel } = formatSummaryDateParts(item.searched_at);
             const rankText = item.tracked_found_in_top20
               ? `your playlist rank was #${item.tracked_rank}.`
-              : 'Not found in top 20.';
-            row.textContent = `At ${searchedAt}, for country ${countryLabel} and keyword '${item.keyword}', ${rankText}`;
+              : 'your playlist was not found in the top 20.';
+            row.textContent = `On ${dateLabel} at ${timeLabel} in ${countryLabel} for ‘${item.keyword}’, ${rankText}`;
             summaryList.appendChild(row);
           });
         };
