@@ -48,9 +48,11 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
 
 
 def create_basic_scan(db: Session, tracked_playlist: TrackedPlaylist) -> BasicScan:
+    is_tracked_playlist = tracked_playlist.id is not None
     scan = BasicScan(
         account_id=tracked_playlist.account_id,
         tracked_playlist_id=tracked_playlist.id,
+        is_tracked_playlist=is_tracked_playlist,
         started_at=_now_utc(),
         status="running",
         scanned_countries=tracked_playlist.target_countries or [],
