@@ -28,6 +28,13 @@ def _format_dt(value: datetime | None) -> str | None:
     return value.isoformat()
 
 
+def _format_scan_date(scan: BasicScan) -> str:
+    created_at = scan.created_at or datetime.now()
+    if created_at.tzinfo is not None:
+        created_at = created_at.astimezone()
+    return created_at.strftime("%d-%m-%Y")
+
+
 def _csv_response(filename: str, headers: list[str], rows: list[list[object | None]]) -> Response:
     output = io.StringIO(newline="")
     writer = csv.writer(output, lineterminator="\r\n")
@@ -158,8 +165,9 @@ def export_summary_csv(scan_id: str, db: Session = Depends(get_db)):
             ]
         )
 
+    filename = f"{_format_scan_date(scan)}_{scan.id}_basic.csv"
     return _csv_response(
-        f"basic_scan_{scan_id}_summary.csv",
+        filename,
         ["searched_at", "keyword", "country", "rank", "playlist_name", "playlist_followers"],
         rows,
     )
@@ -227,8 +235,9 @@ def export_detailed_csv(
             ]
         )
 
+    filename = f"{_format_scan_date(scan)}_{scan.id}_detailed.csv"
     return _csv_response(
-        f"basic_scan_{scan_id}_detailed.csv",
+        filename,
         [
             "searched_at",
             "keyword",
