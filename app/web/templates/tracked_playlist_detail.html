@@ -81,9 +81,9 @@
                   {% endif %}
                 </div>
               </div>
-            </section>
-            <section class="run-scan-controls" id="run-scan-controls" data-basic-scan-run-controls>
-              <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
+              <div class="run-scan-controls" id="run-scan-controls" data-basic-scan-run-controls>
+                <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
+              </div>
             </section>
             <section
               class="run-progress basic-scan-progress"
@@ -168,6 +168,22 @@
       if (panels.length) {
         panels[0].classList.add('is-active');
       }
+
+      const showSection = (section) => {
+        if (!section) {
+          return;
+        }
+        section.hidden = false;
+        section.style.removeProperty('display');
+      };
+
+      const hideSection = (section) => {
+        if (!section) {
+          return;
+        }
+        section.hidden = true;
+        section.style.display = 'none';
+      };
 
       const scrollSectionToCenter = (section) => {
         if (!section) {
@@ -330,20 +346,28 @@
           const showStage2 = stage === 2;
           const showStage3 = stage === 3;
 
-          if (scanParameters) {
-            scanParameters.hidden = !showStage1;
+          if (showStage1) {
+            showSection(scanParameters);
+            showSection(runControls);
+            hideSection(progressWrap);
+            hideSection(resultsWrap);
+            hideSection(csvControls);
           }
-          if (runControls) {
-            runControls.hidden = !showStage1;
+
+          if (showStage2) {
+            hideSection(scanParameters);
+            hideSection(runControls);
+            showSection(progressWrap);
+            hideSection(resultsWrap);
+            hideSection(csvControls);
           }
-          if (progressWrap) {
-            progressWrap.hidden = !showStage2;
-          }
-          if (resultsWrap) {
-            resultsWrap.hidden = !showStage3;
-          }
-          if (csvControls) {
-            csvControls.hidden = !showStage3;
+
+          if (showStage3) {
+            hideSection(scanParameters);
+            hideSection(runControls);
+            hideSection(progressWrap);
+            showSection(resultsWrap);
+            showSection(csvControls);
           }
 
           const target =
@@ -352,6 +376,14 @@
           scrollSectionToCenter(target);
         };
         basicScanStageController = { setStage, getStage: () => currentStage };
+
+        const openBasicScanStage1 = () => {
+          setStage(1, scanParameters || scanRoot);
+        };
+
+        const openBasicScanStage2 = () => {
+          setStage(2, progressWrap || scanRoot);
+        };
 
         const setProgress = (current, total, message) => {
           if (!progressWrap) {
@@ -528,7 +560,6 @@
           runButton.disabled = true;
           progressLog.innerHTML = '';
           setProgress(0, 0, 'Starting scan…');
-          setStage(2);
 
           try {
             const response = await fetch('/api/basic-rank-checker/scans', {
@@ -575,7 +606,13 @@
           }
         };
 
-        runButton?.addEventListener('click', startScan);
+        runButton?.addEventListener('click', () => {
+          openBasicScanStage2();
+          startScan();
+        });
+
+        basicScanStageController.openBasicScanStage1 = openBasicScanStage1;
+        basicScanStageController.openBasicScanStage2 = openBasicScanStage2;
       };
 
       setupBasicScan();
