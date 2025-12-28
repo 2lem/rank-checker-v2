@@ -85,6 +85,12 @@ def db_ping():
     return {"ok": True}
 
 
+@router.get("/db-terminate-idle-in-txn")
+def db_terminate_idle_in_txn_get():
+    # TEMP DEBUG: Allow GET to trigger termination from mobile browsers.
+    return db_terminate_idle_in_txn()
+
+
 @router.post("/db-terminate-idle-in-txn")
 def db_terminate_idle_in_txn():
     # TEMP DEBUG: Terminate "idle in transaction" sessions for this service.
