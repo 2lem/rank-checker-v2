@@ -107,12 +107,10 @@ def refresh_playlist_metadata(db: Session, tracked_playlist_id: str):
         }
     except Exception:
         db.rollback()
-        db.close()
         raise
 
-    # Close the DB session before network calls; keeping the transaction open caused
-    # "idle in transaction" connections and request hangs.
-    db.close()
+    # End any open transaction before network calls to avoid "idle in transaction" hangs.
+    db.rollback()
 
     token = get_access_token()
     playlist_api_url = PLAYLIST_URL.format(tracked_snapshot["playlist_id"])
@@ -181,9 +179,9 @@ def refresh_playlist_metadata(db: Session, tracked_playlist_id: str):
     refreshed_at = datetime.now(timezone.utc)
     playlist_url = (detail.get("external_urls") or {}).get("spotify") or tracked_snapshot["playlist_url"]
 
-    update_db = SessionLocal()
     try:
-        tracked = get_tracked_playlist_by_id(update_db, tracked_playlist_id)
+        # Avoid creating nested sessions inside request handlers; reuse the provided session.
+        tracked = get_tracked_playlist_by_id(db, tracked_playlist_id)
         if not tracked:
             raise HTTPException(status_code=404, detail="Tracked playlist not found.")
 
@@ -198,12 +196,10 @@ def refresh_playlist_metadata(db: Session, tracked_playlist_id: str):
         tracked.playlist_last_updated_at = playlist_last_updated_at
         tracked.last_meta_refresh_at = refreshed_at
 
-        update_db.add(tracked)
-        update_db.commit()
-        update_db.refresh(tracked)
+        db.add(tracked)
+        db.commit()
+        db.refresh(tracked)
         return tracked
     except Exception:
-        update_db.rollback()
+        db.rollback()
         raise
-    finally:
-        update_db.close()
