@@ -21,6 +21,26 @@ def db_activity():
             idle_in_transaction = conn.execute(
                 text("SELECT count(*) FROM pg_stat_activity WHERE state = 'idle in transaction';")
             ).scalar()
+            idle_in_transaction_details = conn.execute(
+                text(
+                    """
+                    SELECT
+                        pid,
+                        usename,
+                        application_name,
+                        client_addr,
+                        state,
+                        xact_start,
+                        query_start,
+                        wait_event_type,
+                        wait_event,
+                        left(query, 200) AS query
+                    FROM pg_stat_activity
+                    WHERE state = 'idle in transaction'
+                    ORDER BY xact_start ASC NULLS LAST;
+                    """
+                )
+            ).mappings()
     except Exception:
         return {"ok": False, "error": "Database activity query failed"}
 
@@ -28,6 +48,7 @@ def db_activity():
         "ok": True,
         "activity": list(activity_rows),
         "idle_in_transaction": idle_in_transaction,
+        "idle_in_transaction_details": list(idle_in_transaction_details),
     }
 
 
