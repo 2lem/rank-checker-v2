@@ -10,7 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.basic_rank_checker.events import scan_event_manager
 from app.core.db import SessionLocal
-from app.core.spotify import PLAYLIST_URL, get_access_token, search_playlists, spotify_get
+from app.core.spotify import (
+    PLAYLIST_URL,
+    fetch_playlist_details,
+    get_access_token,
+    search_playlists,
+    spotify_get,
+)
 from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
 from app.models.tracked_playlist import TrackedPlaylist
 
@@ -30,6 +36,15 @@ def _market_label(code: str) -> str:
         return _MARKET_OVERRIDES[normalized]
     country = pycountry.countries.get(alpha_2=normalized)
     return country.name if country else normalized
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def create_basic_scan(db: Session, tracked_playlist: TrackedPlaylist) -> BasicScan:
@@ -97,6 +112,8 @@ def run_basic_scan(scan_id: str) -> None:
         db.add(scan)
         db.commit()
 
+        playlist_meta_cache: dict[str, dict] = {}
+
         step = 0
         for country in countries:
             for keyword in keywords:
@@ -115,6 +132,13 @@ def run_basic_scan(scan_id: str) -> None:
                 searched_at = _now_utc()
                 items = search_playlists(keyword, country, token, limit=20, offset=0)
 
+                playlist_ids_to_fetch = [
+                    item.get("id")
+                    for item in items
+                    if item.get("id") and not item.get("placeholder")
+                ]
+                fetch_playlist_details(playlist_ids_to_fetch, token, playlist_meta_cache)
+
                 tracked_rank = None
                 query = BasicScanQuery(
                     basic_scan_id=scan.id,
@@ -130,6 +154,28 @@ def run_basic_scan(scan_id: str) -> None:
                 results: list[BasicScanResult] = []
                 for index, item in enumerate(items, start=1):
                     playlist_id = item.get("id")
+                    is_placeholder = item.get("placeholder")
+                    meta = playlist_meta_cache.get(playlist_id or "") if playlist_id else {}
+                    playlist_name = meta.get("playlist_name") or item.get("name")
+                    playlist_owner = meta.get("playlist_owner") or _extract_owner(item)
+                    playlist_followers = None if is_placeholder else meta.get("playlist_followers")
+                    tracks_total = (item.get("tracks") or {}).get("total")
+                    songs_count = (
+                        meta.get("songs_count")
+                        if meta.get("songs_count") is not None
+                        else tracks_total
+                    )
+                    playlist_last_added_track_at_raw = meta.get("playlist_last_track_added_at")
+                    playlist_last_added_track_at = (
+                        _parse_iso_datetime(playlist_last_added_track_at_raw)
+                        if isinstance(playlist_last_added_track_at_raw, str)
+                        else playlist_last_added_track_at_raw
+                    )
+                    playlist_description = meta.get("playlist_description") or item.get("description")
+                    playlist_url = meta.get("playlist_url") or (item.get("external_urls") or {}).get(
+                        "spotify"
+                    )
+
                     is_tracked = playlist_id == tracked_playlist.playlist_id
                     if is_tracked and tracked_rank is None:
                         tracked_rank = index
@@ -138,13 +184,13 @@ def run_basic_scan(scan_id: str) -> None:
                             basic_scan_query_id=query.id,
                             rank=index,
                             playlist_id=playlist_id,
-                            playlist_name=item.get("name"),
-                            playlist_owner=_extract_owner(item),
-                            playlist_followers=None,
-                            songs_count=(item.get("tracks") or {}).get("total"),
-                            playlist_last_added_track_at=None,
-                            playlist_description=item.get("description"),
-                            playlist_url=(item.get("external_urls") or {}).get("spotify"),
+                            playlist_name=playlist_name,
+                            playlist_owner=playlist_owner,
+                            playlist_followers=playlist_followers,
+                            songs_count=songs_count,
+                            playlist_last_added_track_at=playlist_last_added_track_at,
+                            playlist_description=playlist_description,
+                            playlist_url=playlist_url,
                             is_tracked_playlist=is_tracked,
                         )
                     )
