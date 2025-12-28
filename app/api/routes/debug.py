@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from sqlalchemy import text
@@ -9,12 +10,17 @@ from app.core.spotify import get_access_token_payload
 from app.services.playlist_metadata import refresh_playlist_metadata
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # TEMP DEBUG: Trigger refresh without browser call to confirm handler logging.
 @router.get("/trigger-refresh/{tracked_playlist_id}")
 def trigger_refresh(tracked_playlist_id: UUID, db: Session = Depends(get_db)):
-    refresh_playlist_metadata(db, str(tracked_playlist_id))
+    logger.info("DEBUG trigger-refresh %s", tracked_playlist_id)
+    try:
+        refresh_playlist_metadata(db, str(tracked_playlist_id))
+    except Exception as exc:  # pragma: no cover - best effort debug endpoint
+        return {"ok": False, "error": str(exc)}
     return {"ok": True}
 
 
