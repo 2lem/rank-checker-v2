@@ -1,12 +1,13 @@
 import logging
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import Table, func, inspect, select, text
 from sqlalchemy.orm import Session
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.db import engine, get_database_url, get_db
 from app.core.spotify import get_access_token_payload
+from app.models.base import Base
 from app.models.basic_scan import BasicScan
 from app.services.playlist_metadata import refresh_playlist_metadata
 
@@ -21,6 +22,23 @@ def _format_dt(value):
         return value.isoformat()
     except AttributeError:
         return None
+
+
+def _get_events_table(db: Session) -> Table | None:
+    bind = db.get_bind()
+    inspector = inspect(bind)
+    for table_name in ("basic_scan_events", "scan_events"):
+        if inspector.has_table(table_name):
+            return Table(table_name, Base.metadata, autoload_with=bind)
+    return None
+
+
+def _get_column(table: Table, *names: str):
+    for name in names:
+        column = table.c.get(name)
+        if column is not None:
+            return column
+    return None
 
 
 # TEMP DEBUG: Trigger refresh without browser call to confirm handler logging.
@@ -159,6 +177,88 @@ def latest_basic_scans(limit: int = Query(default=10, ge=1, le=100), db: Session
         payload.append(entry)
 
     return payload
+
+
+@router.get("/scan/{scan_id}")
+def scan_details(scan_id: UUID, db: Session = Depends(get_db)):
+    """TEMP DEBUG: Inspect a BasicScan row and its recent events (if available)."""
+
+    scan = db.get(BasicScan, scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+
+    response: dict[str, object] = {
+        "id": str(scan.id),
+        "tracked_playlist_id": str(scan.tracked_playlist_id),
+        "status": getattr(scan, "status", None),
+        "created_at": _format_dt(getattr(scan, "created_at", None)),
+        "started_at": _format_dt(getattr(scan, "started_at", None)),
+        "finished_at": _format_dt(getattr(scan, "finished_at", None)),
+    }
+    if getattr(scan, "error_message", None):
+        response["error_message"] = scan.error_message
+
+    events_table = _get_events_table(db)
+    if events_table is None:
+        response.update(
+            {
+                "events_supported": False,
+                "events_count": 0,
+                "note": "basic_scan_events or scan_events table not detected.",
+            }
+        )
+        return response
+
+    scan_id_column = _get_column(events_table, "basic_scan_id", "scan_id")
+    if scan_id_column is None:
+        response.update(
+            {
+                "events_supported": False,
+                "events_count": 0,
+                "note": f"{events_table.name} table is missing a scan reference column.",
+            }
+        )
+        return response
+
+    created_column = _get_column(events_table, "created_at", "timestamp")
+    type_column = _get_column(events_table, "event_type", "level", "type")
+    message_column = _get_column(events_table, "message", "details", "payload")
+    order_column = created_column or _get_column(events_table, "id") or scan_id_column
+
+    events_query = (
+        select(events_table)
+        .where(scan_id_column == scan_id)
+        .order_by(order_column.desc())
+        .limit(50)
+    )
+    events = db.execute(events_query).mappings().all()
+
+    events_count = db.execute(
+        select(func.count()).select_from(events_table).where(scan_id_column == scan_id)
+    ).scalar() or 0
+
+    formatted_events = []
+    for row in events:
+        entry: dict[str, object | None] = {}
+        if created_column is not None:
+            created_value = row.get(created_column.key)
+            entry["created_at"] = _format_dt(created_value) or created_value
+        if type_column is not None:
+            entry[type_column.key] = row.get(type_column.key)
+        if message_column is not None:
+            entry[message_column.key] = row.get(message_column.key)
+        if not entry:
+            entry = dict(row)
+        formatted_events.append(entry)
+
+    response.update(
+        {
+            "events_supported": True,
+            "events_count": events_count,
+            "events": formatted_events,
+        }
+    )
+    return response
 
 
 @router.get("/spotify-token")
