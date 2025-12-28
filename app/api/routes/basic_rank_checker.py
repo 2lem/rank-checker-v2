@@ -7,13 +7,13 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.basic_rank_checker.events import scan_event_manager
 from app.basic_rank_checker.service import create_basic_scan, fetch_scan_details, run_basic_scan
-from app.core.db import get_db
+from app.core.db import SessionLocal, get_db
 from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
 from app.repositories.tracked_playlists import get_tracked_playlist_by_id
 
@@ -70,29 +70,34 @@ def start_basic_scan(payload: dict, db: Session = Depends(get_db)):
 
 
 @router.get("/scans/{scan_id}/events")
-def stream_scan_events(scan_id: str, db: Session = Depends(get_db)):
+def stream_scan_events(scan_id: str):
     try:
         UUID(scan_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Scan not found.") from exc
 
-    scan = db.get(BasicScan, scan_id)
-    if scan is None:
-        raise HTTPException(status_code=404, detail="Scan not found.")
+    if SessionLocal is None:
+        raise RuntimeError("DATABASE_URL not configured")
+
+    with SessionLocal() as session:
+        scan = session.get(BasicScan, scan_id)
+        if scan is None:
+            raise HTTPException(status_code=404, detail="Scan not found.")
+        scan_status = scan.status
+        scan_error_message = scan.error_message
 
     queue = scan_event_manager.get_queue(scan_id)
     if queue is None:
         queue = scan_event_manager.create_queue(scan_id)
-        if scan.status == "completed":
+        if scan_status == "completed":
             scan_event_manager.publish(scan_id, {"type": "done", "scan_id": scan_id})
-        elif scan.status == "failed":
+        elif scan_status == "failed":
             scan_event_manager.publish(
                 scan_id,
-                {"type": "error", "message": scan.error_message or "Scan failed."},
+                {"type": "error", "message": scan_error_message or "Scan failed."},
             )
 
-    # TEMP DEBUG: disable SSE stream for investigation
-    return JSONResponse({"ok": True, "disabled": True})
+    return StreamingResponse(scan_event_manager.stream(scan_id), media_type="text/event-stream")
 
 
 @router.get("/scans/{scan_id}")
