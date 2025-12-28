@@ -16,3 +16,13 @@ Then open <http://localhost:8080>.
 ```bash
 curl http://localhost:8080/health
 ```
+
+## Debug tools
+
+Set `DEBUG_TOOLS=1` and a `DEBUG_TOKEN` in your Railway environment to enable the protected debug routes.
+
+Example request:
+
+```bash
+curl -H "X-Debug-Token: $DEBUG_TOKEN" https://<your-app>.railway.app/api/debug/db-activity
+```

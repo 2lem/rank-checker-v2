@@ -5,13 +5,14 @@ from sqlalchemy import Table, func, inspect, select, text
 from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.core.debug_tools import require_debug_tools
 from app.core.db import engine, get_database_url, get_db
 from app.core.spotify import get_access_token_payload
 from app.models.base import Base
 from app.models.basic_scan import BasicScan
 from app.services.playlist_metadata import refresh_playlist_metadata
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_debug_tools)])
 logger = logging.getLogger(__name__)
 
 

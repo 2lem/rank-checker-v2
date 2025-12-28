@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
 from app.api import basic_rank_checker_router, debug_router, playlists_router, scans_router
+from app.core.debug_tools import debug_tools_enabled
 from app.core.db import request_path_var
 from app.web.routes import pages_router
 
@@ -33,7 +34,8 @@ async def request_path_context_middleware(request: Request, call_next):
         request_path_var.reset(token)
     return response
 
-app.include_router(debug_router, prefix="/api/debug")
+if debug_tools_enabled():
+    app.include_router(debug_router, prefix="/api/debug")
 app.include_router(basic_rank_checker_router, prefix="/api/basic-rank-checker")
 app.include_router(playlists_router, prefix="/api/playlists")
 app.include_router(scans_router, prefix="/api/scans")
