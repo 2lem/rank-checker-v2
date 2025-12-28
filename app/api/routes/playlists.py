@@ -35,6 +35,7 @@ from app.services.playlist_metadata import (
     refresh_playlist_metadata,
     select_largest_image_url,
     select_smallest_image_url,
+    _extract_spotify_error_details,
 )
 
 router = APIRouter(tags=["playlists"])
@@ -63,6 +64,24 @@ def _ensure_no_removals(existing: list[str], incoming: list[str], label: str) ->
             status_code=400,
             detail=f"Existing {label} cannot be removed. Please contact support.",
         )
+
+
+def _extract_spotify_error_info(exc: Exception) -> tuple[int | None, str]:
+    status_code, body_snippet = _extract_spotify_error_details(exc)
+    if status_code is not None or body_snippet:
+        return status_code, body_snippet
+    cause = getattr(exc, "__cause__", None)
+    if cause:
+        return _extract_spotify_error_details(cause)
+    return None, ""
+
+
+def _derive_refresh_error_code(exc: Exception, status_code: int | None) -> str:
+    if isinstance(exc, requests.Timeout):
+        return "timeout"
+    if status_code is not None:
+        return f"spotify_{status_code}"
+    return "unknown"
 
 
 @router.get("", response_model=list[TrackedPlaylistOut])
@@ -182,11 +201,41 @@ def refresh_playlist_stats(
 ):
     logger.info("TEMP DEBUG ENTER refresh-stats %s", tracked_playlist_id)
     response.headers["X-Debug-Entered"] = "1"
+    spotify_playlist_id = None
+    try:
+        tracked_for_logging = get_tracked_playlist_by_id(db, tracked_playlist_id)
+        if tracked_for_logging:
+            spotify_playlist_id = tracked_for_logging.playlist_id
+    except Exception:
+        spotify_playlist_id = None
+
     try:
         refreshed = refresh_playlist_metadata(db, str(tracked_playlist_id))
-    except HTTPException as exc:
-        exc.headers = {**(exc.headers or {}), "X-Debug-Entered": "1"}
-        raise
+    except Exception as exc:
+        status_code, body_snippet = _extract_spotify_error_info(exc)
+        error_code = _derive_refresh_error_code(exc, status_code)
+        headers = {
+            "X-Debug-Entered": "1",
+            "X-Debug-Refresh-Error": error_code,
+        }
+        logger.exception(
+            "TEMP DEBUG refresh-stats failed tracked_playlist_id=%s playlist_id=%s spotify_status=%s spotify_body=%s",
+            tracked_playlist_id,
+            spotify_playlist_id,
+            status_code if status_code is not None else "unknown",
+            body_snippet or "<empty>",
+        )
+        if isinstance(exc, HTTPException):
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail="Unable to refresh playlist metadata.",
+                headers={**(exc.headers or {}), **headers},
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Unable to refresh playlist metadata.",
+            headers=headers,
+        ) from exc
     refreshed_at = refreshed.last_meta_refresh_at or datetime.now(timezone.utc)
     return {
         "ok": True,
