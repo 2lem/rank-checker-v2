@@ -121,6 +121,23 @@
   filter: brightness(0.95);
 }
 
+.btn-tracked-outline {
+  background: none;
+  border: 1px solid #ff4c00;
+  color: #ff4c00;
+  cursor: default;
+}
+
+.btn-back-blue {
+  background: #2962a0;
+  color: #ffffff;
+  border-color: #2962a0;
+}
+
+.btn-back-blue:hover {
+  filter: brightness(0.95);
+}
+
 .pill-spotify {
   background: #1db954;
   color: #ffffff;
