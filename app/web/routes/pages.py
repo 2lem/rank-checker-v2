@@ -22,6 +22,10 @@ WEB_DIR = Path(__file__).resolve().parents[1]
 TEMPLATES_DIR = WEB_DIR / "templates"
 
 _templates = Jinja2Templates(directory=str(TEMPLATES_DIR)) if TEMPLATES_DIR.exists() else None
+DASHBOARD_HEADER_PREFIX = "Dashboard "
+DASHBOARD_HEADER_MAX_LENGTH = 30
+DASHBOARD_HEADER_PREFIX = "Dashboard "
+DASHBOARD_HEADER_MAX_LENGTH = 30
 
 AVAILABLE_MARKETS = [
     "AD",
@@ -273,13 +277,28 @@ def _format_count(value: int | None) -> str:
     return f"{value:,}"
 
 
+def _build_dashboard_header_labels(name: str | None) -> tuple[str, str, str]:
+    base_name = name or "Tracked Playlist"
+    available = max(DASHBOARD_HEADER_MAX_LENGTH - len(DASHBOARD_HEADER_PREFIX), 0)
+    playlist_label = base_name
+    if available and len(playlist_label) > available:
+        if available == 1:
+            playlist_label = "…"
+        else:
+            playlist_label = f"{playlist_label[: available - 1]}…"
+    header_text = f"{DASHBOARD_HEADER_PREFIX}{playlist_label}"
+    header_text = header_text[:DASHBOARD_HEADER_MAX_LENGTH]
+    return header_text, playlist_label, base_name
+
+
 def _playlist_to_view_model(playlist) -> dict:
     playlist_url = playlist.playlist_url or f"https://open.spotify.com/playlist/{playlist.playlist_id}"
+    header_text, playlist_label, base_name = _build_dashboard_header_labels(playlist.name)
     return {
         "id": str(playlist.id),
         "playlist_id": playlist.playlist_id,
         "playlist_url": playlist_url,
-        "name": playlist.name or "Tracked Playlist",
+        "name": base_name,
         "image_url": playlist.cover_image_url_small or "",
         "owner_name": playlist.owner_name or "—",
         "followers_total": _format_count(playlist.followers_total),
@@ -291,6 +310,8 @@ def _playlist_to_view_model(playlist) -> dict:
             (code or "").upper(): _market_label(code) for code in (playlist.target_countries or [])
         },
         "target_keywords": playlist.target_keywords or [],
+        "dashboard_header_title": header_text,
+        "dashboard_playlist_label": playlist_label,
     }
 
 
