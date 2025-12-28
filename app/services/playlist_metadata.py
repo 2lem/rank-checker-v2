@@ -94,19 +94,35 @@ def _resolve_playlist_last_updated_at(
 
 
 def refresh_playlist_metadata(db: Session, tracked_playlist_id: str):
-    tracked = get_tracked_playlist_by_id(db, tracked_playlist_id)
-    if not tracked:
-        raise HTTPException(status_code=404, detail="Tracked playlist not found.")
+    try:
+        tracked = get_tracked_playlist_by_id(db, tracked_playlist_id)
+        if not tracked:
+            raise HTTPException(status_code=404, detail="Tracked playlist not found.")
+
+        tracked_snapshot = {
+            "id": tracked.id,
+            "playlist_id": tracked.playlist_id,
+            "playlist_url": tracked.playlist_url,
+            "target_countries": list(tracked.target_countries or []),
+        }
+    except Exception:
+        db.rollback()
+        db.close()
+        raise
+
+    # Close the DB session before network calls; keeping the transaction open caused
+    # "idle in transaction" connections and request hangs.
+    db.close()
 
     token = get_access_token()
-    playlist_api_url = PLAYLIST_URL.format(tracked.playlist_id)
+    playlist_api_url = PLAYLIST_URL.format(tracked_snapshot["playlist_id"])
     default_params = {
         "fields": (
             "name,description,images,owner.display_name,followers.total,tracks.total,"
             "external_urls.spotify,snapshot_id"
         ),
     }
-    fallback_market = (tracked.target_countries or [None])[0] or "US"
+    fallback_market = (tracked_snapshot["target_countries"] or [None])[0] or "US"
     fallback_params = {
         "fields": (
             "name,description,images,owner.display_name,followers.total,tracks.total,"
@@ -138,17 +154,17 @@ def refresh_playlist_metadata(db: Session, tracked_playlist_id: str):
                         status_code=422,
                         detail={
                             "message": message,
-                            "playlist_id": tracked.playlist_id,
+                            "playlist_id": tracked_snapshot["playlist_id"],
                             "attempted_urls": attempted_urls,
                         },
                     ) from fallback_exc
-                raise_spotify_request_error(tracked.playlist_id, fallback_exc)
+                raise_spotify_request_error(tracked_snapshot["playlist_id"], fallback_exc)
             except Exception as fallback_exc:
-                raise_spotify_request_error(tracked.playlist_id, fallback_exc)
+                raise_spotify_request_error(tracked_snapshot["playlist_id"], fallback_exc)
         else:
-            raise_spotify_request_error(tracked.playlist_id, exc)
+            raise_spotify_request_error(tracked_snapshot["playlist_id"], exc)
     except Exception as exc:
-        raise_spotify_request_error(tracked.playlist_id, exc)
+        raise_spotify_request_error(tracked_snapshot["playlist_id"], exc)
 
     images = detail.get("images") or []
     owner_info = detail.get("owner") or {}
@@ -156,23 +172,38 @@ def refresh_playlist_metadata(db: Session, tracked_playlist_id: str):
     followers_total = (detail.get("followers") or {}).get("total")
     tracks_count = (detail.get("tracks") or {}).get("total")
 
-    tracked.name = detail.get("name")
-    tracked.description = detail.get("description")
-    tracked.playlist_url = (detail.get("external_urls") or {}).get("spotify") or tracked.playlist_url
-    tracked.cover_image_url_small = select_smallest_image_url(images)
-    tracked.cover_image_url_large = select_largest_image_url(images)
-    tracked.owner_name = owner_info.get("display_name") or owner_info.get("id")
-    tracked.followers_total = followers_total
-    tracked.tracks_count = tracks_count
-    tracked.playlist_last_updated_at = _resolve_playlist_last_updated_at(
-        tracked.playlist_id,
+    playlist_last_updated_at = _resolve_playlist_last_updated_at(
+        tracked_snapshot["playlist_id"],
         snapshot_id=snapshot_id,
         tracks_count=tracks_count,
         token=token,
     )
-    tracked.last_meta_refresh_at = datetime.now(timezone.utc)
+    refreshed_at = datetime.now(timezone.utc)
+    playlist_url = (detail.get("external_urls") or {}).get("spotify") or tracked_snapshot["playlist_url"]
 
-    db.add(tracked)
-    db.commit()
-    db.refresh(tracked)
-    return tracked
+    update_db = SessionLocal()
+    try:
+        tracked = get_tracked_playlist_by_id(update_db, tracked_playlist_id)
+        if not tracked:
+            raise HTTPException(status_code=404, detail="Tracked playlist not found.")
+
+        tracked.name = detail.get("name")
+        tracked.description = detail.get("description")
+        tracked.playlist_url = playlist_url
+        tracked.cover_image_url_small = select_smallest_image_url(images)
+        tracked.cover_image_url_large = select_largest_image_url(images)
+        tracked.owner_name = owner_info.get("display_name") or owner_info.get("id")
+        tracked.followers_total = followers_total
+        tracked.tracks_count = tracks_count
+        tracked.playlist_last_updated_at = playlist_last_updated_at
+        tracked.last_meta_refresh_at = refreshed_at
+
+        update_db.add(tracked)
+        update_db.commit()
+        update_db.refresh(tracked)
+        return tracked
+    except Exception:
+        update_db.rollback()
+        raise
+    finally:
+        update_db.close()
