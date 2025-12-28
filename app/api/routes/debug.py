@@ -1,10 +1,21 @@
-from sqlalchemy import text
-from fastapi import APIRouter
+from uuid import UUID
 
-from app.core.db import engine, get_database_url
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends
+
+from app.core.db import engine, get_database_url, get_db
 from app.core.spotify import get_access_token_payload
+from app.services.playlist_metadata import refresh_playlist_metadata
 
 router = APIRouter()
+
+
+# TEMP DEBUG: Trigger refresh without browser call to confirm handler logging.
+@router.get("/trigger-refresh/{tracked_playlist_id}")
+def trigger_refresh(tracked_playlist_id: UUID, db: Session = Depends(get_db)):
+    refresh_playlist_metadata(db, str(tracked_playlist_id))
+    return {"ok": True}
 
 
 # TEMP DEBUG: Inspect Postgres connection state
