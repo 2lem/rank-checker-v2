@@ -130,7 +130,7 @@ def run_basic_scan(scan_id: str) -> None:
                     },
                 )
                 searched_at = _now_utc()
-                items = search_playlists(keyword, country, token, limit=20, offset=0)
+                items = search_playlists(keyword, country, token, limit=35, offset=0)[:20]
 
                 playlist_ids_to_fetch = [
                     item.get("id")
