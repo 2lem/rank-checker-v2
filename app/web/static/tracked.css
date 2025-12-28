@@ -88,6 +88,23 @@
   border: none;
 }
 
+.dashboard-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.dashboard-title-prefix {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .pill-primary {
   background: #ff4c00;
   color: #ffffff;

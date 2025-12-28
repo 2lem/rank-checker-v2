@@ -11,8 +11,12 @@
     <main class="page">
       <header class="page-header">
         <div>
-          <h1>{{ playlist.name }}</h1>
-          <p class="page-subtitle">Playlist ID: {{ playlist.playlist_id }}</p>
+          <h1 class="page-title dashboard-title" title="{{ playlist.dashboard_header_title }}">
+            <span class="dashboard-title-prefix">Dashboard</span>
+            <span class="pill pill-primary dashboard-title-pill" title="{{ playlist.name }}">
+              {{ playlist.dashboard_playlist_label }}
+            </span>
+          </h1>
         </div>
         <div class="page-header-actions">
           <button class="btn btn-primary" type="button" data-refresh-stats>Refresh Stats</button>
