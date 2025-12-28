@@ -343,6 +343,24 @@
   gap: 16px;
 }
 
+.start-scan {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.scan-parameters {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.run-scan-button {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
 .basic-scan-config {
   display: flex;
   flex-direction: column;
@@ -431,17 +449,30 @@
   gap: 16px;
 }
 
+.result-action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.summary,
+.detailed-scan-insights {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .results-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
-}
-
-.results-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .summary-lead {
@@ -510,6 +541,16 @@
 .tracked-highlight {
   background: #f0f7ff;
   font-weight: 700;
+}
+
+.btn-csv {
+  background: #e9f2ff;
+  border-color: #c6daf5;
+  color: #1f4b8f;
+}
+
+.btn-csv:hover {
+  filter: brightness(0.97);
 }
 
 @media (max-width: 640px) {

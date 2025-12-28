@@ -37,45 +37,9 @@
       {% include "_components/tracked_card.html" %}
 
       <section class="toolbar">
-        {% set href = None %}
-        {% set label = 'Manage' %}
-        {% set button_variant = 'secondary' %}
-        {% set data_target = 'panel-manage' %}
-        {% include "_components/button.html" %}
-
-        {% set label = 'Edit Configuration' %}
-        {% set button_variant = 'secondary' %}
-        {% set data_target = 'panel-edit' %}
-        {% include "_components/button.html" %}
-
         <button class="btn btn-secondary" type="button" data-basic-scan-toggle aria-expanded="false">
           Basic Scan (Manual)
         </button>
-
-        {% set label = 'CSV Export' %}
-        {% set button_variant = 'secondary' %}
-        {% set data_target = 'panel-export' %}
-        {% include "_components/button.html" %}
-      </section>
-
-      <section class="panel" id="panel-manage" data-panel>
-        <div class="panel-header">
-          <h2>Manage Panel</h2>
-          <p>View current tracking info and manage playlist settings.</p>
-        </div>
-        <div class="panel-body">
-          <div class="panel-placeholder">Manage tools will appear here.</div>
-        </div>
-      </section>
-
-      <section class="panel" id="panel-edit" data-panel>
-        <div class="panel-header">
-          <h2>Edit Configuration Panel</h2>
-          <p>Update target countries and keyword tracking.</p>
-        </div>
-        <div class="panel-body">
-          <div class="panel-placeholder">Configuration editing will appear here.</div>
-        </div>
       </section>
 
       <section class="panel is-hidden" id="basic-scan-section">
@@ -85,39 +49,41 @@
         </div>
         <div class="panel-body">
           <div class="basic-scan" data-basic-scan>
-            <div class="basic-scan-config">
-              <div class="scan-config-row">
-                <span class="scan-config-label">Countries</span>
-                <div class="pill-list" data-basic-scan-countries>
-                  {% if playlist.target_countries %}
-                    {% for country in playlist.target_countries %}
-                      {% set label = playlist.target_country_labels.get(country|upper, country) %}
-                      <span class="chip chip-locked">
-                        <span class="chip-label">{{ label }}</span>
-                      </span>
-                    {% endfor %}
-                  {% else %}
-                    <span class="scan-config-empty">No target countries</span>
-                  {% endif %}
+            <div class="start-scan" data-basic-scan-start>
+              <div class="scan-parameters">
+                <div class="scan-config-row">
+                  <span class="scan-config-label">Countries</span>
+                  <div class="pill-list" data-basic-scan-countries>
+                    {% if playlist.target_countries %}
+                      {% for country in playlist.target_countries %}
+                        {% set label = playlist.target_country_labels.get(country|upper, country) %}
+                        <span class="chip chip-locked">
+                          <span class="chip-label">{{ label }}</span>
+                        </span>
+                      {% endfor %}
+                    {% else %}
+                      <span class="scan-config-empty">No target countries</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="scan-config-row">
+                  <span class="scan-config-label">Keywords</span>
+                  <div class="pill-list" data-basic-scan-keywords>
+                    {% if playlist.target_keywords %}
+                      {% for keyword in playlist.target_keywords %}
+                        <span class="chip chip-locked">
+                          <span class="chip-label">{{ keyword }}</span>
+                        </span>
+                      {% endfor %}
+                    {% else %}
+                      <span class="scan-config-empty">No target keywords</span>
+                    {% endif %}
+                  </div>
                 </div>
               </div>
-              <div class="scan-config-row">
-                <span class="scan-config-label">Keywords</span>
-                <div class="pill-list" data-basic-scan-keywords>
-                  {% if playlist.target_keywords %}
-                    {% for keyword in playlist.target_keywords %}
-                      <span class="chip chip-locked">
-                        <span class="chip-label">{{ keyword }}</span>
-                      </span>
-                    {% endfor %}
-                  {% else %}
-                    <span class="scan-config-empty">No target keywords</span>
-                  {% endif %}
-                </div>
+              <div class="run-scan-button">
+                <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
               </div>
-            </div>
-            <div class="basic-scan-actions" data-basic-scan-actions>
-              <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
             </div>
             <div class="basic-scan-progress" data-basic-scan-progress hidden>
               <div class="progress-bar">
@@ -126,7 +92,7 @@
               <div class="progress-status" data-basic-scan-progress-status>Starting scan…</div>
               <div class="progress-log" data-basic-scan-progress-log></div>
             </div>
-            <div class="basic-scan-results" data-basic-scan-results hidden>
+            <div class="result-action-buttons" data-basic-scan-results-actions hidden>
               <div class="results-actions">
                 <button class="btn btn-secondary" type="button" data-basic-scan-jump-summary>
                   Jump to Summary
@@ -134,30 +100,22 @@
                 <button class="btn btn-secondary" type="button" data-basic-scan-jump-detailed>
                   Jump to Detailed Insights
                 </button>
-                <a class="btn btn-ghost" data-basic-scan-export-summary>Download Summary CSV</a>
-                <a class="btn btn-ghost" data-basic-scan-export-detailed>Download Detailed CSV</a>
+                <a class="btn btn-csv" data-basic-scan-export-summary>Download Summary CSV</a>
+                <a class="btn btn-csv" data-basic-scan-export-detailed>Download Detailed CSV</a>
               </div>
-              <div class="results-section" id="basic-scan-summary">
+            </div>
+            <div class="results" data-basic-scan-results hidden>
+              <div class="summary" id="basic-scan-summary">
                 <h3>Summary</h3>
                 <div class="summary-lead" data-basic-scan-summary-lead></div>
                 <div class="summary-list" data-basic-scan-summary-list></div>
               </div>
-              <div class="results-section" id="basic-scan-detailed">
+              <div class="detailed-scan-insights" id="basic-scan-detailed">
                 <h3>Detailed Scan Insights</h3>
                 <div class="detailed-insights" data-basic-scan-detailed></div>
               </div>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section class="panel" id="panel-export" data-panel>
-        <div class="panel-header">
-          <h2>Export Panel</h2>
-          <p>Download exports for tracked playlist data.</p>
-        </div>
-        <div class="panel-body">
-          <div class="panel-placeholder">Export tools will appear here.</div>
         </div>
       </section>
     </main>
@@ -310,6 +268,23 @@
         }).format(date);
       };
 
+      const formatFileTimestamp = (value) => {
+        if (!value) {
+          return '';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return '';
+        }
+        const pad = (part) => String(part).padStart(2, '0');
+        const year = date.getFullYear();
+        const month = pad(date.getMonth() + 1);
+        const day = pad(date.getDate());
+        const hours = pad(date.getHours());
+        const minutes = pad(date.getMinutes());
+        return `${year}-${month}-${day}_${hours}-${minutes}`;
+      };
+
       const flagEmoji = (code) => {
         const upper = (code || '').toUpperCase();
         if (upper.length !== 2) {
@@ -323,11 +298,13 @@
         if (!scanRoot) {
           return;
         }
+        const startScanWrap = scanRoot.querySelector('[data-basic-scan-start]');
         const runButton = scanRoot.querySelector('[data-basic-scan-run]');
         const progressWrap = scanRoot.querySelector('[data-basic-scan-progress]');
         const progressFill = scanRoot.querySelector('[data-basic-scan-progress-fill]');
         const progressStatus = scanRoot.querySelector('[data-basic-scan-progress-status]');
         const progressLog = scanRoot.querySelector('[data-basic-scan-progress-log]');
+        const resultsActionButtons = scanRoot.querySelector('[data-basic-scan-results-actions]');
         const resultsWrap = scanRoot.querySelector('[data-basic-scan-results]');
         const summaryLead = scanRoot.querySelector('[data-basic-scan-summary-lead]');
         const summaryList = scanRoot.querySelector('[data-basic-scan-summary-list]');
@@ -398,6 +375,13 @@
             countryDetails.className = 'accordion';
             const summary = document.createElement('summary');
             summary.textContent = `${flagEmoji(countryCode)} ${resolveMarketLabel(countryCode)}`;
+            summary.addEventListener('click', () => {
+              requestAnimationFrame(() => {
+                if (countryDetails.open) {
+                  scrollSectionToCenter(countryDetails);
+                }
+              });
+            });
             countryDetails.appendChild(summary);
 
             const keywordContainer = document.createElement('div');
@@ -426,6 +410,12 @@
               `;
               const tbody = table.querySelector('tbody');
               (keywordData.results || []).forEach((result) => {
+                const followersValue =
+                  result.playlist_followers ??
+                  result.followers ??
+                  result.followers_total ??
+                  result.followers_count ??
+                  '—';
                 const row = document.createElement('tr');
                 if (result.is_tracked_playlist) {
                   row.classList.add('tracked-highlight');
@@ -440,7 +430,7 @@
                     }
                   </td>
                   <td>${result.playlist_owner || '—'}</td>
-                  <td>${result.playlist_followers ?? '—'}</td>
+                  <td>${followersValue}</td>
                   <td>${result.songs_count ?? '—'}</td>
                 `;
                 tbody.appendChild(row);
@@ -466,21 +456,36 @@
           }
           renderSummary(data);
           renderDetailed(data);
+          const startedAt =
+            data.started_at || data.searched_at || data.summary?.[0]?.searched_at;
+          const timestamp = formatFileTimestamp(startedAt);
           if (exportSummary) {
             exportSummary.href = `/api/basic-rank-checker/scans/${scanId}/export/summary.csv`;
+            exportSummary.download = timestamp
+              ? `${timestamp}_${scanId}_summary.csv`
+              : `${scanId}_summary.csv`;
           }
           if (exportDetailed) {
             exportDetailed.href = `/api/basic-rank-checker/scans/${scanId}/export/detailed.csv`;
+            exportDetailed.download = timestamp
+              ? `${timestamp}_${scanId}_detailed.csv`
+              : `${scanId}_detailed.csv`;
           }
         };
 
         const startScan = async () => {
           runButton.disabled = true;
+          if (startScanWrap) {
+            startScanWrap.hidden = true;
+          }
           progressWrap.hidden = false;
           resultsWrap.hidden = true;
+          if (resultsActionButtons) {
+            resultsActionButtons.hidden = true;
+          }
           progressLog.innerHTML = '';
           setProgress(0, 0, 'Starting scan…');
-          statusArea?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          scrollSectionToCenter(progressWrap);
 
           try {
             const response = await fetch('/api/basic-rank-checker/scans', {
@@ -510,19 +515,30 @@
                 setProgress(payload.total || 1, payload.total || 1, 'Scan completed.');
                 await loadResults(activeScanId);
                 resultsWrap.hidden = false;
+                if (resultsActionButtons) {
+                  resultsActionButtons.hidden = false;
+                }
                 progressWrap.hidden = true;
+                scrollSectionToCenter(document.getElementById('basic-scan-summary'));
                 runButton.disabled = false;
               }
               if (payload.type === 'error') {
                 eventSource.close();
                 appendLog(payload.message || 'Scan failed.');
                 setProgress(0, 1, payload.message || 'Scan failed.');
+                progressWrap.hidden = true;
                 runButton.disabled = false;
+                if (startScanWrap) {
+                  startScanWrap.hidden = false;
+                }
               }
             };
           } catch (error) {
             progressWrap.hidden = true;
             runButton.disabled = false;
+            if (startScanWrap) {
+              startScanWrap.hidden = false;
+            }
             setStatus(error.message || 'Failed to start scan.', 'status-error');
           }
         };
@@ -530,16 +546,10 @@
         runButton?.addEventListener('click', startScan);
 
         jumpSummary?.addEventListener('click', () => {
-          document.getElementById('basic-scan-summary')?.scrollIntoView({
-            behavior: 'smooth',
-            block: 'start',
-          });
+          scrollSectionToCenter(document.getElementById('basic-scan-summary'));
         });
         jumpDetailed?.addEventListener('click', () => {
-          document.getElementById('basic-scan-detailed')?.scrollIntoView({
-            behavior: 'smooth',
-            block: 'start',
-          });
+          scrollSectionToCenter(document.getElementById('basic-scan-detailed'));
         });
       };
 
