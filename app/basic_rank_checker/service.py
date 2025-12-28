@@ -86,6 +86,14 @@ def _extract_owner(item: dict) -> str | None:
     return owner.get("display_name") or owner.get("id")
 
 
+def _prefetch_playlist_metadata(
+    playlist_ids: list[str], token: str, playlist_meta_cache: dict[str, dict]
+) -> int:
+    previous_cache_size = len(playlist_meta_cache)
+    fetch_playlist_details(playlist_ids, token, playlist_meta_cache)
+    return len(playlist_meta_cache) - previous_cache_size
+
+
 def run_basic_scan(scan_id: str) -> None:
     if SessionLocal is None:
         return
@@ -115,6 +123,8 @@ def run_basic_scan(scan_id: str) -> None:
         db.commit()
 
         playlist_meta_cache: dict[str, dict] = {}
+        total_playlist_occurrences = 0
+        unique_playlists_fetched = 0
 
         step = 0
         for country in countries:
@@ -139,7 +149,10 @@ def run_basic_scan(scan_id: str) -> None:
                     for item in items
                     if item.get("id") and not item.get("placeholder")
                 ]
-                fetch_playlist_details(playlist_ids_to_fetch, token, playlist_meta_cache)
+                total_playlist_occurrences += len(playlist_ids_to_fetch)
+                unique_playlists_fetched += _prefetch_playlist_metadata(
+                    playlist_ids_to_fetch, token, playlist_meta_cache
+                )
 
                 tracked_rank = None
                 query = BasicScanQuery(
@@ -207,6 +220,15 @@ def run_basic_scan(scan_id: str) -> None:
         scan.finished_at = _now_utc()
         db.add(scan)
         db.commit()
+        logger.info(
+            "Basic scan playlist metadata fetch stats",
+            extra={
+                "scan_id": scan_id,
+                "unique_playlists_fetched": unique_playlists_fetched,
+                "total_playlist_occurrences": total_playlist_occurrences,
+                "playlist_meta_cache_size": len(playlist_meta_cache),
+            },
+        )
         scan_event_manager.publish(scan_id, {"type": "done", "scan_id": scan_id})
     except Exception as exc:
         logger.exception("Basic scan failed")
