@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 import requests
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.spotify import (
@@ -177,9 +177,16 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
 )
 def refresh_playlist_stats(
     tracked_playlist_id: UUID,
+    response: Response,
     db: Session = Depends(get_db),
 ):
-    refreshed = refresh_playlist_metadata(db, str(tracked_playlist_id))
+    logger.info("TEMP DEBUG ENTER refresh-stats %s", tracked_playlist_id)
+    response.headers["X-Debug-Entered"] = "1"
+    try:
+        refreshed = refresh_playlist_metadata(db, str(tracked_playlist_id))
+    except HTTPException as exc:
+        exc.headers = {**(exc.headers or {}), "X-Debug-Entered": "1"}
+        raise
     refreshed_at = refreshed.last_meta_refresh_at or datetime.now(timezone.utc)
     return {
         "ok": True,
