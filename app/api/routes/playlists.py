@@ -14,7 +14,7 @@ from app.core.spotify import (
     normalize_spotify_playlist_url,
     spotify_get,
 )
-from app.core.db import SessionLocal, get_db
+from app.core.db import get_db
 from app.repositories.tracked_playlists import (
     create_tracked_playlist,
     get_tracked_playlist_by_id,
@@ -197,35 +197,20 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
 def refresh_playlist_stats(
     tracked_playlist_id: UUID,
     response: Response,
+    db: Session = Depends(get_db),
 ):
     logger.info("TEMP DEBUG ENTER refresh-stats %s", tracked_playlist_id)
-    if SessionLocal is None:
-        raise RuntimeError("DATABASE_URL not configured")
     response.headers["X-Debug-Entered"] = "1"
     spotify_playlist_id = None
-    lookup_session = None
     try:
-        if SessionLocal is not None:
-            lookup_session = SessionLocal()
-            logger.info(
-                "TEMP HOTFIX refresh-stats lookup session_id=%s",
-                id(lookup_session),
-            )
-            tracked_for_logging = get_tracked_playlist_by_id(lookup_session, tracked_playlist_id)
-            if tracked_for_logging:
-                spotify_playlist_id = tracked_for_logging.playlist_id
+        tracked_for_logging = get_tracked_playlist_by_id(db, tracked_playlist_id)
+        if tracked_for_logging:
+            spotify_playlist_id = tracked_for_logging.playlist_id
     except Exception:
         spotify_playlist_id = None
-    finally:
-        if lookup_session:
-            logger.info(
-                "TEMP HOTFIX refresh-stats closing lookup session_id=%s",
-                id(lookup_session),
-            )
-            lookup_session.close()
 
     try:
-        refreshed = refresh_playlist_metadata(str(tracked_playlist_id))
+        refreshed = refresh_playlist_metadata(db, str(tracked_playlist_id))
     except Exception as exc:
         status_code, body_snippet = _extract_spotify_error_info(exc)
         error_code = _derive_refresh_error_code(exc, status_code)

@@ -44,10 +44,10 @@ def _get_column(table: Table, *names: str):
 
 # TEMP DEBUG: Trigger refresh without browser call to confirm handler logging.
 @router.get("/trigger-refresh/{tracked_playlist_id}")
-def trigger_refresh(tracked_playlist_id: UUID):
+def trigger_refresh(tracked_playlist_id: UUID, db: Session = Depends(get_db)):
     logger.info("DEBUG trigger-refresh %s", tracked_playlist_id)
     try:
-        refresh_playlist_metadata(str(tracked_playlist_id))
+        refresh_playlist_metadata(db, str(tracked_playlist_id))
     except Exception as exc:  # pragma: no cover - best effort debug endpoint
         return {"ok": False, "error": str(exc)}
     return {"ok": True}

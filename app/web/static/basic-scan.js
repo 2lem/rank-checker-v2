@@ -179,12 +179,6 @@
     let eventSource = null;
     let currentStage = 1;
     let activeTargetPlaylistId = getTargetPlaylistId ? getTargetPlaylistId() : null;
-    const closeEventSource = () => {
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-    };
 
     const setStage = (stage, scrollTarget) => {
       currentStage = stage;
@@ -435,7 +429,9 @@
           throw new Error(data.detail || "Failed to start scan.");
         }
         activeScanId = data.scan_id;
-        closeEventSource();
+        if (eventSource) {
+          eventSource.close();
+        }
         eventSource = new EventSource(`/api/basic-rank-checker/scans/${activeScanId}/events`);
         eventSource.onmessage = async (event) => {
           const payload = JSON.parse(event.data);
@@ -444,14 +440,14 @@
             appendLog(payload.message);
           }
           if (payload.type === "done") {
-            closeEventSource();
+            eventSource.close();
             setProgress(payload.total || 1, payload.total || 1, "Scan completed.");
             await loadResults(activeScanId);
             setStage(3, summarySection);
             runButton.disabled = false;
           }
           if (payload.type === "error") {
-            closeEventSource();
+            eventSource.close();
             appendLog(payload.message || "Scan failed.");
             setProgress(0, 1, payload.message || "Scan failed.");
             setStage(1);
@@ -478,7 +474,6 @@
     setStage(1, scanParameters || scanRoot);
 
     return {
-      dispose: closeEventSource,
       setStage,
       getStage: () => currentStage,
       openStage1,

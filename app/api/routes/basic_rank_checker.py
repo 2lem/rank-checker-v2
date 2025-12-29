@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import io
 import threading
-import logging
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -22,7 +21,6 @@ from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
 from app.repositories.tracked_playlists import get_tracked_playlist_by_id
 
 router = APIRouter(tags=["basic-rank-checker"])
-logger = logging.getLogger(__name__)
 
 
 def _format_dt(value: datetime | None) -> str | None:
@@ -75,7 +73,6 @@ def _csv_response(filename: str, headers: list[str], rows: list[list[object | No
 
 @router.post("/scans")
 def start_basic_scan(payload: dict, db: Session = Depends(get_db)):
-    logger.info("TEMP HOTFIX start_basic_scan payload_keys=%s", sorted((payload or {}).keys()))
     payload = payload or {}
     tracked_playlist_id = payload.get("tracked_playlist_id")
     raw_playlist_id = payload.get("playlist_id")
@@ -137,7 +134,6 @@ def start_basic_scan(payload: dict, db: Session = Depends(get_db)):
 
 @router.get("/scans/{scan_id}/events")
 def stream_scan_events(scan_id: str):
-    logger.info("TEMP HOTFIX stream_scan_events scan_id=%s", scan_id)
     try:
         UUID(scan_id)
     except ValueError as exc:
@@ -146,14 +142,12 @@ def stream_scan_events(scan_id: str):
     if SessionLocal is None:
         raise RuntimeError("DATABASE_URL not configured")
 
-    logger.info("TEMP HOTFIX stream_scan_events open session scan_id=%s", scan_id)
     with SessionLocal() as session:
         scan = session.get(BasicScan, scan_id)
         if scan is None:
             raise HTTPException(status_code=404, detail="Scan not found.")
         scan_status = scan.status
         scan_error_message = scan.error_message
-    logger.info("TEMP HOTFIX stream_scan_events closed session scan_id=%s", scan_id)
 
     queue = scan_event_manager.get_queue(scan_id)
     if queue is None:
@@ -166,14 +160,7 @@ def stream_scan_events(scan_id: str):
                 {"type": "error", "message": scan_error_message or "Scan failed."},
             )
 
-    def _stream():
-        logger.info("TEMP HOTFIX scan_events_stream_start scan_id=%s", scan_id)
-        try:
-            yield from scan_event_manager.stream(scan_id)
-        finally:
-            logger.info("TEMP HOTFIX scan_events_stream_end scan_id=%s", scan_id)
-
-    return StreamingResponse(_stream(), media_type="text/event-stream")
+    return StreamingResponse(scan_event_manager.stream(scan_id), media_type="text/event-stream")
 
 
 @router.get("/scans/{scan_id}")

@@ -64,17 +64,7 @@ def get_db():
     if SessionLocal is None:
         raise RuntimeError("DATABASE_URL not configured")
     db = SessionLocal()
-    logger.info(
-        "TEMP HOTFIX get_db open path=%s session_id=%s",
-        request_path_var.get(),
-        id(db),
-    )
     try:
         yield db
     finally:
-        logger.info(
-            "TEMP HOTFIX get_db close path=%s session_id=%s",
-            request_path_var.get(),
-            id(db),
-        )
         db.close()
