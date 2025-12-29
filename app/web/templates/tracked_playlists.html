@@ -25,6 +25,7 @@
           {% set label = 'Manual Scan' %}
           {% set button_variant = 'outline' %}
           {% set type = 'button' %}
+          {% set aria_controls = 'manual-scan' %}
           {% set data_target = 'manual-scan' %}
           {% include "_components/button.html" %}
         </div>
@@ -468,6 +469,10 @@
       let manualCountryManager = null;
       let manualKeywordManager = null;
       let manualScanController = null;
+      const collapsibleSections = [
+        { id: 'add-playlist', panel: addPanel, button: addButton },
+        { id: 'manual-scan', panel: manualPanel, button: manualButton },
+      ];
 
       const clampScrollTarget = (target) => {
         const documentHeight = Math.max(
@@ -486,6 +491,17 @@
         const target =
           window.scrollY + rect.top - (window.innerHeight / 2 - rect.height / 2);
         window.scrollTo({ top: clampScrollTarget(target), behavior: 'smooth' });
+      };
+
+      const scrollCollapsibleSection = (section) => {
+        if (!section) {
+          return;
+        }
+        if (window.BasicScan?.scrollSectionToCenter) {
+          BasicScan.scrollSectionToCenter(section);
+          return;
+        }
+        scrollToCentered(section);
       };
 
       const restorePreOpenScroll = () => {
@@ -513,16 +529,30 @@
         currentlyOpenId = null;
       };
 
-      const closeAddPanel = () => {
-        addPanel?.classList.remove('is-open');
+      const setActiveSection = (targetId) => {
+        collapsibleSections.forEach(({ id, panel, button }) => {
+          const isActive = targetId && id === targetId;
+          panel?.classList.toggle('is-open', isActive);
+          if (button) {
+            button.setAttribute('aria-expanded', isActive ? 'true' : 'false');
+          }
+        });
+
+        if (targetId === 'manual-scan') {
+          manualScanController?.openStage1?.();
+          scrollCollapsibleSection(manualPanel);
+        }
+
+        if (targetId === 'add-playlist') {
+          scrollCollapsibleSection(addPanel);
+        }
       };
 
       const closeManualPanel = ({ resetForm = false } = {}) => {
         if (!manualPanel) {
           return;
         }
-        manualPanel.classList.remove('is-open');
-        manualButton?.setAttribute('aria-expanded', 'false');
+        setActiveSection(null);
         if (resetForm) {
           manualForm?.reset();
           manualCountryManager?.reset?.();
@@ -599,8 +629,7 @@
           };
 
           const openPanels = () => {
-            closeManualPanel();
-            closeAddPanel();
+            setActiveSection(null);
             if (currentlyOpenId && currentlyOpenId !== playlistId) {
               const openCard = document.querySelector(
                 `[data-tracked-card][data-playlist-id="${currentlyOpenId}"]`
@@ -893,12 +922,8 @@
           return;
         }
         const shouldOpen = !addPanel.classList.contains('is-open');
-        closeManualPanel();
         closeActiveManagePanel();
-        addPanel.classList.toggle('is-open', shouldOpen);
-        if (shouldOpen) {
-          scrollToCentered(addPanel);
-        }
+        setActiveSection(shouldOpen ? 'add-playlist' : null);
       });
 
       manualButton?.addEventListener('click', () => {
@@ -906,16 +931,8 @@
           return;
         }
         const shouldOpen = !manualPanel.classList.contains('is-open');
-        closeAddPanel();
         closeActiveManagePanel();
-        if (shouldOpen) {
-          manualPanel.classList.add('is-open');
-          manualButton.setAttribute('aria-expanded', 'true');
-          manualScanController?.openStage1?.();
-          BasicScan.scrollSectionToCenter(manualPanel);
-        } else {
-          closeManualPanel();
-        }
+        setActiveSection(shouldOpen ? 'manual-scan' : null);
       });
 
       setupAddPanel();
