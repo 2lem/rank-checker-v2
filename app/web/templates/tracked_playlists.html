@@ -16,18 +16,24 @@
           <p class="page-subtitle">Monitor playlists and manage their tracking configuration.</p>
         </div>
         <div class="page-header-actions">
-          {% set label = 'Add New Playlist' %}
-          {% set button_variant = 'primary' %}
-          {% set type = 'button' %}
-          {% set aria_controls = 'add-playlist' %}
-          {% set data_target = 'add-playlist' %}
-          {% include "_components/button.html" %}
-          {% set label = 'Manual Scan' %}
-          {% set button_variant = 'outline' %}
-          {% set type = 'button' %}
-          {% set aria_controls = 'manual-scan' %}
-          {% set data_target = 'manual-scan' %}
-          {% include "_components/button.html" %}
+          <button
+            id="btnAddPlaylist"
+            class="btn btn-primary"
+            type="button"
+            aria-controls="sectionAddPlaylist"
+            data-panel-target="sectionAddPlaylist"
+          >
+            Add New Playlist
+          </button>
+          <button
+            id="btnManualScan"
+            class="btn btn-outline"
+            type="button"
+            aria-controls="sectionManualScan"
+            data-panel-target="sectionManualScan"
+          >
+            Manual Scan
+          </button>
         </div>
       </header>
 
@@ -41,7 +47,11 @@
         </div>
       </section>
 
-      <section class="ui-card form-card collapsible-card" id="add-playlist" data-collapsible="add-playlist">
+      <section
+        class="ui-card form-card collapsible-card tp-section"
+        id="sectionAddPlaylist"
+        data-collapsible="sectionAddPlaylist"
+      >
         <div class="section-header">
           <h2>Add New Playlist</h2>
           <p class="section-subtitle">Paste a Spotify playlist URL and optional targeting details.</p>
@@ -121,9 +131,9 @@
       </section>
 
       <section
-        class="ui-card form-card collapsible-card manual-scan-card"
-        id="manual-scan"
-        data-collapsible="manual-scan"
+        class="ui-card form-card collapsible-card manual-scan-card tp-section"
+        id="sectionManualScan"
+        data-collapsible="sectionManualScan"
       >
         <div class="section-header">
           <h2>Manual Scan</h2>
@@ -209,735 +219,754 @@
     </main>
 
     <script>
-      const form = document.getElementById('add-playlist-form');
-      const statusArea = document.getElementById('playlist-status');
-      const addPanel = document.querySelector('[data-collapsible="add-playlist"]');
-      const addButton = document.querySelector('[data-panel-target="add-playlist"]');
-      const addCancelButton = document.querySelector('[data-panel-target="add-playlist-cancel"]');
-      const manualPanel = document.getElementById('manual-scan');
-      const manualButton = document.querySelector('[data-panel-target="manual-scan"]');
-      const manualCancelButton = manualPanel?.querySelector('[data-manual-cancel]');
-      const manualForm = document.getElementById('manual-scan-form');
+      document.addEventListener('DOMContentLoaded', () => {
+        const form = document.getElementById('add-playlist-form');
+        const statusArea = document.getElementById('playlist-status');
+        const addPanel = document.getElementById('sectionAddPlaylist');
+        const addButton = document.getElementById('btnAddPlaylist');
+        const addCancelButton = document.querySelector('[data-panel-target="add-playlist-cancel"]');
+        const manualPanel = document.getElementById('sectionManualScan');
+        const manualButton = document.getElementById('btnManualScan');
+        const manualCancelButton = manualPanel?.querySelector('[data-manual-cancel]');
+        const manualForm = document.getElementById('manual-scan-form');
+        const collapsibleSections = Array.from(document.querySelectorAll('.tp-section'));
 
-      const availableMarkets = {{ available_markets | tojson }};
-      const marketLabelMap = new Map(
-        availableMarkets.map((market) => [market.code.toUpperCase(), market.label])
-      );
+        const availableMarkets = {{ available_markets | tojson }};
+        const marketLabelMap = new Map(
+          (availableMarkets || []).map((market) => [market.code.toUpperCase(), market.label])
+        );
 
-      const resolveMarketLabel = (code) => marketLabelMap.get((code || '').toUpperCase()) || code;
-      const formatTimestamp = (value) => {
-        if (!value) {
-          return '—';
-        }
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) {
-          return value;
-        }
-        return new Intl.DateTimeFormat('sv-SE', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-        }).format(date);
-      };
-
-      const setStatus = (message, variant) => {
-        statusArea.textContent = message;
-        statusArea.classList.remove('status-success', 'status-error', 'status-loading');
-        if (variant) {
-          statusArea.classList.add(variant);
-        }
-      };
-
-      const normalizePlaylistUrl = (value) => (value || '').trim().split('?', 1)[0];
-      const extractPlaylistId = (text) => {
-        const match = (text || '').match(/(?:open\\.spotify\\.com\\/playlist\\/|spotify:playlist:)([A-Za-z0-9]+)/);
-        return match ? match[1] : null;
-      };
-
-      const createChip = ({ label, removable, locked, onRemove }) => {
-        const chip = document.createElement('span');
-        chip.className = `chip ${locked ? 'chip-locked' : ''}`;
-        const text = document.createElement('span');
-        text.className = 'chip-label';
-        text.textContent = label;
-        chip.appendChild(text);
-        if (removable) {
-          const remove = document.createElement('button');
-          remove.type = 'button';
-          remove.className = 'chip-remove';
-          remove.textContent = '×';
-          remove.addEventListener('click', onRemove);
-          chip.appendChild(remove);
-        }
-        return chip;
-      };
-
-      const createSelectionManager = ({
-        listElement,
-        infoElement,
-        max,
-        lockedValues = [],
-        normalize,
-        compare,
-        getLabel,
-      }) => {
-        let values = [...lockedValues];
-
-        const render = () => {
-          listElement.innerHTML = '';
-          values.forEach((value) => {
-            const isLocked = lockedValues.some((locked) => compare(locked, value));
-            const removable = !isLocked;
-            listElement.appendChild(
-              createChip({
-                label: getLabel ? getLabel(value) : value,
-                locked: isLocked,
-                removable,
-                onRemove: () => {
-                  if (isLocked) {
-                    return;
-                  }
-                  values = values.filter((entry) => !compare(entry, value));
-                  render();
-                },
-              })
-            );
-          });
-          infoElement.hidden = values.length < max;
-        };
-
-        const addValue = (raw) => {
-          const value = normalize(raw);
+        const resolveMarketLabel = (code) => marketLabelMap.get((code || '').toUpperCase()) || code;
+        const formatTimestamp = (value) => {
           if (!value) {
-            return false;
+            return '—';
           }
-          if (values.some((entry) => compare(entry, value))) {
-            return false;
+          const date = new Date(value);
+          if (Number.isNaN(date.getTime())) {
+            return value;
           }
-          if (values.length >= max) {
-            infoElement.hidden = false;
-            return false;
-          }
-          values = [...values, value];
-          render();
-          return true;
+          return new Intl.DateTimeFormat('sv-SE', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          }).format(date);
         };
 
-        const setValues = (nextValues) => {
-          values = [...nextValues];
-          render();
+        const setStatus = (message, variant) => {
+          if (!statusArea) {
+            return;
+          }
+          statusArea.textContent = message;
+          statusArea.classList.remove('status-success', 'status-error', 'status-loading');
+          if (variant) {
+            statusArea.classList.add(variant);
+          }
         };
 
-        const getValues = () => [...values];
-
-        const reset = () => {
-          values = [...lockedValues];
-          render();
+        const normalizePlaylistUrl = (value) => (value || '').trim().split('?', 1)[0];
+        const extractPlaylistId = (text) => {
+          const match = (text || '').match(/(?:open\.spotify\.com\/playlist\/|spotify:playlist:)([A-Za-z0-9]+)/);
+          return match ? match[1] : null;
         };
 
-        render();
-
-        return {
-          addValue,
-          getValues,
-          reset,
-          setValues,
+        const createChip = ({ label, removable, locked, onRemove }) => {
+          const chip = document.createElement('span');
+          chip.className = `chip ${locked ? 'chip-locked' : ''}`;
+          const text = document.createElement('span');
+          text.className = 'chip-label';
+          text.textContent = label;
+          chip.appendChild(text);
+          if (removable) {
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'chip-remove';
+            remove.textContent = '×';
+            remove.addEventListener('click', onRemove);
+            chip.appendChild(remove);
+          }
+          return chip;
         };
-      };
 
-      const setupAddPanel = () => {
-        if (!addPanel || !form) {
-          return;
-        }
-        const playlistInput = form.querySelector('[data-playlist-input]');
-        const countrySelect = form.querySelector('[data-country-select]');
-        const countryAdd = form.querySelector('[data-country-add]');
-        const countryPills = form.querySelector('[data-country-pills]');
-        const countryInfo = form.querySelector('[data-country-info]');
-        const keywordInput = form.querySelector('[data-keyword-input]');
-        const keywordAdd = form.querySelector('[data-keyword-add]');
-        const keywordPills = form.querySelector('[data-keyword-pills]');
-        const keywordInfo = form.querySelector('[data-keyword-info]');
+        const createSelectionManager = ({
+          listElement,
+          infoElement,
+          max,
+          lockedValues = [],
+          normalize,
+          compare,
+          getLabel,
+        }) => {
+          let values = [...lockedValues];
 
-        const defaultOption = document.createElement('option');
-        defaultOption.value = '';
-        defaultOption.textContent = 'Select a country';
-        defaultOption.disabled = true;
-        defaultOption.selected = true;
-        countrySelect.appendChild(defaultOption);
-
-        availableMarkets.forEach((market) => {
-          const option = document.createElement('option');
-          option.value = market.code;
-          option.textContent = market.label;
-          countrySelect.appendChild(option);
-        });
-
-        const countryManager = createSelectionManager({
-          listElement: countryPills,
-          infoElement: countryInfo,
-          max: 5,
-          lockedValues: [],
-          normalize: (value) => (value || '').trim().toUpperCase(),
-          compare: (a, b) => a.toUpperCase() === b.toUpperCase(),
-          getLabel: resolveMarketLabel,
-        });
-
-        const keywordManager = createSelectionManager({
-          listElement: keywordPills,
-          infoElement: keywordInfo,
-          max: 5,
-          lockedValues: [],
-          normalize: (value) => (value || '').trim(),
-          compare: (a, b) => a.toLowerCase() === b.toLowerCase(),
-        });
-
-        countryAdd?.addEventListener('click', () => {
-          if (countryManager.addValue(countrySelect.value)) {
-            countryInfo.hidden = countryManager.getValues().length < 5;
-          }
-        });
-
-        keywordAdd?.addEventListener('click', () => {
-          if (keywordManager.addValue(keywordInput.value)) {
-            keywordInput.value = '';
-          }
-        });
-
-        keywordInput?.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            keywordAdd.click();
-          }
-        });
-
-        playlistInput?.addEventListener('input', (event) => {
-          const input = event.target;
-          input.value = normalizePlaylistUrl(input.value);
-        });
-
-        form.addEventListener('reset', () => {
-          countryManager.reset();
-          keywordManager.reset();
-        });
-
-        addCancelButton?.addEventListener('click', () => {
-          form.reset();
-          addPanel.classList.remove('is-open');
-        });
-
-        form.addEventListener('submit', async (event) => {
-          event.preventDefault();
-          const payload = {
-            playlist_url: playlistInput.value,
-            target_countries: countryManager.getValues(),
-            target_keywords: keywordManager.getValues(),
+          const render = () => {
+            listElement.innerHTML = '';
+            values.forEach((value) => {
+              const isLocked = lockedValues.some((locked) => compare(locked, value));
+              const removable = !isLocked;
+              listElement.appendChild(
+                createChip({
+                  label: getLabel ? getLabel(value) : value,
+                  locked: isLocked,
+                  removable,
+                  onRemove: () => {
+                    if (isLocked) {
+                      return;
+                    }
+                    values = values.filter((entry) => !compare(entry, value));
+                    render();
+                  },
+                })
+              );
+            });
+            infoElement.hidden = values.length < max;
           };
 
-          setStatus('Adding playlist...', 'status-loading');
-
-          try {
-            const response = await fetch('/api/playlists', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(payload),
-            });
-
-            if (!response.ok) {
-              const data = await response.json().catch(() => ({}));
-              const detail = data.detail || 'Unable to add playlist.';
-              const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
-              setStatus(message, 'status-error');
-              return;
+          const addValue = (raw) => {
+            const value = normalize(raw);
+            if (!value) {
+              return false;
             }
+            if (values.some((entry) => compare(entry, value))) {
+              return false;
+            }
+            if (values.length >= max) {
+              infoElement.hidden = false;
+              return false;
+            }
+            values = [...values, value];
+            render();
+            return true;
+          };
 
-            setStatus('Playlist added successfully. Reloading...', 'status-success');
-            addPanel.classList.remove('is-open');
-            window.location.reload();
-          } catch (error) {
-            setStatus('Network error while adding playlist.', 'status-error');
+          const setValues = (nextValues) => {
+            values = [...nextValues];
+            render();
+          };
+
+          const getValues = () => [...values];
+
+          const reset = () => {
+            values = [...lockedValues];
+            render();
+          };
+
+          render();
+
+          return {
+            addValue,
+            getValues,
+            reset,
+            setValues,
+          };
+        };
+
+        let currentlyOpenId = null;
+        let preOpenScrollY = null;
+        let manualCountryManager = null;
+        let manualKeywordManager = null;
+        let manualScanController = null;
+
+        const clampScrollTarget = (target) => {
+          const documentHeight = Math.max(
+            document.body.scrollHeight,
+            document.documentElement.scrollHeight
+          );
+          const maxScroll = Math.max(0, documentHeight - window.innerHeight);
+          return Math.min(Math.max(0, target), maxScroll);
+        };
+
+        const scrollToCentered = (element) => {
+          if (!element) {
+            return;
           }
-        });
-      };
+          const rect = element.getBoundingClientRect();
+          const target =
+            window.scrollY + rect.top - (window.innerHeight / 2 - rect.height / 2);
+          window.scrollTo({ top: clampScrollTarget(target), behavior: 'smooth' });
+        };
 
-      let currentlyOpenId = null;
-      let preOpenScrollY = null;
-      let manualCountryManager = null;
-      let manualKeywordManager = null;
-      let manualScanController = null;
-      const collapsibleSections = [
-        { id: 'add-playlist', panel: addPanel, button: addButton },
-        { id: 'manual-scan', panel: manualPanel, button: manualButton },
-      ];
-
-      const clampScrollTarget = (target) => {
-        const documentHeight = Math.max(
-          document.body.scrollHeight,
-          document.documentElement.scrollHeight
-        );
-        const maxScroll = Math.max(0, documentHeight - window.innerHeight);
-        return Math.min(Math.max(0, target), maxScroll);
-      };
-
-      const scrollToCentered = (element) => {
-        if (!element) {
-          return;
-        }
-        const rect = element.getBoundingClientRect();
-        const target =
-          window.scrollY + rect.top - (window.innerHeight / 2 - rect.height / 2);
-        window.scrollTo({ top: clampScrollTarget(target), behavior: 'smooth' });
-      };
-
-      const scrollCollapsibleSection = (section) => {
-        if (!section) {
-          return;
-        }
-        if (window.BasicScan?.scrollSectionToCenter) {
-          BasicScan.scrollSectionToCenter(section);
-          return;
-        }
-        scrollToCentered(section);
-      };
-
-      const restorePreOpenScroll = () => {
-        if (preOpenScrollY === null) {
-          return;
-        }
-        window.scrollTo({ top: clampScrollTarget(preOpenScrollY), behavior: 'smooth' });
-        preOpenScrollY = null;
-      };
-
-      const closeActiveManagePanel = () => {
-        if (!currentlyOpenId) {
-          return;
-        }
-        const openCard = document.querySelector(
-          `[data-tracked-card][data-playlist-id="${currentlyOpenId}"]`
-        );
-        const openManagePanel = openCard?.querySelector('[data-manage-panel]');
-        const openEditPanel = openCard?.querySelector('[data-edit-panel]');
-        const openManageToggle = openCard?.querySelector('[data-manage-toggle]');
-        openManagePanel?.classList.remove('is-open');
-        openEditPanel?.classList.remove('is-open');
-        openManageToggle?.setAttribute('aria-expanded', 'false');
-        restorePreOpenScroll();
-        currentlyOpenId = null;
-      };
-
-      const setActiveSection = (targetId) => {
-        collapsibleSections.forEach(({ id, panel, button }) => {
-          const isActive = targetId && id === targetId;
-          panel?.classList.toggle('is-open', isActive);
-          if (button) {
-            button.setAttribute('aria-expanded', isActive ? 'true' : 'false');
+        const scrollCollapsibleSection = (section) => {
+          if (!section) {
+            return;
           }
-        });
+          if (window.BasicScan?.scrollSectionToCenter) {
+            BasicScan.scrollSectionToCenter(section);
+            return;
+          }
+          scrollToCentered(section);
+        };
 
-        if (targetId === 'manual-scan') {
-          manualScanController?.openStage1?.();
-          scrollCollapsibleSection(manualPanel);
-        }
+        const restorePreOpenScroll = () => {
+          if (preOpenScrollY === null) {
+            return;
+          }
+          window.scrollTo({ top: clampScrollTarget(preOpenScrollY), behavior: 'smooth' });
+          preOpenScrollY = null;
+        };
 
-        if (targetId === 'add-playlist') {
-          scrollCollapsibleSection(addPanel);
-        }
-      };
+        const activateSection = (sectionId) => {
+          collapsibleSections.forEach((section) => {
+            const isActive = sectionId && section.id === sectionId;
+            section.classList.toggle('is-open', isActive);
+          });
 
-      const closeManualPanel = ({ resetForm = false } = {}) => {
-        if (!manualPanel) {
-          return;
-        }
-        setActiveSection(null);
-        if (resetForm) {
-          manualForm?.reset();
-          manualCountryManager?.reset?.();
-          manualKeywordManager?.reset?.();
-          manualScanController?.openStage1?.();
-        }
-      };
+          const isAddSection = sectionId && addPanel && sectionId === addPanel.id;
+          const isManualSection = sectionId && manualPanel && sectionId === manualPanel.id;
 
-      const setupManagePanels = () => {
-        const cards = document.querySelectorAll('[data-tracked-card]');
-        cards.forEach((card) => {
-          const manageToggle = card.querySelector('[data-manage-toggle]');
-          const managePanel = card.querySelector('[data-manage-panel]');
-          const editToggle = card.querySelector('[data-edit-toggle]');
-          const editPanel = card.querySelector('[data-edit-panel]');
-          const manageClose = card.querySelector('[data-manage-close]');
-          const editForm = card.querySelector('[data-edit-form]');
-          const editCancel = card.querySelector('[data-edit-cancel]');
-          const editCountrySelect = card.querySelector('[data-edit-country-select]');
-          const editCountryAdd = card.querySelector('[data-edit-country-add]');
-          const editCountryPills = card.querySelector('[data-edit-country-pills]');
-          const editCountryInfo = card.querySelector('[data-edit-country-info]');
-          const editKeywordInput = card.querySelector('[data-edit-keyword-input]');
-          const editKeywordAdd = card.querySelector('[data-edit-keyword-add]');
-          const editKeywordPills = card.querySelector('[data-edit-keyword-pills]');
-          const editKeywordInfo = card.querySelector('[data-edit-keyword-info]');
-          const refreshButton = card.querySelector('[data-refresh-stats]');
-          const playlistId = card.dataset.playlistId;
+          if (addButton) {
+            addButton.setAttribute('aria-expanded', isAddSection ? 'true' : 'false');
+          }
+          if (manualButton) {
+            manualButton.setAttribute('aria-expanded', isManualSection ? 'true' : 'false');
+          }
 
-          const existingCountries = JSON.parse(card.dataset.targetCountries || '[]');
-          const existingKeywords = JSON.parse(card.dataset.targetKeywords || '[]');
+          if (isManualSection) {
+            manualScanController?.openStage1?.();
+            scrollCollapsibleSection(manualPanel);
+          } else if (isAddSection) {
+            scrollCollapsibleSection(addPanel);
+          }
 
-          const defaultEditOption = document.createElement('option');
-          defaultEditOption.value = '';
-          defaultEditOption.textContent = 'Select a country';
-          defaultEditOption.disabled = true;
-          defaultEditOption.selected = true;
-          editCountrySelect.appendChild(defaultEditOption);
+          if (!sectionId) {
+            restorePreOpenScroll();
+          }
+        };
+
+        const toggleSection = (sectionId) => {
+          const targetSection = collapsibleSections.find((section) => section.id === sectionId);
+          if (!targetSection) {
+            return;
+          }
+          const shouldOpen = !targetSection.classList.contains('is-open');
+          activateSection(shouldOpen ? sectionId : null);
+        };
+
+        const closeActiveManagePanel = () => {
+          if (!currentlyOpenId) {
+            return;
+          }
+          const openCard = document.querySelector(
+            `[data-tracked-card][data-playlist-id="${currentlyOpenId}"]`
+          );
+          const openManagePanel = openCard?.querySelector('[data-manage-panel]');
+          const openEditPanel = openCard?.querySelector('[data-edit-panel]');
+          const openManageToggle = openCard?.querySelector('[data-manage-toggle]');
+          openManagePanel?.classList.remove('is-open');
+          openEditPanel?.classList.remove('is-open');
+          openManageToggle?.setAttribute('aria-expanded', 'false');
+          restorePreOpenScroll();
+          currentlyOpenId = null;
+        };
+
+        const closeManualPanel = ({ resetForm = false } = {}) => {
+          if (!manualPanel) {
+            return;
+          }
+          activateSection(null);
+          if (resetForm) {
+            manualForm?.reset();
+            manualCountryManager?.reset?.();
+            manualKeywordManager?.reset?.();
+            manualScanController?.openStage1?.();
+          }
+        };
+
+        const setupAddPanel = () => {
+          if (!addPanel || !form) {
+            return;
+          }
+          const playlistInput = form.querySelector('[data-playlist-input]');
+          const countrySelect = form.querySelector('[data-country-select]');
+          const countryAdd = form.querySelector('[data-country-add]');
+          const countryPills = form.querySelector('[data-country-pills]');
+          const countryInfo = form.querySelector('[data-country-info]');
+          const keywordInput = form.querySelector('[data-keyword-input]');
+          const keywordAdd = form.querySelector('[data-keyword-add]');
+          const keywordPills = form.querySelector('[data-keyword-pills]');
+          const keywordInfo = form.querySelector('[data-keyword-info]');
+
+          const defaultOption = document.createElement('option');
+          defaultOption.value = '';
+          defaultOption.textContent = 'Select a country';
+          defaultOption.disabled = true;
+          defaultOption.selected = true;
+          countrySelect.appendChild(defaultOption);
 
           availableMarkets.forEach((market) => {
             const option = document.createElement('option');
             option.value = market.code;
             option.textContent = market.label;
-            editCountrySelect.appendChild(option);
+            countrySelect.appendChild(option);
           });
 
-          const editCountryManager = createSelectionManager({
-            listElement: editCountryPills,
-            infoElement: editCountryInfo,
+          const countryManager = createSelectionManager({
+            listElement: countryPills,
+            infoElement: countryInfo,
             max: 5,
-            lockedValues: existingCountries.map((value) => value.toUpperCase()),
+            lockedValues: [],
             normalize: (value) => (value || '').trim().toUpperCase(),
             compare: (a, b) => a.toUpperCase() === b.toUpperCase(),
             getLabel: resolveMarketLabel,
           });
 
-          const editKeywordManager = createSelectionManager({
-            listElement: editKeywordPills,
-            infoElement: editKeywordInfo,
+          const keywordManager = createSelectionManager({
+            listElement: keywordPills,
+            infoElement: keywordInfo,
             max: 5,
-            lockedValues: existingKeywords,
+            lockedValues: [],
             normalize: (value) => (value || '').trim(),
             compare: (a, b) => a.toLowerCase() === b.toLowerCase(),
           });
 
-          const closePanels = ({ restoreScroll }) => {
-            managePanel.classList.remove('is-open');
-            editPanel.classList.remove('is-open');
-            manageToggle?.setAttribute('aria-expanded', 'false');
-            if (restoreScroll) {
-              restorePreOpenScroll();
-              currentlyOpenId = null;
-            }
-          };
-
-          const openPanels = () => {
-            setActiveSection(null);
-            if (currentlyOpenId && currentlyOpenId !== playlistId) {
-              const openCard = document.querySelector(
-                `[data-tracked-card][data-playlist-id="${currentlyOpenId}"]`
-              );
-              if (openCard) {
-                const openManagePanel = openCard.querySelector('[data-manage-panel]');
-                const openEditPanel = openCard.querySelector('[data-edit-panel]');
-                const openManageToggle = openCard.querySelector('[data-manage-toggle]');
-                openManagePanel?.classList.remove('is-open');
-                openEditPanel?.classList.remove('is-open');
-                openManageToggle?.setAttribute('aria-expanded', 'false');
-              }
-            }
-            if (currentlyOpenId === null) {
-              preOpenScrollY = window.scrollY;
-            }
-            currentlyOpenId = playlistId;
-            managePanel.classList.add('is-open');
-            manageToggle?.setAttribute('aria-expanded', 'true');
-            scrollToCentered(managePanel);
-          };
-
-          manageToggle?.addEventListener('click', () => {
-            const isOpen = managePanel.classList.contains('is-open');
-            if (isOpen) {
-              closePanels({ restoreScroll: true });
-            } else {
-              openPanels();
+          countryAdd?.addEventListener('click', () => {
+            if (countryManager.addValue(countrySelect.value)) {
+              countryInfo.hidden = countryManager.getValues().length < 5;
             }
           });
 
-          manageClose?.addEventListener('click', () => {
-            closePanels({ restoreScroll: true });
-          });
-
-          editToggle?.addEventListener('click', () => {
-            const isOpen = editPanel.classList.toggle('is-open');
-            if (isOpen) {
-              scrollToCentered(editPanel);
+          keywordAdd?.addEventListener('click', () => {
+            if (keywordManager.addValue(keywordInput.value)) {
+              keywordInput.value = '';
             }
           });
 
-          editCountryAdd?.addEventListener('click', () => {
-            editCountryManager.addValue(editCountrySelect.value);
-          });
-
-          editKeywordAdd?.addEventListener('click', () => {
-            if (editKeywordManager.addValue(editKeywordInput.value)) {
-              editKeywordInput.value = '';
-            }
-          });
-
-          editKeywordInput?.addEventListener('keydown', (event) => {
+          keywordInput?.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') {
               event.preventDefault();
-              editKeywordAdd.click();
+              keywordAdd.click();
             }
           });
 
-          editCancel?.addEventListener('click', () => {
-            editCountryManager.setValues(existingCountries.map((value) => value.toUpperCase()));
-            editKeywordManager.setValues(existingKeywords);
-            editPanel.classList.remove('is-open');
+          playlistInput?.addEventListener('input', (event) => {
+            const input = event.target;
+            input.value = normalizePlaylistUrl(input.value);
           });
 
-          editForm?.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            const targetCountries = editCountryManager.getValues();
-            const targetKeywords = editKeywordManager.getValues();
+          form.addEventListener('reset', () => {
+            countryManager.reset();
+            keywordManager.reset();
+          });
 
-            setStatus('Saving configuration...', 'status-loading');
+          addCancelButton?.addEventListener('click', () => {
+            form.reset();
+            activateSection(null);
+          });
+
+          form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const payload = {
+              playlist_url: playlistInput.value,
+              target_countries: countryManager.getValues(),
+              target_keywords: keywordManager.getValues(),
+            };
+
+            setStatus('Adding playlist...', 'status-loading');
 
             try {
-              const response = await fetch(`/api/playlists/${playlistId}/targets`, {
-                method: 'PATCH',
+              const response = await fetch('/api/playlists', {
+                method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                  target_countries: targetCountries,
-                  target_keywords: targetKeywords,
-                }),
+                body: JSON.stringify(payload),
               });
 
               if (!response.ok) {
                 const data = await response.json().catch(() => ({}));
-                const detail = data.detail || 'Unable to update playlist.';
+                const detail = data.detail || 'Unable to add playlist.';
                 const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
                 setStatus(message, 'status-error');
                 return;
               }
 
-              setStatus('Configuration saved. Reloading...', 'status-success');
+              setStatus('Playlist added successfully. Reloading...', 'status-success');
+              activateSection(null);
+              window.location.reload();
+            } catch (error) {
+              setStatus('Network error while adding playlist.', 'status-error');
+            }
+          });
+        };
+
+        const setupManagePanels = () => {
+          const cards = document.querySelectorAll('[data-tracked-card]');
+          cards.forEach((card) => {
+            const manageToggle = card.querySelector('[data-manage-toggle]');
+            const managePanel = card.querySelector('[data-manage-panel]');
+            const editToggle = card.querySelector('[data-edit-toggle]');
+            const editPanel = card.querySelector('[data-edit-panel]');
+            const manageClose = card.querySelector('[data-manage-close]');
+            const editForm = card.querySelector('[data-edit-form]');
+            const editCancel = card.querySelector('[data-edit-cancel]');
+            const editCountrySelect = card.querySelector('[data-edit-country-select]');
+            const editCountryAdd = card.querySelector('[data-edit-country-add]');
+            const editCountryPills = card.querySelector('[data-edit-country-pills]');
+            const editCountryInfo = card.querySelector('[data-edit-country-info]');
+            const editKeywordInput = card.querySelector('[data-edit-keyword-input]');
+            const editKeywordAdd = card.querySelector('[data-edit-keyword-add]');
+            const editKeywordPills = card.querySelector('[data-edit-keyword-pills]');
+            const editKeywordInfo = card.querySelector('[data-edit-keyword-info]');
+            const refreshButton = card.querySelector('[data-refresh-stats]');
+            const playlistId = card.dataset.playlistId;
+
+            const existingCountries = JSON.parse(card.dataset.targetCountries || '[]');
+            const existingKeywords = JSON.parse(card.dataset.targetKeywords || '[]');
+
+            const defaultEditOption = document.createElement('option');
+            defaultEditOption.value = '';
+            defaultEditOption.textContent = 'Select a country';
+            defaultEditOption.disabled = true;
+            defaultEditOption.selected = true;
+            editCountrySelect.appendChild(defaultEditOption);
+
+            availableMarkets.forEach((market) => {
+              const option = document.createElement('option');
+              option.value = market.code;
+              option.textContent = market.label;
+              editCountrySelect.appendChild(option);
+            });
+
+            const editCountryManager = createSelectionManager({
+              listElement: editCountryPills,
+              infoElement: editCountryInfo,
+              max: 5,
+              lockedValues: existingCountries.map((value) => value.toUpperCase()),
+              normalize: (value) => (value || '').trim().toUpperCase(),
+              compare: (a, b) => a.toUpperCase() === b.toUpperCase(),
+              getLabel: resolveMarketLabel,
+            });
+
+            const editKeywordManager = createSelectionManager({
+              listElement: editKeywordPills,
+              infoElement: editKeywordInfo,
+              max: 5,
+              lockedValues: existingKeywords,
+              normalize: (value) => (value || '').trim(),
+              compare: (a, b) => a.toLowerCase() === b.toLowerCase(),
+            });
+
+            const closePanels = ({ restoreScroll }) => {
+              managePanel.classList.remove('is-open');
               editPanel.classList.remove('is-open');
-              window.location.reload();
-            } catch (error) {
-              setStatus('Network error while updating playlist.', 'status-error');
-            }
-          });
-
-          refreshButton?.addEventListener('click', async () => {
-            refreshButton.disabled = true;
-            setStatus('Fetching data from Spotify… please wait', 'status-loading');
-
-            try {
-              const response = await fetch(`/api/playlists/${playlistId}/refresh-stats`, {
-                method: 'POST',
-              });
-
-              const data = await response.json().catch(() => ({}));
-
-              if (!response.ok) {
-                const detail = data.detail || 'Unable to refresh playlist metadata.';
-                const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
-                setStatus(message, 'status-error');
-                refreshButton.disabled = false;
-                return;
+              manageToggle?.setAttribute('aria-expanded', 'false');
+              if (restoreScroll) {
+                restorePreOpenScroll();
+                currentlyOpenId = null;
               }
-
-              const refreshedAt = data.refreshed_at ? new Date(data.refreshed_at) : null;
-              const timeLabel = refreshedAt ? refreshedAt.toLocaleString() : 'just now';
-              setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
-              window.location.reload();
-            } catch (error) {
-              setStatus('Network error while refreshing playlist.', 'status-error');
-              refreshButton.disabled = false;
-            }
-          });
-        });
-      };
-
-      const setupManualScan = () => {
-        if (!manualPanel || !manualForm) {
-          return;
-        }
-        const playlistInput = manualPanel.querySelector('[data-manual-playlist-input]');
-        const countrySelect = manualPanel.querySelector('[data-manual-country-select]');
-        const countryAdd = manualPanel.querySelector('[data-manual-country-add]');
-        const countryPills = manualPanel.querySelector('[data-manual-country-pills]');
-        const countryInfo = manualPanel.querySelector('[data-manual-country-info]');
-        const keywordInput = manualPanel.querySelector('[data-manual-keyword-input]');
-        const keywordAdd = manualPanel.querySelector('[data-manual-keyword-add]');
-        const keywordPills = manualPanel.querySelector('[data-manual-keyword-pills]');
-        const keywordInfo = manualPanel.querySelector('[data-manual-keyword-info]');
-        const scanRoot = manualPanel.querySelector('[data-basic-scan]');
-
-        const defaultOption = document.createElement('option');
-        defaultOption.value = '';
-        defaultOption.textContent = 'Select a country';
-        defaultOption.disabled = true;
-        defaultOption.selected = true;
-        countrySelect.appendChild(defaultOption);
-
-        availableMarkets.forEach((market) => {
-          const option = document.createElement('option');
-          option.value = market.code;
-          option.textContent = market.label;
-          countrySelect.appendChild(option);
-        });
-
-        manualCountryManager = createSelectionManager({
-          listElement: countryPills,
-          infoElement: countryInfo,
-          max: 10,
-          lockedValues: [],
-          normalize: (value) => (value || '').trim().toUpperCase(),
-          compare: (a, b) => a.toUpperCase() === b.toUpperCase(),
-          getLabel: resolveMarketLabel,
-        });
-
-        manualKeywordManager = createSelectionManager({
-          listElement: keywordPills,
-          infoElement: keywordInfo,
-          max: 10,
-          lockedValues: [],
-          normalize: (value) => (value || '').trim(),
-          compare: (a, b) => a.toLowerCase() === b.toLowerCase(),
-        });
-
-        countryAdd?.addEventListener('click', () => {
-          if (manualCountryManager.addValue(countrySelect.value)) {
-            countryInfo.hidden = manualCountryManager.getValues().length < 10;
-          }
-        });
-
-        keywordAdd?.addEventListener('click', () => {
-          if (manualKeywordManager.addValue(keywordInput.value)) {
-            keywordInput.value = '';
-          }
-        });
-
-        keywordInput?.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            keywordAdd.click();
-          }
-        });
-
-        playlistInput?.addEventListener('input', (event) => {
-          const normalized = normalizePlaylistUrl(event.target.value);
-          event.target.value = normalized;
-        });
-
-        manualForm?.addEventListener('reset', () => {
-          manualCountryManager.reset();
-          manualKeywordManager.reset();
-        });
-
-        manualCancelButton?.addEventListener('click', () => {
-          manualForm.reset();
-          manualCountryManager.reset();
-          manualKeywordManager.reset();
-          manualScanController?.openStage1?.();
-          closeManualPanel();
-          setStatus('Manual scan canceled.', null);
-        });
-
-        manualScanController = BasicScan.init({
-          root: scanRoot,
-          resolveMarketLabel,
-          formatTimestamp,
-          formatSummaryDateParts: (value) => {
-            if (!value) {
-              return { dateLabel: '—', timeLabel: '—' };
-            }
-            const date = new Date(value);
-            if (Number.isNaN(date.getTime())) {
-              return { dateLabel: value, timeLabel: value };
-            }
-            const dateLabel = date.toLocaleDateString('en-GB', {
-              day: 'numeric',
-              month: 'long',
-              year: 'numeric',
-            });
-            const timeLabel = date.toLocaleTimeString('en-GB', {
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: false,
-            });
-            return { dateLabel, timeLabel };
-          },
-          onStatus: setStatus,
-          getTargetPlaylistId: () => extractPlaylistId(normalizePlaylistUrl(playlistInput.value)),
-          getStartPayload: () => {
-            const normalizedUrl = normalizePlaylistUrl(playlistInput.value);
-            const playlistId = extractPlaylistId(normalizedUrl);
-            const targetCountries = manualCountryManager.getValues();
-            const targetKeywords = manualKeywordManager.getValues();
-
-            if (!playlistId) {
-              setStatus('Please enter a valid Spotify playlist URL.', 'status-error');
-              throw new Error('Invalid playlist URL');
-            }
-            if (!targetCountries.length || !targetKeywords.length) {
-              setStatus('Add at least one target country and keyword to run a scan.', 'status-error');
-              throw new Error('Missing targeting values');
-            }
-
-            return {
-              playlist_id: playlistId,
-              playlist_url: normalizedUrl,
-              target_countries: targetCountries,
-              target_keywords: targetKeywords,
-              tracked_playlist_id: null,
-              is_tracked_playlist: false,
-              account_id: null,
             };
-          },
-          onStageChange: (stage) => {
-            const shouldDisable = stage === 2;
-            [playlistInput, countrySelect, countryAdd, keywordInput, keywordAdd, manualCancelButton].forEach(
-              (element) => {
-                if (element) {
-                  element.disabled = shouldDisable;
+
+            const openPanels = () => {
+              activateSection(null);
+              if (currentlyOpenId && currentlyOpenId !== playlistId) {
+                const openCard = document.querySelector(
+                  `[data-tracked-card][data-playlist-id="${currentlyOpenId}"]`
+                );
+                if (openCard) {
+                  const openManagePanel = openCard.querySelector('[data-manage-panel]');
+                  const openEditPanel = openCard.querySelector('[data-edit-panel]');
+                  const openManageToggle = openCard.querySelector('[data-manage-toggle]');
+                  openManagePanel?.classList.remove('is-open');
+                  openEditPanel?.classList.remove('is-open');
+                  openManageToggle?.setAttribute('aria-expanded', 'false');
                 }
               }
-            );
-            if (stage === 2) {
-              setStatus('Manual scan in progress...', 'status-loading');
+              if (currentlyOpenId === null) {
+                preOpenScrollY = window.scrollY;
+              }
+              currentlyOpenId = playlistId;
+              managePanel.classList.add('is-open');
+              manageToggle?.setAttribute('aria-expanded', 'true');
+              scrollToCentered(managePanel);
+            };
+
+            manageToggle?.addEventListener('click', () => {
+              const isOpen = managePanel.classList.contains('is-open');
+              if (isOpen) {
+                closePanels({ restoreScroll: true });
+              } else {
+                openPanels();
+              }
+            });
+
+            manageClose?.addEventListener('click', () => {
+              closePanels({ restoreScroll: true });
+            });
+
+            editToggle?.addEventListener('click', () => {
+              const isOpen = editPanel.classList.toggle('is-open');
+              if (isOpen) {
+                scrollToCentered(editPanel);
+              }
+            });
+
+            editCountryAdd?.addEventListener('click', () => {
+              editCountryManager.addValue(editCountrySelect.value);
+            });
+
+            editKeywordAdd?.addEventListener('click', () => {
+              if (editKeywordManager.addValue(editKeywordInput.value)) {
+                editKeywordInput.value = '';
+              }
+            });
+
+            editKeywordInput?.addEventListener('keydown', (event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                editKeywordAdd.click();
+              }
+            });
+
+            editCancel?.addEventListener('click', () => {
+              editCountryManager.setValues(existingCountries.map((value) => value.toUpperCase()));
+              editKeywordManager.setValues(existingKeywords);
+              editPanel.classList.remove('is-open');
+            });
+
+            editForm?.addEventListener('submit', async (event) => {
+              event.preventDefault();
+              const targetCountries = editCountryManager.getValues();
+              const targetKeywords = editKeywordManager.getValues();
+
+              setStatus('Saving configuration...', 'status-loading');
+
+              try {
+                const response = await fetch(`/api/playlists/${playlistId}/targets`, {
+                  method: 'PATCH',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    target_countries: targetCountries,
+                    target_keywords: targetKeywords,
+                  }),
+                });
+
+                if (!response.ok) {
+                  const data = await response.json().catch(() => ({}));
+                  const detail = data.detail || 'Unable to update playlist.';
+                  const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
+                  setStatus(message, 'status-error');
+                  return;
+                }
+
+                setStatus('Configuration saved. Reloading...', 'status-success');
+                editPanel.classList.remove('is-open');
+                window.location.reload();
+              } catch (error) {
+                setStatus('Network error while updating playlist.', 'status-error');
+              }
+            });
+
+            refreshButton?.addEventListener('click', async () => {
+              refreshButton.disabled = true;
+              setStatus('Fetching data from Spotify… please wait', 'status-loading');
+
+              try {
+                const response = await fetch(`/api/playlists/${playlistId}/refresh-stats`, {
+                  method: 'POST',
+                });
+
+                const data = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                  const detail = data.detail || 'Unable to refresh playlist metadata.';
+                  const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
+                  setStatus(message, 'status-error');
+                  refreshButton.disabled = false;
+                  return;
+                }
+
+                const refreshedAt = data.refreshed_at ? new Date(data.refreshed_at) : null;
+                const timeLabel = refreshedAt ? refreshedAt.toLocaleString() : 'just now';
+                setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
+                window.location.reload();
+              } catch (error) {
+                setStatus('Network error while refreshing playlist.', 'status-error');
+                refreshButton.disabled = false;
+              }
+            });
+          });
+        };
+
+        const setupManualScan = () => {
+          if (!manualPanel || !manualForm || !window.BasicScan?.init) {
+            return;
+          }
+          const playlistInput = manualPanel.querySelector('[data-manual-playlist-input]');
+          const countrySelect = manualPanel.querySelector('[data-manual-country-select]');
+          const countryAdd = manualPanel.querySelector('[data-manual-country-add]');
+          const countryPills = manualPanel.querySelector('[data-manual-country-pills]');
+          const countryInfo = manualPanel.querySelector('[data-manual-country-info]');
+          const keywordInput = manualPanel.querySelector('[data-manual-keyword-input]');
+          const keywordAdd = manualPanel.querySelector('[data-manual-keyword-add]');
+          const keywordPills = manualPanel.querySelector('[data-manual-keyword-pills]');
+          const keywordInfo = manualPanel.querySelector('[data-manual-keyword-info]');
+          const scanRoot = manualPanel.querySelector('[data-basic-scan]');
+
+          const defaultOption = document.createElement('option');
+          defaultOption.value = '';
+          defaultOption.textContent = 'Select a country';
+          defaultOption.disabled = true;
+          defaultOption.selected = true;
+          countrySelect.appendChild(defaultOption);
+
+          availableMarkets.forEach((market) => {
+            const option = document.createElement('option');
+            option.value = market.code;
+            option.textContent = market.label;
+            countrySelect.appendChild(option);
+          });
+
+          manualCountryManager = createSelectionManager({
+            listElement: countryPills,
+            infoElement: countryInfo,
+            max: 10,
+            lockedValues: [],
+            normalize: (value) => (value || '').trim().toUpperCase(),
+            compare: (a, b) => a.toUpperCase() === b.toUpperCase(),
+            getLabel: resolveMarketLabel,
+          });
+
+          manualKeywordManager = createSelectionManager({
+            listElement: keywordPills,
+            infoElement: keywordInfo,
+            max: 10,
+            lockedValues: [],
+            normalize: (value) => (value || '').trim(),
+            compare: (a, b) => a.toLowerCase() === b.toLowerCase(),
+          });
+
+          countryAdd?.addEventListener('click', () => {
+            if (manualCountryManager.addValue(countrySelect.value)) {
+              countryInfo.hidden = manualCountryManager.getValues().length < 10;
             }
-            if (stage === 3) {
-              setStatus('Manual scan completed.', 'status-success');
+          });
+
+          keywordAdd?.addEventListener('click', () => {
+            if (manualKeywordManager.addValue(keywordInput.value)) {
+              keywordInput.value = '';
             }
-          },
+          });
+
+          keywordInput?.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              keywordAdd.click();
+            }
+          });
+
+          playlistInput?.addEventListener('input', (event) => {
+            const normalized = normalizePlaylistUrl(event.target.value);
+            event.target.value = normalized;
+          });
+
+          manualForm?.addEventListener('reset', () => {
+            manualCountryManager.reset();
+            manualKeywordManager.reset();
+          });
+
+          manualCancelButton?.addEventListener('click', () => {
+            manualForm.reset();
+            manualCountryManager.reset();
+            manualKeywordManager.reset();
+            manualScanController?.openStage1?.();
+            closeManualPanel();
+            setStatus('Manual scan canceled.', null);
+          });
+
+          manualScanController = BasicScan.init({
+            root: scanRoot,
+            resolveMarketLabel,
+            formatTimestamp,
+            formatSummaryDateParts: (value) => {
+              if (!value) {
+                return { dateLabel: '—', timeLabel: '—' };
+              }
+              const date = new Date(value);
+              if (Number.isNaN(date.getTime())) {
+                return { dateLabel: value, timeLabel: value };
+              }
+              const dateLabel = date.toLocaleDateString('en-GB', {
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric',
+              });
+              const timeLabel = date.toLocaleTimeString('en-GB', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+              });
+              return { dateLabel, timeLabel };
+            },
+            onStatus: setStatus,
+            getTargetPlaylistId: () => extractPlaylistId(normalizePlaylistUrl(playlistInput.value)),
+            getStartPayload: () => {
+              const normalizedUrl = normalizePlaylistUrl(playlistInput.value);
+              const playlistId = extractPlaylistId(normalizedUrl);
+              const targetCountries = manualCountryManager.getValues();
+              const targetKeywords = manualKeywordManager.getValues();
+
+              if (!playlistId) {
+                setStatus('Please enter a valid Spotify playlist URL.', 'status-error');
+                throw new Error('Invalid playlist URL');
+              }
+              if (!targetCountries.length || !targetKeywords.length) {
+                setStatus('Add at least one target country and keyword to run a scan.', 'status-error');
+                throw new Error('Missing targeting values');
+              }
+
+              return {
+                playlist_id: playlistId,
+                playlist_url: normalizedUrl,
+                target_countries: targetCountries,
+                target_keywords: targetKeywords,
+                tracked_playlist_id: null,
+                is_tracked_playlist: false,
+                account_id: null,
+              };
+            },
+            onStageChange: (stage) => {
+              const shouldDisable = stage === 2;
+              [playlistInput, countrySelect, countryAdd, keywordInput, keywordAdd, manualCancelButton].forEach(
+                (element) => {
+                  if (element) {
+                    element.disabled = shouldDisable;
+                  }
+                }
+              );
+              if (stage === 2) {
+                setStatus('Manual scan in progress...', 'status-loading');
+              }
+              if (stage === 3) {
+                setStatus('Manual scan completed.', 'status-success');
+              }
+            },
+          });
+        };
+
+        addButton?.addEventListener('click', () => {
+          if (!addPanel) {
+            return;
+          }
+          closeActiveManagePanel();
+          toggleSection(addPanel.id);
         });
-      };
 
-      addButton?.addEventListener('click', () => {
-        if (!addPanel) {
-          return;
-        }
-        const shouldOpen = !addPanel.classList.contains('is-open');
-        closeActiveManagePanel();
-        setActiveSection(shouldOpen ? 'add-playlist' : null);
+        manualButton?.addEventListener('click', () => {
+          if (!manualPanel) {
+            return;
+          }
+          closeActiveManagePanel();
+          toggleSection(manualPanel.id);
+        });
+
+        setupAddPanel();
+        setupManagePanels();
+        setupManualScan();
       });
-
-      manualButton?.addEventListener('click', () => {
-        if (!manualPanel) {
-          return;
-        }
-        const shouldOpen = !manualPanel.classList.contains('is-open');
-        closeActiveManagePanel();
-        setActiveSection(shouldOpen ? 'manual-scan' : null);
-      });
-
-      setupAddPanel();
-      setupManagePanels();
-      setupManualScan();
     </script>
+
   </body>
 </html>
