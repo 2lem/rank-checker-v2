@@ -17,6 +17,12 @@ Then open <http://localhost:8080>.
 curl http://localhost:8080/health
 ```
 
+## Safety checks
+
+```bash
+python scripts/check_sse_db_safety.py
+```
+
 ## Debug tools
 
 Set `DEBUG_TOOLS=1` and a `DEBUG_TOKEN` in your Railway environment to enable the protected debug routes.

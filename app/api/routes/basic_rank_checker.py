@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.basic_rank_checker.events import scan_event_manager
 from app.basic_rank_checker.service import create_basic_scan, fetch_scan_details, run_basic_scan
-from app.core.db import SessionLocal, get_db
+from app.core.db import get_db
+from app.core.sse_guard import db_preflight_check
 from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
 from app.repositories.tracked_playlists import get_tracked_playlist_by_id
 
@@ -103,15 +104,14 @@ def stream_scan_events(scan_id: str):
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Scan not found.") from exc
 
-    if SessionLocal is None:
-        raise RuntimeError("DATABASE_URL not configured")
-
-    with SessionLocal() as session:
+    # SSE must not hold DB sessions open to avoid pool starvation/hanging.
+    def _preflight(session: Session) -> tuple[str, str | None]:
         scan = session.get(BasicScan, scan_id)
         if scan is None:
             raise HTTPException(status_code=404, detail="Scan not found.")
-        scan_status = scan.status
-        scan_error_message = scan.error_message
+        return scan.status, scan.error_message
+
+    scan_status, scan_error_message = db_preflight_check(_preflight)
 
     queue = scan_event_manager.get_queue(scan_id)
     if queue is None:
