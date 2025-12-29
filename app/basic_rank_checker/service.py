@@ -64,11 +64,18 @@ def create_basic_scan(db: Session, tracked_playlist: TrackedPlaylist) -> BasicSc
     return scan
 
 
-def _resolve_follower_snapshot(tracked_playlist: TrackedPlaylist, token: str) -> int | None:
-    if tracked_playlist.followers_total is not None:
-        return tracked_playlist.followers_total
+def _resolve_follower_snapshot(
+    playlist_id: str | None,
+    followers_total: int | None,
+    token: str,
+) -> int | None:
+    if followers_total is not None:
+        return followers_total
 
-    playlist_api_url = PLAYLIST_URL.format(tracked_playlist.playlist_id)
+    if not playlist_id:
+        return None
+
+    playlist_api_url = PLAYLIST_URL.format(playlist_id)
     try:
         detail = spotify_get(
             playlist_api_url,
@@ -76,7 +83,7 @@ def _resolve_follower_snapshot(tracked_playlist: TrackedPlaylist, token: str) ->
             params={"fields": "followers.total"},
         )
     except requests.RequestException as exc:
-        logger.warning("Unable to fetch playlist followers for %s: %s", tracked_playlist.playlist_id, exc)
+        logger.warning("Unable to fetch playlist followers for %s: %s", playlist_id, exc)
         return None
     return (detail.get("followers") or {}).get("total")
 
@@ -113,12 +120,26 @@ def run_basic_scan(scan_id: str) -> None:
             scan_event_manager.publish(scan_id, {"type": "error", "message": scan.error_message})
             return
 
-        countries = scan.scanned_countries or []
-        keywords = scan.scanned_keywords or []
+        scan_id_value = scan.id
+        tracked_playlist_playlist_id = tracked_playlist.playlist_id
+        tracked_playlist_followers_total = tracked_playlist.followers_total
+        countries = list(scan.scanned_countries or [])
+        keywords = list(scan.scanned_keywords or [])
         total_steps = max(len(countries) * len(keywords), 1)
 
+        # Release the initial SELECT transaction before long-running Spotify requests.
+        db.rollback()
+
         token = get_access_token()
-        scan.follower_snapshot = _resolve_follower_snapshot(tracked_playlist, token)
+        follower_snapshot = _resolve_follower_snapshot(
+            tracked_playlist_playlist_id,
+            tracked_playlist_followers_total,
+            token,
+        )
+        scan = db.get(BasicScan, scan_id_value)
+        if scan is None:
+            return
+        scan.follower_snapshot = follower_snapshot
         db.add(scan)
         db.commit()
 
@@ -156,7 +177,7 @@ def run_basic_scan(scan_id: str) -> None:
 
                 tracked_rank = None
                 query = BasicScanQuery(
-                    basic_scan_id=scan.id,
+                    basic_scan_id=scan_id_value,
                     country_code=country,
                     keyword=keyword,
                     searched_at=searched_at,
@@ -191,7 +212,7 @@ def run_basic_scan(scan_id: str) -> None:
                         "spotify"
                     )
 
-                    is_tracked = playlist_id == tracked_playlist.playlist_id
+                    is_tracked = playlist_id == tracked_playlist_playlist_id
                     if is_tracked and tracked_rank is None:
                         tracked_rank = index
                     results.append(
