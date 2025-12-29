@@ -6,6 +6,7 @@
     <title>{{ playlist.name }} · Tracked Playlist</title>
     <link rel="stylesheet" href="/static/ui.css" />
     <link rel="stylesheet" href="/static/tracked.css" />
+    <script src="/static/basic-scan.js"></script>
   </head>
   <body class="app-body">
     <main class="page">
@@ -138,7 +139,7 @@
       let lastAnchor = toolbar;
       const basicScanToggle = document.querySelector('[data-basic-scan-toggle]');
       const basicScanSection = document.getElementById('basic-scan-section');
-      let basicScanStageController = null;
+      let basicScanController = null;
       let preOpenScrollY = null;
 
       const togglePanel = (targetId) => {
@@ -178,33 +179,6 @@
         panels[0].classList.add('is-active');
       }
 
-      const showSection = (section) => {
-        if (!section) {
-          return;
-        }
-        section.hidden = false;
-        section.style.removeProperty('display');
-      };
-
-      const hideSection = (section) => {
-        if (!section) {
-          return;
-        }
-        section.hidden = true;
-        section.style.display = 'none';
-      };
-
-      const scrollSectionToCenter = (section) => {
-        if (!section) {
-          return;
-        }
-        const rect = section.getBoundingClientRect();
-        const sectionTop = window.scrollY + rect.top;
-        const target =
-          sectionTop - window.innerHeight / 2 + rect.height / 2;
-        window.scrollTo({ top: Math.max(target, 0), behavior: 'smooth' });
-      };
-
       const toggleBasicScan = () => {
         if (!basicScanSection || !basicScanToggle) {
           return;
@@ -215,12 +189,11 @@
           basicScanSection.classList.remove('is-hidden');
           basicScanSection.classList.add('is-active');
           basicScanToggle.setAttribute('aria-expanded', 'true');
-          if (basicScanStageController) {
-            basicScanStageController.setStage(1);
-            return;
+          if (basicScanController) {
+            basicScanController.openStage1();
           }
           const fallbackTarget = document.getElementById('scan-parameters') || basicScanSection;
-          scrollSectionToCenter(fallbackTarget);
+          BasicScan.scrollSectionToCenter(fallbackTarget);
           return;
         }
         basicScanSection.classList.add('is-hidden');
@@ -266,9 +239,9 @@
           }
 
           const refreshedAt = data.refreshed_at ? new Date(data.refreshed_at) : null;
-          const timeLabel = refreshedAt ? refreshedAt.toLocaleString() : 'just now';
-          setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
-          window.location.reload();
+        const timeLabel = refreshedAt ? refreshedAt.toLocaleString() : 'just now';
+        setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
+        window.location.reload();
         } catch (error) {
           setStatus('Network error while refreshing playlist.', 'status-error');
           refreshButton.disabled = false;
@@ -320,23 +293,6 @@
         return { dateLabel, timeLabel };
       };
 
-      const formatFileTimestamp = (value) => {
-        if (!value) {
-          return '';
-        }
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) {
-          return '';
-        }
-        const pad = (part) => String(part).padStart(2, '0');
-        const year = date.getFullYear();
-        const month = pad(date.getMonth() + 1);
-        const day = pad(date.getDate());
-        const hours = pad(date.getHours());
-        const minutes = pad(date.getMinutes());
-        return `${day}-${month}-${year}_${hours}-${minutes}`;
-      };
-
       const formatFollowersValue = (value) => {
         if (value === undefined || value === null || value === '') {
           return '—';
@@ -362,351 +318,20 @@
         return upper.replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt()));
       };
 
-      const setupBasicScan = () => {
-        const scanRoot = document.querySelector('[data-basic-scan]');
-        if (!scanRoot) {
-          return;
-        }
-        const scanParameters = scanRoot.querySelector('[data-basic-scan-parameters]');
-        const runControls = scanRoot.querySelector('[data-basic-scan-run-controls]');
-        const runButton = scanRoot.querySelector('[data-basic-scan-run]');
-        const progressWrap = scanRoot.querySelector('[data-basic-scan-progress]');
-        const progressFill = scanRoot.querySelector('[data-basic-scan-progress-fill]');
-        const progressStatus = scanRoot.querySelector('[data-basic-scan-progress-status]');
-        const progressLog = scanRoot.querySelector('[data-basic-scan-progress-log]');
-        const resultsWrap = scanRoot.querySelector('[data-basic-scan-results]');
-        const summaryLead = scanRoot.querySelector('[data-basic-scan-summary-lead]');
-        const summaryList = scanRoot.querySelector('[data-basic-scan-summary-list]');
-        const detailedWrap = scanRoot.querySelector('[data-basic-scan-detailed]');
-        const exportSummary = scanRoot.querySelector('[data-basic-scan-export-summary]');
-        const exportDetailed = scanRoot.querySelector('[data-basic-scan-export-detailed]');
-        const summarySection = document.getElementById('basic-scan-summary');
-        const csvControls = scanRoot.querySelector('[data-basic-scan-csv-controls]');
-        const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-        let activeScanId = null;
-        let eventSource = null;
-        let currentStage = 1;
-
-        const setStage = (stage, scrollTarget) => {
-          currentStage = stage;
-          const showStage1 = stage === 1;
-          const showStage2 = stage === 2;
-          const showStage3 = stage === 3;
-
-          if (showStage1) {
-            showSection(scanParameters);
-            showSection(runControls);
-            hideSection(progressWrap);
-            hideSection(resultsWrap);
-            hideSection(csvControls);
-          }
-
-          if (showStage2) {
-            hideSection(scanParameters);
-            hideSection(runControls);
-            showSection(progressWrap);
-            hideSection(resultsWrap);
-            hideSection(csvControls);
-          }
-
-          if (showStage3) {
-            hideSection(scanParameters);
-            hideSection(runControls);
-            hideSection(progressWrap);
-            showSection(resultsWrap);
-            showSection(csvControls);
-          }
-
-          const target =
-            scrollTarget ||
-            (showStage1 ? scanParameters || scanRoot : showStage2 ? progressWrap : summarySection);
-          scrollSectionToCenter(target);
-        };
-        basicScanStageController = { setStage, getStage: () => currentStage };
-
-        const openBasicScanStage1 = () => {
-          setStage(1, scanParameters || scanRoot);
-        };
-
-        const openBasicScanStage2 = () => {
-          setStage(2, progressWrap || scanRoot);
-        };
-
-        const setProgress = (current, total, message) => {
-          if (!progressWrap) {
-            return;
-          }
-          const percent = total ? Math.min((current / total) * 100, 100) : 0;
-          if (progressFill) {
-            progressFill.style.width = `${percent}%`;
-          }
-          if (progressStatus) {
-            progressStatus.textContent = message || 'Scanning...';
-          }
-        };
-
-        const appendLog = (message) => {
-          if (!progressLog || !message) {
-            return;
-          }
-          const entry = document.createElement('div');
-          entry.className = 'progress-log-entry';
-          entry.textContent = message;
-          progressLog.appendChild(entry);
-          progressLog.scrollTop = progressLog.scrollHeight;
-        };
-
-        const renderSummary = (scan) => {
-          if (!summaryLead || !summaryList) {
-            return;
-          }
-          const follower = scan.follower_snapshot ?? '—';
-          summaryLead.textContent = `At ${formatTimestamp(
-            scan.started_at
-          )}, your playlist follower count was ${follower}.`;
-          summaryList.innerHTML = '';
-          (scan.summary || []).forEach((item) => {
-            const row = document.createElement('div');
-            row.className = `summary-row ${item.tracked_found_in_top20 ? '' : 'summary-row-missing'}`;
-            const countryLabel = resolveMarketLabel(item.country);
-            const { dateLabel, timeLabel } = formatSummaryDateParts(item.searched_at);
-            const rankText = item.tracked_found_in_top20
-              ? `your playlist rank was #${item.tracked_rank}.`
-              : 'your playlist was not found in the top 20.';
-            row.textContent = `On ${dateLabel} at ${timeLabel} in ${countryLabel} for ‘${item.keyword}’, ${rankText}`;
-            summaryList.appendChild(row);
-          });
-        };
-
-        const resolveFollowers = (result) => {
-          const nestedFollowers =
-            result.followers && typeof result.followers === 'object'
-              ? result.followers.total
-              : undefined;
-          const nestedPlaylistFollowers =
-            result.playlist && typeof result.playlist === 'object'
-              ? result.playlist.followers || result.playlist.followers_total || result.playlist.follower_count
-              : undefined;
-          const nestedPlaylistFollowersTotal =
-            nestedPlaylistFollowers && typeof nestedPlaylistFollowers === 'object'
-              ? nestedPlaylistFollowers.total
-              : undefined;
-          const candidate =
-            result.playlist_followers ??
-            result.followers_total ??
-            result.followers_count ??
-            result.follower_count ??
-            nestedFollowers ??
-            nestedPlaylistFollowersTotal ??
-            nestedPlaylistFollowers ??
-            result.followers;
-          return formatFollowersValue(candidate);
-        };
-
-        const renderDetailed = (scan) => {
-          if (!detailedWrap) {
-            return;
-          }
-          detailedWrap.innerHTML = '';
-          const detailed = scan.detailed || {};
-          const countryAccordions = [];
-          Object.values(detailed).forEach((countryData) => {
-            const countryCode = countryData.country;
-            const countryDetails = document.createElement('details');
-            countryDetails.className = 'accordion';
-            const summary = document.createElement('summary');
-            summary.textContent = `${flagEmoji(countryCode)} ${resolveMarketLabel(countryCode)}`;
-            countryDetails.addEventListener('toggle', () => {
-              if (!countryDetails.open) {
-                return;
-              }
-              countryAccordions.forEach((openDetails) => {
-                if (openDetails !== countryDetails) {
-                  openDetails.open = false;
-                }
-              });
-              requestAnimationFrame(() => {
-                scrollSectionToCenter(countryDetails);
-              });
-            });
-            countryDetails.appendChild(summary);
-            countryAccordions.push(countryDetails);
-
-            const keywordContainer = document.createElement('div');
-            keywordContainer.className = 'accordion-body';
-            const keywordAccordions = [];
-
-            Object.entries(countryData.keywords || {}).forEach(([keyword, keywordData]) => {
-              const keywordDetails = document.createElement('details');
-              keywordDetails.className = 'accordion nested';
-              const keywordSummary = document.createElement('summary');
-              keywordSummary.textContent = `${keyword} · ${formatTimestamp(keywordData.searched_at)}`;
-              keywordDetails.appendChild(keywordSummary);
-              keywordDetails.addEventListener('toggle', () => {
-                if (!keywordDetails.open) {
-                  return;
-                }
-                keywordAccordions.forEach((openKeyword) => {
-                  if (openKeyword !== keywordDetails) {
-                    openKeyword.open = false;
-                  }
-                });
-                requestAnimationFrame(() => {
-                  scrollSectionToCenter(keywordDetails);
-                });
-              });
-
-              const table = document.createElement('table');
-              table.className = 'results-table';
-              table.innerHTML = `
-                <thead>
-                  <tr>
-                    <th>Rank</th>
-                    <th>Playlist</th>
-                    <th>Owner</th>
-                    <th>Followers</th>
-                    <th>Songs</th>
-                  </tr>
-                </thead>
-                <tbody></tbody>
-              `;
-              const tbody = table.querySelector('tbody');
-              (keywordData.results || []).forEach((result) => {
-                const followersValue = resolveFollowers(result);
-                const row = document.createElement('tr');
-                if (result.is_tracked_playlist) {
-                  row.classList.add('tracked-highlight');
-                }
-                row.innerHTML = `
-                  <td>${result.rank ?? '—'}</td>
-                  <td>
-                    ${
-                      result.playlist_url
-                        ? `<a href="${result.playlist_url}" target="_blank" rel="noopener noreferrer">${result.playlist_name || '—'}</a>`
-                        : result.playlist_name || '—'
-                    }
-                  </td>
-                  <td>${result.playlist_owner || '—'}</td>
-                  <td>${followersValue}</td>
-                  <td>${result.songs_count ?? '—'}</td>
-                `;
-                tbody.appendChild(row);
-              });
-
-              const tableScroll = document.createElement('div');
-              tableScroll.className = 'table-scroll';
-              tableScroll.appendChild(table);
-
-              const keywordBody = document.createElement('div');
-              keywordBody.className = 'accordion-body';
-              keywordBody.appendChild(tableScroll);
-              keywordDetails.appendChild(keywordBody);
-              keywordContainer.appendChild(keywordDetails);
-              keywordAccordions.push(keywordDetails);
-            });
-
-            countryDetails.appendChild(keywordContainer);
-            detailedWrap.appendChild(countryDetails);
-          });
-        };
-
-        const loadResults = async (scanId) => {
-          const response = await fetch(`/api/basic-rank-checker/scans/${scanId}`);
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(data.detail || 'Failed to load scan results.');
-          }
-          renderSummary(data);
-          renderDetailed(data);
-          const startedAt =
-            data.started_at || data.searched_at || data.summary?.[0]?.searched_at;
-          const timestamp = formatFileTimestamp(startedAt);
-          const effectiveScanId = data.scan_id || scanId;
-          const filenameBase = timestamp
-            ? `${timestamp}_${effectiveScanId}`
-            : `${effectiveScanId}`;
-          const buildExportUrl = (path) => {
-            const url = new URL(path, window.location.origin);
-            if (timeZone) {
-              url.searchParams.set('timezone', timeZone);
-            }
-            return `${url.pathname}${url.search}`;
-          };
-          if (exportSummary) {
-            exportSummary.href = buildExportUrl(
-              `/api/basic-rank-checker/scans/${scanId}/export/summary.csv`
-            );
-            exportSummary.download = `${filenameBase}_summary.csv`;
-          }
-          if (exportDetailed) {
-            exportDetailed.href = buildExportUrl(
-              `/api/basic-rank-checker/scans/${scanId}/export/detailed.csv`
-            );
-            exportDetailed.download = `${filenameBase}_detailed.csv`;
-          }
-        };
-
-        const startScan = async () => {
-          runButton.disabled = true;
-          progressLog.innerHTML = '';
-          setProgress(0, 0, 'Starting scan…');
-
-          try {
-            const response = await fetch('/api/basic-rank-checker/scans', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ tracked_playlist_id: '{{ playlist.id }}' }),
-            });
-            const data = await response.json();
-            if (!response.ok) {
-              throw new Error(data.detail || 'Failed to start scan.');
-            }
-            activeScanId = data.scan_id;
-            if (eventSource) {
-              eventSource.close();
-            }
-            eventSource = new EventSource(
-              `/api/basic-rank-checker/scans/${activeScanId}/events`
-            );
-            eventSource.onmessage = async (event) => {
-              const payload = JSON.parse(event.data);
-              if (payload.type === 'progress') {
-                setProgress(payload.step, payload.total, payload.message);
-                appendLog(payload.message);
-              }
-              if (payload.type === 'done') {
-                eventSource.close();
-                setProgress(payload.total || 1, payload.total || 1, 'Scan completed.');
-                await loadResults(activeScanId);
-                setStage(3, summarySection);
-                runButton.disabled = false;
-              }
-              if (payload.type === 'error') {
-                eventSource.close();
-                appendLog(payload.message || 'Scan failed.');
-                setProgress(0, 1, payload.message || 'Scan failed.');
-                setStage(1);
-                runButton.disabled = false;
-              }
-            };
-          } catch (error) {
-            setStage(1);
-            runButton.disabled = false;
-            setStatus(error.message || 'Failed to start scan.', 'status-error');
-          }
-        };
-
-        runButton?.addEventListener('click', () => {
-          openBasicScanStage2();
-          startScan();
-        });
-
-        basicScanStageController.openBasicScanStage1 = openBasicScanStage1;
-        basicScanStageController.openBasicScanStage2 = openBasicScanStage2;
-      };
-
-      setupBasicScan();
+      basicScanController = BasicScan.init({
+        root: '[data-basic-scan]',
+        resolveMarketLabel,
+        formatTimestamp,
+        formatSummaryDateParts,
+        formatFollowersValue,
+        onStatus: setStatus,
+        getStartPayload: () => ({
+          tracked_playlist_id: '{{ playlist.id }}',
+          playlist_id: '{{ playlist.playlist_id }}',
+          is_tracked_playlist: true,
+        }),
+        getTargetPlaylistId: () => '{{ playlist.playlist_id }}',
+      });
     </script>
   </body>
 </html>

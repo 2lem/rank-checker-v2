@@ -6,6 +6,7 @@
     <title>Tracked Playlists</title>
     <link rel="stylesheet" href="/static/ui.css" />
     <link rel="stylesheet" href="/static/tracked.css" />
+    <script src="/static/basic-scan.js"></script>
   </head>
   <body class="app-body">
     <main class="page">
@@ -20,6 +21,11 @@
           {% set type = 'button' %}
           {% set aria_controls = 'add-playlist' %}
           {% set data_target = 'add-playlist' %}
+          {% include "_components/button.html" %}
+          {% set label = 'Manual Scan' %}
+          {% set button_variant = 'outline' %}
+          {% set type = 'button' %}
+          {% set data_target = 'manual-scan' %}
           {% include "_components/button.html" %}
         </div>
       </header>
@@ -112,6 +118,93 @@
           {% endif %}
         </div>
       </section>
+
+      <section
+        class="ui-card form-card collapsible-card manual-scan-card"
+        id="manual-scan"
+        data-collapsible="manual-scan"
+      >
+        <div class="section-header">
+          <h2>Manual Scan</h2>
+          <p class="section-subtitle">
+            Run a one-off scan without creating a tracked playlist.
+          </p>
+        </div>
+        <div class="basic-scan" data-basic-scan>
+          <section class="scan-parameters" data-basic-scan-parameters>
+            <form id="manual-scan-form" class="form-grid" data-form="manual-scan">
+              <label class="field">
+                <span class="field-label">Playlist URL</span>
+                <input
+                  name="manual_playlist_url"
+                  type="url"
+                  placeholder="https://open.spotify.com/playlist/..."
+                  required
+                  data-manual-playlist-input
+                />
+              </label>
+              <label class="field">
+                <span class="field-label">Target Countries</span>
+                <div class="field-inline">
+                  <select name="manual_country_select" class="market-select" data-manual-country-select></select>
+                  <button class="btn btn-secondary" type="button" data-manual-country-add>Add</button>
+                </div>
+                <div class="pill-list market-pill-list" data-manual-country-pills></div>
+                <div class="info-box" data-manual-country-info hidden>
+                  You can add up to 10 target countries.
+                </div>
+                <span class="field-help">Select up to 10 countries for this scan.</span>
+              </label>
+              <label class="field">
+                <span class="field-label">Target Keywords</span>
+                <div class="field-inline">
+                  <input
+                    name="manual_keyword_input"
+                    type="text"
+                    placeholder="e.g. lofi, focus, chill"
+                    data-manual-keyword-input
+                  />
+                  <button class="btn btn-secondary" type="button" data-manual-keyword-add>Add</button>
+                </div>
+                <div class="pill-list" data-manual-keyword-pills></div>
+                <div class="info-box" data-manual-keyword-info hidden>
+                  You can add up to 10 target keywords.
+                </div>
+                <span class="field-help">Add up to 10 keywords to scan for.</span>
+              </label>
+              <div class="manual-scan-actions run-scan-controls" data-basic-scan-run-controls>
+                <button class="btn btn-primary" type="button" data-basic-scan-run>Scan</button>
+                <button class="btn btn-secondary" type="button" data-manual-cancel>Cancel</button>
+              </div>
+            </form>
+          </section>
+          <section class="run-progress basic-scan-progress" data-basic-scan-progress hidden>
+            <div class="progress-bar">
+              <div class="progress-fill" data-basic-scan-progress-fill></div>
+            </div>
+            <div class="progress-status" data-basic-scan-progress-status>Starting scan…</div>
+            <div class="progress-log" data-basic-scan-progress-log></div>
+          </section>
+          <section class="results" data-basic-scan-results hidden>
+            <div class="results-header">
+              <h3>Manual Scan Results</h3>
+              <div class="download-csv-controls basic-scan-download-actions" data-basic-scan-csv-controls>
+                <a class="btn btn-csv" data-basic-scan-export-summary>Download Summary CSV</a>
+                <a class="btn btn-csv" data-basic-scan-export-detailed>Download Detailed CSV</a>
+              </div>
+            </div>
+            <div class="summary" data-basic-scan-summary>
+              <h3>Summary</h3>
+              <div class="summary-lead" data-basic-scan-summary-lead></div>
+              <div class="summary-list" data-basic-scan-summary-list></div>
+            </div>
+            <div class="detailed-scan-insights">
+              <h3>Detailed Scan Insights</h3>
+              <div class="detailed-insights" data-basic-scan-detailed></div>
+            </div>
+          </section>
+        </div>
+      </section>
     </main>
 
     <script>
@@ -120,6 +213,10 @@
       const addPanel = document.querySelector('[data-collapsible="add-playlist"]');
       const addButton = document.querySelector('[data-panel-target="add-playlist"]');
       const addCancelButton = document.querySelector('[data-panel-target="add-playlist-cancel"]');
+      const manualPanel = document.getElementById('manual-scan');
+      const manualButton = document.querySelector('[data-panel-target="manual-scan"]');
+      const manualCancelButton = manualPanel?.querySelector('[data-manual-cancel]');
+      const manualForm = document.getElementById('manual-scan-form');
 
       const availableMarkets = {{ available_markets | tojson }};
       const marketLabelMap = new Map(
@@ -150,6 +247,12 @@
         if (variant) {
           statusArea.classList.add(variant);
         }
+      };
+
+      const normalizePlaylistUrl = (value) => (value || '').trim().split('?', 1)[0];
+      const extractPlaylistId = (text) => {
+        const match = (text || '').match(/(?:open\\.spotify\\.com\\/playlist\\/|spotify:playlist:)([A-Za-z0-9]+)/);
+        return match ? match[1] : null;
       };
 
       const createChip = ({ label, removable, locked, onRemove }) => {
@@ -311,9 +414,7 @@
 
         playlistInput?.addEventListener('input', (event) => {
           const input = event.target;
-          if (input.value.includes('?')) {
-            input.value = input.value.split('?')[0];
-          }
+          input.value = normalizePlaylistUrl(input.value);
         });
 
         form.addEventListener('reset', () => {
@@ -364,6 +465,9 @@
 
       let currentlyOpenId = null;
       let preOpenScrollY = null;
+      let manualCountryManager = null;
+      let manualKeywordManager = null;
+      let manualScanController = null;
 
       const clampScrollTarget = (target) => {
         const documentHeight = Math.max(
@@ -390,6 +494,41 @@
         }
         window.scrollTo({ top: clampScrollTarget(preOpenScrollY), behavior: 'smooth' });
         preOpenScrollY = null;
+      };
+
+      const closeActiveManagePanel = () => {
+        if (!currentlyOpenId) {
+          return;
+        }
+        const openCard = document.querySelector(
+          `[data-tracked-card][data-playlist-id="${currentlyOpenId}"]`
+        );
+        const openManagePanel = openCard?.querySelector('[data-manage-panel]');
+        const openEditPanel = openCard?.querySelector('[data-edit-panel]');
+        const openManageToggle = openCard?.querySelector('[data-manage-toggle]');
+        openManagePanel?.classList.remove('is-open');
+        openEditPanel?.classList.remove('is-open');
+        openManageToggle?.setAttribute('aria-expanded', 'false');
+        restorePreOpenScroll();
+        currentlyOpenId = null;
+      };
+
+      const closeAddPanel = () => {
+        addPanel?.classList.remove('is-open');
+      };
+
+      const closeManualPanel = ({ resetForm = false } = {}) => {
+        if (!manualPanel) {
+          return;
+        }
+        manualPanel.classList.remove('is-open');
+        manualButton?.setAttribute('aria-expanded', 'false');
+        if (resetForm) {
+          manualForm?.reset();
+          manualCountryManager?.reset?.();
+          manualKeywordManager?.reset?.();
+          manualScanController?.openStage1?.();
+        }
       };
 
       const setupManagePanels = () => {
@@ -460,6 +599,8 @@
           };
 
           const openPanels = () => {
+            closeManualPanel();
+            closeAddPanel();
             if (currentlyOpenId && currentlyOpenId !== playlistId) {
               const openCard = document.querySelector(
                 `[data-tracked-card][data-playlist-id="${currentlyOpenId}"]`
@@ -591,18 +732,195 @@
         });
       };
 
+      const setupManualScan = () => {
+        if (!manualPanel || !manualForm) {
+          return;
+        }
+        const playlistInput = manualPanel.querySelector('[data-manual-playlist-input]');
+        const countrySelect = manualPanel.querySelector('[data-manual-country-select]');
+        const countryAdd = manualPanel.querySelector('[data-manual-country-add]');
+        const countryPills = manualPanel.querySelector('[data-manual-country-pills]');
+        const countryInfo = manualPanel.querySelector('[data-manual-country-info]');
+        const keywordInput = manualPanel.querySelector('[data-manual-keyword-input]');
+        const keywordAdd = manualPanel.querySelector('[data-manual-keyword-add]');
+        const keywordPills = manualPanel.querySelector('[data-manual-keyword-pills]');
+        const keywordInfo = manualPanel.querySelector('[data-manual-keyword-info]');
+        const scanRoot = manualPanel.querySelector('[data-basic-scan]');
+
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Select a country';
+        defaultOption.disabled = true;
+        defaultOption.selected = true;
+        countrySelect.appendChild(defaultOption);
+
+        availableMarkets.forEach((market) => {
+          const option = document.createElement('option');
+          option.value = market.code;
+          option.textContent = market.label;
+          countrySelect.appendChild(option);
+        });
+
+        manualCountryManager = createSelectionManager({
+          listElement: countryPills,
+          infoElement: countryInfo,
+          max: 10,
+          lockedValues: [],
+          normalize: (value) => (value || '').trim().toUpperCase(),
+          compare: (a, b) => a.toUpperCase() === b.toUpperCase(),
+          getLabel: resolveMarketLabel,
+        });
+
+        manualKeywordManager = createSelectionManager({
+          listElement: keywordPills,
+          infoElement: keywordInfo,
+          max: 10,
+          lockedValues: [],
+          normalize: (value) => (value || '').trim(),
+          compare: (a, b) => a.toLowerCase() === b.toLowerCase(),
+        });
+
+        countryAdd?.addEventListener('click', () => {
+          if (manualCountryManager.addValue(countrySelect.value)) {
+            countryInfo.hidden = manualCountryManager.getValues().length < 10;
+          }
+        });
+
+        keywordAdd?.addEventListener('click', () => {
+          if (manualKeywordManager.addValue(keywordInput.value)) {
+            keywordInput.value = '';
+          }
+        });
+
+        keywordInput?.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            keywordAdd.click();
+          }
+        });
+
+        playlistInput?.addEventListener('input', (event) => {
+          const normalized = normalizePlaylistUrl(event.target.value);
+          event.target.value = normalized;
+        });
+
+        manualForm?.addEventListener('reset', () => {
+          manualCountryManager.reset();
+          manualKeywordManager.reset();
+        });
+
+        manualCancelButton?.addEventListener('click', () => {
+          manualForm.reset();
+          manualCountryManager.reset();
+          manualKeywordManager.reset();
+          manualScanController?.openStage1?.();
+          closeManualPanel();
+          setStatus('Manual scan canceled.', null);
+        });
+
+        manualScanController = BasicScan.init({
+          root: scanRoot,
+          resolveMarketLabel,
+          formatTimestamp,
+          formatSummaryDateParts: (value) => {
+            if (!value) {
+              return { dateLabel: '—', timeLabel: '—' };
+            }
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) {
+              return { dateLabel: value, timeLabel: value };
+            }
+            const dateLabel = date.toLocaleDateString('en-GB', {
+              day: 'numeric',
+              month: 'long',
+              year: 'numeric',
+            });
+            const timeLabel = date.toLocaleTimeString('en-GB', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            });
+            return { dateLabel, timeLabel };
+          },
+          onStatus: setStatus,
+          getTargetPlaylistId: () => extractPlaylistId(normalizePlaylistUrl(playlistInput.value)),
+          getStartPayload: () => {
+            const normalizedUrl = normalizePlaylistUrl(playlistInput.value);
+            const playlistId = extractPlaylistId(normalizedUrl);
+            const targetCountries = manualCountryManager.getValues();
+            const targetKeywords = manualKeywordManager.getValues();
+
+            if (!playlistId) {
+              setStatus('Please enter a valid Spotify playlist URL.', 'status-error');
+              throw new Error('Invalid playlist URL');
+            }
+            if (!targetCountries.length || !targetKeywords.length) {
+              setStatus('Add at least one target country and keyword to run a scan.', 'status-error');
+              throw new Error('Missing targeting values');
+            }
+
+            return {
+              playlist_id: playlistId,
+              playlist_url: normalizedUrl,
+              target_countries: targetCountries,
+              target_keywords: targetKeywords,
+              tracked_playlist_id: null,
+              is_tracked_playlist: false,
+              account_id: null,
+            };
+          },
+          onStageChange: (stage) => {
+            const shouldDisable = stage === 2;
+            [playlistInput, countrySelect, countryAdd, keywordInput, keywordAdd, manualCancelButton].forEach(
+              (element) => {
+                if (element) {
+                  element.disabled = shouldDisable;
+                }
+              }
+            );
+            if (stage === 2) {
+              setStatus('Manual scan in progress...', 'status-loading');
+            }
+            if (stage === 3) {
+              setStatus('Manual scan completed.', 'status-success');
+            }
+          },
+        });
+      };
+
       addButton?.addEventListener('click', () => {
         if (!addPanel) {
           return;
         }
-        const isOpen = addPanel.classList.toggle('is-open');
-        if (isOpen) {
+        const shouldOpen = !addPanel.classList.contains('is-open');
+        closeManualPanel();
+        closeActiveManagePanel();
+        addPanel.classList.toggle('is-open', shouldOpen);
+        if (shouldOpen) {
           scrollToCentered(addPanel);
+        }
+      });
+
+      manualButton?.addEventListener('click', () => {
+        if (!manualPanel) {
+          return;
+        }
+        const shouldOpen = !manualPanel.classList.contains('is-open');
+        closeAddPanel();
+        closeActiveManagePanel();
+        if (shouldOpen) {
+          manualPanel.classList.add('is-open');
+          manualButton.setAttribute('aria-expanded', 'true');
+          manualScanController?.openStage1?.();
+          BasicScan.scrollSectionToCenter(manualPanel);
+        } else {
+          closeManualPanel();
         }
       });
 
       setupAddPanel();
       setupManagePanels();
+      setupManualScan();
     </script>
   </body>
 </html>

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.basic_rank_checker.events import scan_event_manager
 from app.basic_rank_checker.service import create_basic_scan, fetch_scan_details, run_basic_scan
 from app.core.db import SessionLocal, get_db
+from app.core.spotify import extract_playlist_id, normalize_spotify_playlist_url
 from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
 from app.repositories.tracked_playlists import get_tracked_playlist_by_id
 
@@ -72,24 +73,59 @@ def _csv_response(filename: str, headers: list[str], rows: list[list[object | No
 
 @router.post("/scans")
 def start_basic_scan(payload: dict, db: Session = Depends(get_db)):
-    tracked_playlist_id = (payload or {}).get("tracked_playlist_id")
-    if not tracked_playlist_id:
-        raise HTTPException(status_code=400, detail="tracked_playlist_id is required.")
-    try:
-        UUID(str(tracked_playlist_id))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid tracked_playlist_id.") from exc
+    payload = payload or {}
+    tracked_playlist_id = payload.get("tracked_playlist_id")
+    raw_playlist_id = payload.get("playlist_id")
+    playlist_url = payload.get("playlist_url")
+    target_countries = payload.get("target_countries") or []
+    target_keywords = payload.get("target_keywords") or []
+    is_tracked_playlist = bool(payload.get("is_tracked_playlist"))
 
-    tracked = get_tracked_playlist_by_id(db, str(tracked_playlist_id))
-    if not tracked:
-        raise HTTPException(status_code=404, detail="Tracked playlist not found.")
-    if not tracked.target_countries or not tracked.target_keywords:
-        raise HTTPException(
-            status_code=400,
-            detail="Tracked playlist must have target countries and keywords.",
-        )
+    tracked = None
+    playlist_id: str | None = None
 
-    scan = create_basic_scan(db, tracked)
+    if tracked_playlist_id:
+        try:
+            UUID(str(tracked_playlist_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid tracked_playlist_id.") from exc
+
+        tracked = get_tracked_playlist_by_id(db, str(tracked_playlist_id))
+        if not tracked:
+            raise HTTPException(status_code=404, detail="Tracked playlist not found.")
+        if not tracked.target_countries or not tracked.target_keywords:
+            raise HTTPException(
+                status_code=400,
+                detail="Tracked playlist must have target countries and keywords.",
+            )
+        playlist_id = tracked.playlist_id
+        is_tracked_playlist = True
+    else:
+        normalized_url = normalize_spotify_playlist_url(playlist_url or raw_playlist_id or "")
+        playlist_id = extract_playlist_id(normalized_url) or raw_playlist_id
+        if not playlist_id:
+            raise HTTPException(status_code=400, detail="playlist_id is required.")
+        if len(target_countries) == 0 or len(target_keywords) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Target countries and keywords are required for manual scans.",
+            )
+        if len(target_countries) > 10 or len(target_keywords) > 10:
+            raise HTTPException(
+                status_code=400,
+                detail="You can scan up to 10 target countries and 10 keywords.",
+            )
+        tracked_playlist_id = None
+        is_tracked_playlist = False
+
+    scan = create_basic_scan(
+        db,
+        tracked_playlist=tracked,
+        playlist_id=playlist_id,
+        scanned_countries=target_countries,
+        scanned_keywords=target_keywords,
+        is_tracked_playlist=is_tracked_playlist,
+    )
     scan_event_manager.create_queue(str(scan.id))
     thread = threading.Thread(target=run_basic_scan, args=(str(scan.id),), daemon=True)
     thread.start()
@@ -166,7 +202,7 @@ def export_summary_csv(
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found.")
 
-    tracked = get_tracked_playlist_by_id(db, str(scan.tracked_playlist_id))
+    tracked = get_tracked_playlist_by_id(db, str(scan.tracked_playlist_id)) if scan.tracked_playlist_id else None
     tz = _resolve_timezone(timezone_name)
     rows = []
     queries = (
@@ -185,7 +221,7 @@ def export_summary_csv(
                 query.keyword,
                 query.country_code,
                 query.tracked_rank,
-                tracked.name if tracked else None,
+                (tracked.name if tracked else None) or scan.playlist_id,
                 scan.follower_snapshot,
             ]
         )

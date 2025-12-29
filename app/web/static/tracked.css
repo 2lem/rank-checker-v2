@@ -482,6 +482,15 @@
   flex-wrap: wrap;
 }
 
+.manual-scan-card {
+  margin-top: 8px;
+}
+
+.manual-scan-actions {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .basic-scan-progress {
   display: flex;
   flex-direction: column;
