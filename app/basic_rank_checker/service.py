@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from contextlib import contextmanager
+from dataclasses import dataclass
 
 import requests
 import pycountry
@@ -45,6 +47,29 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+@dataclass
+class ScanContext:
+    scan_id: str
+    tracked_playlist_id: str | None
+    playlist_id: str | None
+    scanned_countries: list[str]
+    scanned_keywords: list[str]
+    tracked_followers_total: int | None
+
+
+@contextmanager
+def _session_scope(label: str):
+    if SessionLocal is None:
+        raise RuntimeError("DATABASE_URL not configured")
+    db = SessionLocal()
+    logger.info("TEMP HOTFIX SessionLocal open label=%s session_id=%s", label, id(db))
+    try:
+        yield db
+    finally:
+        logger.info("TEMP HOTFIX SessionLocal close label=%s session_id=%s", label, id(db))
+        db.close()
 
 
 def create_basic_scan(
@@ -121,37 +146,110 @@ def _prefetch_playlist_metadata(
     return len(playlist_meta_cache) - previous_cache_size
 
 
+def _load_scan_context(scan_id: str) -> ScanContext | None:
+    with _session_scope("load_scan_context") as session:
+        scan = session.get(BasicScan, scan_id)
+        if scan is None:
+            return None
+        tracked_playlist = (
+            session.get(TrackedPlaylist, scan.tracked_playlist_id) if scan.tracked_playlist_id else None
+        )
+        playlist_id = scan.playlist_id or (tracked_playlist.playlist_id if tracked_playlist else None)
+        countries = scan.scanned_countries or (tracked_playlist.target_countries if tracked_playlist else []) or []
+        keywords = scan.scanned_keywords or (tracked_playlist.target_keywords if tracked_playlist else []) or []
+        return ScanContext(
+            scan_id=scan_id,
+            tracked_playlist_id=str(tracked_playlist.id) if tracked_playlist else None,
+            playlist_id=playlist_id,
+            scanned_countries=list(countries),
+            scanned_keywords=list(keywords),
+            tracked_followers_total=tracked_playlist.followers_total if tracked_playlist else None,
+        )
+
+
+def _update_scan(scan_id: str, **fields) -> BasicScan | None:
+    with _session_scope("update_scan") as session:
+        scan = session.get(BasicScan, scan_id)
+        if scan is None:
+            return None
+        for key, value in fields.items():
+            setattr(scan, key, value)
+        session.add(scan)
+        session.commit()
+        session.refresh(scan)
+        return scan
+
+
+def _persist_scan_step(
+    scan_id: str,
+    country: str,
+    keyword: str,
+    searched_at: datetime,
+    tracked_rank: int | None,
+    result_payloads: list[dict],
+):
+    with _session_scope("persist_scan_step") as session:
+        scan = session.get(BasicScan, scan_id)
+        if scan is None:
+            return
+        query = BasicScanQuery(
+            basic_scan_id=scan.id,
+            country_code=country,
+            keyword=keyword,
+            searched_at=searched_at,
+            tracked_rank=tracked_rank,
+            tracked_found_in_top20=tracked_rank is not None,
+        )
+        session.add(query)
+        session.flush()
+
+        results = [
+            BasicScanResult(
+                basic_scan_query_id=query.id,
+                rank=payload["rank"],
+                playlist_id=payload.get("playlist_id"),
+                playlist_name=payload.get("playlist_name"),
+                playlist_owner=payload.get("playlist_owner"),
+                playlist_followers=payload.get("playlist_followers"),
+                songs_count=payload.get("songs_count"),
+                playlist_last_added_track_at=payload.get("playlist_last_added_track_at"),
+                playlist_description=payload.get("playlist_description"),
+                playlist_url=payload.get("playlist_url"),
+                is_tracked_playlist=payload.get("is_tracked_playlist", False),
+            )
+            for payload in result_payloads
+        ]
+        session.add_all(results)
+        session.add(query)
+        session.commit()
+
+
 def run_basic_scan(scan_id: str) -> None:
     if SessionLocal is None:
         return
 
-    db = SessionLocal()
-    try:
-        scan = db.get(BasicScan, scan_id)
-        if scan is None:
-            return
-        tracked_playlist = db.get(TrackedPlaylist, scan.tracked_playlist_id) if scan.tracked_playlist_id else None
-        target_playlist_id = scan.playlist_id or (tracked_playlist.playlist_id if tracked_playlist else None)
-        if target_playlist_id is None:
-            scan.status = "failed"
-            scan.error_message = "Target playlist not found."
-            scan.finished_at = _now_utc()
-            db.add(scan)
-            db.commit()
-            scan_event_manager.publish(scan_id, {"type": "error", "message": scan.error_message})
-            return
+    context = _load_scan_context(scan_id)
+    if context is None:
+        logger.warning("Basic scan context missing scan_id=%s", scan_id)
+        return
+    if context.playlist_id is None:
+        _update_scan(scan_id, status="failed", error_message="Target playlist not found.", finished_at=_now_utc())
+        scan_event_manager.publish(scan_id, {"type": "error", "message": "Target playlist not found."})
+        return
 
-        countries = scan.scanned_countries or (tracked_playlist.target_countries if tracked_playlist else []) or []
-        keywords = scan.scanned_keywords or (tracked_playlist.target_keywords if tracked_playlist else []) or []
+    try:
+        countries = context.scanned_countries or []
+        keywords = context.scanned_keywords or []
         total_steps = max(len(countries) * len(keywords), 1)
 
         token = get_access_token()
-        if tracked_playlist:
-            scan.follower_snapshot = _resolve_follower_snapshot(tracked_playlist, token)
-        else:
-            scan.follower_snapshot = _resolve_follower_snapshot_by_playlist_id(target_playlist_id, token)
-        db.add(scan)
-        db.commit()
+        follower_snapshot = (
+            context.tracked_followers_total
+            if context.tracked_followers_total is not None
+            else _resolve_follower_snapshot_by_playlist_id(context.playlist_id, token)
+        )
+        if follower_snapshot is not None:
+            _update_scan(scan_id, follower_snapshot=follower_snapshot)
 
         playlist_meta_cache: dict[str, dict] = {}
         total_playlist_occurrences = 0
@@ -186,18 +284,7 @@ def run_basic_scan(scan_id: str) -> None:
                 )
 
                 tracked_rank = None
-                query = BasicScanQuery(
-                    basic_scan_id=scan.id,
-                    country_code=country,
-                    keyword=keyword,
-                    searched_at=searched_at,
-                    tracked_rank=None,
-                    tracked_found_in_top20=False,
-                )
-                db.add(query)
-                db.flush()
-
-                results: list[BasicScanResult] = []
+                result_payloads: list[dict] = []
                 for index, item in enumerate(items, start=1):
                     playlist_id = item.get("id")
                     is_placeholder = item.get("placeholder")
@@ -222,35 +309,34 @@ def run_basic_scan(scan_id: str) -> None:
                         "spotify"
                     )
 
-                    is_target_playlist = playlist_id == target_playlist_id
+                    is_target_playlist = playlist_id == context.playlist_id
                     if is_target_playlist and tracked_rank is None:
                         tracked_rank = index
-                    results.append(
-                        BasicScanResult(
-                            basic_scan_query_id=query.id,
-                            rank=index,
-                            playlist_id=playlist_id,
-                            playlist_name=playlist_name,
-                            playlist_owner=playlist_owner,
-                            playlist_followers=playlist_followers,
-                            songs_count=songs_count,
-                            playlist_last_added_track_at=playlist_last_added_track_at,
-                            playlist_description=playlist_description,
-                            playlist_url=playlist_url,
-                            is_tracked_playlist=is_target_playlist,
-                        )
+                    result_payloads.append(
+                        {
+                            "rank": index,
+                            "playlist_id": playlist_id,
+                            "playlist_name": playlist_name,
+                            "playlist_owner": playlist_owner,
+                            "playlist_followers": playlist_followers,
+                            "songs_count": songs_count,
+                            "playlist_last_added_track_at": playlist_last_added_track_at,
+                            "playlist_description": playlist_description,
+                            "playlist_url": playlist_url,
+                            "is_tracked_playlist": is_target_playlist,
+                        }
                     )
 
-                query.tracked_rank = tracked_rank
-                query.tracked_found_in_top20 = tracked_rank is not None
-                db.add_all(results)
-                db.add(query)
-                db.commit()
+                _persist_scan_step(
+                    scan_id=scan_id,
+                    country=country,
+                    keyword=keyword,
+                    searched_at=searched_at,
+                    tracked_rank=tracked_rank,
+                    result_payloads=result_payloads,
+                )
 
-        scan.status = "completed"
-        scan.finished_at = _now_utc()
-        db.add(scan)
-        db.commit()
+        _update_scan(scan_id, status="completed", finished_at=_now_utc())
         logger.info(
             "Basic scan playlist metadata fetch stats",
             extra={
@@ -263,19 +349,13 @@ def run_basic_scan(scan_id: str) -> None:
         scan_event_manager.publish(scan_id, {"type": "done", "scan_id": scan_id})
     except Exception as exc:
         logger.exception("Basic scan failed")
-        try:
-            scan = db.get(BasicScan, scan_id)
-            if scan:
-                scan.status = "failed"
-                scan.error_message = str(exc)
-                scan.finished_at = _now_utc()
-                db.add(scan)
-                db.commit()
-        except Exception:
-            db.rollback()
+        _update_scan(
+            scan_id,
+            status="failed",
+            error_message=str(exc),
+            finished_at=_now_utc(),
+        )
         scan_event_manager.publish(scan_id, {"type": "error", "message": str(exc)})
-    finally:
-        db.close()
 
 
 def fetch_scan_details(db: Session, scan_id: str) -> dict | None:
