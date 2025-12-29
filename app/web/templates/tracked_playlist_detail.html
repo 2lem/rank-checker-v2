@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/static/ui.css" />
     <link rel="stylesheet" href="/static/tracked.css" />
     <script src="/static/basic-scan.js"></script>
+    <script src="/static/scan-runner.js"></script>
   </head>
   <body class="app-body">
     <main class="page">
@@ -255,43 +256,47 @@
 
       const resolveMarketLabel = (code) => marketLabelMap.get((code || '').toUpperCase()) || code;
 
-      const formatTimestamp = (value) => {
-        if (!value) {
-          return '—';
-        }
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) {
-          return value;
-        }
-        return new Intl.DateTimeFormat('sv-SE', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-        }).format(date);
-      };
+      const formatTimestamp =
+        (window.ScanRunner && window.ScanRunner.defaultFormatTimestamp) ||
+        ((value) => {
+          if (!value) {
+            return '—';
+          }
+          const date = new Date(value);
+          if (Number.isNaN(date.getTime())) {
+            return value;
+          }
+          return new Intl.DateTimeFormat('sv-SE', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          }).format(date);
+        });
 
-      const formatSummaryDateParts = (value) => {
-        if (!value) {
-          return { dateLabel: '—', timeLabel: '—' };
-        }
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) {
-          return { dateLabel: value, timeLabel: value };
-        }
-        const dateLabel = date.toLocaleDateString('en-GB', {
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric',
+      const formatSummaryDateParts =
+        (window.ScanRunner && window.ScanRunner.defaultFormatSummaryDateParts) ||
+        ((value) => {
+          if (!value) {
+            return { dateLabel: '—', timeLabel: '—' };
+          }
+          const date = new Date(value);
+          if (Number.isNaN(date.getTime())) {
+            return { dateLabel: value, timeLabel: value };
+          }
+          const dateLabel = date.toLocaleDateString('en-GB', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          });
+          const timeLabel = date.toLocaleTimeString('en-GB', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          });
+          return { dateLabel, timeLabel };
         });
-        const timeLabel = date.toLocaleTimeString('en-GB', {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-        });
-        return { dateLabel, timeLabel };
-      };
 
       const formatFollowersValue = (value) => {
         if (value === undefined || value === null || value === '') {
@@ -318,19 +323,28 @@
         return upper.replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt()));
       };
 
-      basicScanController = BasicScan.init({
-        root: '[data-basic-scan]',
-        resolveMarketLabel,
-        formatTimestamp,
-        formatSummaryDateParts,
-        formatFollowersValue,
-        onStatus: setStatus,
-        getStartPayload: () => ({
-          tracked_playlist_id: '{{ playlist.id }}',
-          playlist_id: '{{ playlist.playlist_id }}',
-          is_tracked_playlist: true,
-        }),
-        getTargetPlaylistId: () => '{{ playlist.playlist_id }}',
+      const createScanController =
+        (window.ScanRunner && window.ScanRunner.createBasicScanController) || BasicScan?.init;
+
+      if (createScanController) {
+        basicScanController = createScanController({
+          root: '[data-basic-scan]',
+          resolveMarketLabel,
+          formatTimestamp,
+          formatSummaryDateParts,
+          formatFollowersValue,
+          onStatus: setStatus,
+          getStartPayload: () => ({
+            tracked_playlist_id: '{{ playlist.id }}',
+            playlist_id: '{{ playlist.playlist_id }}',
+            is_tracked_playlist: true,
+          }),
+          getTargetPlaylistId: () => '{{ playlist.playlist_id }}',
+        });
+      }
+
+      window.addEventListener('beforeunload', () => {
+        basicScanController?.dispose?.();
       });
     </script>
   </body>
