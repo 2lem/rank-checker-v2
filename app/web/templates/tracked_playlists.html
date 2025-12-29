@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/static/ui.css" />
     <link rel="stylesheet" href="/static/tracked.css" />
     <script src="/static/basic-scan.js"></script>
+    <script src="/static/scan-runner.js"></script>
   </head>
   <body class="app-body">
     <main class="page">
@@ -237,22 +238,24 @@
         );
 
         const resolveMarketLabel = (code) => marketLabelMap.get((code || '').toUpperCase()) || code;
-        const formatTimestamp = (value) => {
-          if (!value) {
-            return '—';
-          }
-          const date = new Date(value);
-          if (Number.isNaN(date.getTime())) {
-            return value;
-          }
-          return new Intl.DateTimeFormat('sv-SE', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-          }).format(date);
-        };
+        const formatTimestamp =
+          (window.ScanRunner && window.ScanRunner.defaultFormatTimestamp) ||
+          ((value) => {
+            if (!value) {
+              return '—';
+            }
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) {
+              return value;
+            }
+            return new Intl.DateTimeFormat('sv-SE', {
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+            }).format(date);
+          });
 
         const setStatus = (message, variant) => {
           if (!statusArea) {
@@ -265,11 +268,15 @@
           }
         };
 
-        const normalizePlaylistUrl = (value) => (value || '').trim().split('?', 1)[0];
-        const extractPlaylistId = (text) => {
-          const match = (text || '').match(/(?:open\.spotify\.com\/playlist\/|spotify:playlist:)([A-Za-z0-9]+)/);
-          return match ? match[1] : null;
-        };
+        const normalizePlaylistUrl =
+          (window.ScanRunner && window.ScanRunner.normalizePlaylistUrl) ||
+          ((value) => (value || '').trim().split('?', 1)[0]);
+        const extractPlaylistId =
+          (window.ScanRunner && window.ScanRunner.extractPlaylistId) ||
+          ((text) => {
+            const match = (text || '').match(/(?:open\.spotify\.com\/playlist\/|spotify:playlist:)([A-Za-z0-9]+)/);
+            return match ? match[1] : null;
+          });
 
         const createChip = ({ label, removable, locked, onRemove }) => {
           const chip = document.createElement('span');
@@ -791,7 +798,10 @@
         };
 
         const setupManualScan = () => {
-          if (!manualPanel || !manualForm || !window.BasicScan?.init) {
+          const createScanController =
+            (window.ScanRunner && window.ScanRunner.createBasicScanController) ||
+            (window.BasicScan && window.BasicScan.init);
+          if (!manualPanel || !manualForm || !createScanController) {
             return;
           }
           const playlistInput = manualPanel.querySelector('[data-manual-playlist-input]');
@@ -871,35 +881,38 @@
             manualForm.reset();
             manualCountryManager.reset();
             manualKeywordManager.reset();
+            manualScanController?.dispose?.();
             manualScanController?.openStage1?.();
             closeManualPanel();
             setStatus('Manual scan canceled.', null);
           });
 
-          manualScanController = BasicScan.init({
+          manualScanController = createScanController({
             root: scanRoot,
             resolveMarketLabel,
             formatTimestamp,
-            formatSummaryDateParts: (value) => {
-              if (!value) {
-                return { dateLabel: '—', timeLabel: '—' };
-              }
-              const date = new Date(value);
-              if (Number.isNaN(date.getTime())) {
-                return { dateLabel: value, timeLabel: value };
-              }
-              const dateLabel = date.toLocaleDateString('en-GB', {
-                day: 'numeric',
-                month: 'long',
-                year: 'numeric',
-              });
-              const timeLabel = date.toLocaleTimeString('en-GB', {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false,
-              });
-              return { dateLabel, timeLabel };
-            },
+            formatSummaryDateParts:
+              (window.ScanRunner && window.ScanRunner.defaultFormatSummaryDateParts) ||
+              ((value) => {
+                if (!value) {
+                  return { dateLabel: '—', timeLabel: '—' };
+                }
+                const date = new Date(value);
+                if (Number.isNaN(date.getTime())) {
+                  return { dateLabel: value, timeLabel: value };
+                }
+                const dateLabel = date.toLocaleDateString('en-GB', {
+                  day: 'numeric',
+                  month: 'long',
+                  year: 'numeric',
+                });
+                const timeLabel = date.toLocaleTimeString('en-GB', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hour12: false,
+                });
+                return { dateLabel, timeLabel };
+              }),
             onStatus: setStatus,
             getTargetPlaylistId: () => extractPlaylistId(normalizePlaylistUrl(playlistInput.value)),
             getStartPayload: () => {
@@ -924,7 +937,6 @@
                 target_keywords: targetKeywords,
                 tracked_playlist_id: null,
                 is_tracked_playlist: false,
-                account_id: null,
               };
             },
             onStageChange: (stage) => {
@@ -965,6 +977,9 @@
         setupAddPanel();
         setupManagePanels();
         setupManualScan();
+        window.addEventListener('beforeunload', () => {
+          manualScanController?.dispose?.();
+        });
       });
     </script>
 
