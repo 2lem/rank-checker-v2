@@ -1,0 +1,141 @@
+{% set variant = variant|default('list') %}
+<div
+  class="tracked-card {% if variant == 'detail' %}detail-header-card{% endif %}"
+  data-tracked-card
+  data-playlist-id="{{ playlist.id }}"
+  data-target-countries='{{ playlist.target_countries | tojson }}'
+  data-target-keywords='{{ playlist.target_keywords | tojson }}'
+>
+  <div class="tracked-card-inner {% if variant == 'detail' %}detail-header-grid{% endif %}">
+    <div class="tracked-thumb">
+      {% if playlist.image_url %}
+        <img src="{{ playlist.image_url }}" alt="Playlist artwork" />
+      {% else %}
+        <span class="tracked-thumb-fallback">♪</span>
+      {% endif %}
+    </div>
+    <div class="tracked-card-content">
+      <div class="tracked-pill-row">
+        {% if variant == 'detail' %}
+          {% if playlist.playlist_url %}
+            <a class="pill pill-spotify" href="{{ playlist.playlist_url }}" target="_blank" rel="noopener noreferrer">
+              View on Spotify
+            </a>
+          {% endif %}
+        {% else %}
+          <a class="pill pill-primary" href="/playlists/{{ playlist.id }}">Open Dashboard</a>
+          <button class="pill pill-secondary" type="button" data-manage-toggle aria-expanded="false">Manage</button>
+        {% endif %}
+      </div>
+      <div class="tracked-title" title="{{ playlist.name }}">{{ playlist.name }}</div>
+      <div class="tracked-meta-line">
+        <span class="tracked-meta-group">
+          <span class="tracked-meta-label">Owner:</span>
+          <span class="tracked-meta-value">{{ playlist.owner_name }}</span>
+        </span>
+        <span class="tracked-meta-group">
+          <span class="tracked-meta-label">Followers:</span>
+          <span class="tracked-meta-value">{{ playlist.followers_total }}</span>
+        </span>
+        <span class="tracked-meta-group">
+          <span class="tracked-meta-label">Songs Count:</span>
+          <span class="tracked-meta-value">{{ playlist.tracks_count }}</span>
+        </span>
+      </div>
+      <div class="tracked-meta-line tracked-meta-subtle">
+        <span class="tracked-meta-group">
+          <span class="tracked-meta-label">Scanned:</span>
+          <span class="tracked-meta-value">{{ playlist.scanned_display }}</span>
+        </span>
+        <span class="tracked-meta-group">
+          <span class="tracked-meta-label">Last Updated:</span>
+          <span class="tracked-meta-value">{{ playlist.last_updated_display }}</span>
+        </span>
+      </div>
+      <div class="tracked-tag-group">
+        <div class="tracked-tag-row">
+          <span class="tracked-tag-label">Countries</span>
+          {% if playlist.target_countries %}
+            {% for country in playlist.target_countries %}
+              {% set label = playlist.target_country_labels.get(country|upper, country) %}
+              {% set badge_variant = 'country' %}
+              {% include "_components/badge.html" with context %}
+            {% endfor %}
+          {% else %}
+            <span class="tracked-tag-empty">No target countries</span>
+          {% endif %}
+        </div>
+        <div class="tracked-tag-row">
+          <span class="tracked-tag-label">Keywords</span>
+          {% if playlist.target_keywords %}
+            {% for keyword in playlist.target_keywords %}
+              {% set label = keyword %}
+              {% set badge_variant = 'keyword' %}
+              {% include "_components/badge.html" with context %}
+            {% endfor %}
+          {% else %}
+            <span class="tracked-tag-empty">No target keywords</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% if variant != 'detail' %}
+    <div class="tracked-manage-panel" data-manage-panel>
+      <div class="tracked-manage-actions">
+        <button class="btn btn-primary" type="button" data-edit-toggle>Edit Configuration</button>
+        <button class="btn btn-secondary" type="button" data-refresh-stats>Refresh Stats</button>
+        <button class="btn btn-secondary" type="button" disabled>Delete Playlist</button>
+        <button class="btn btn-ghost tracked-manage-close" type="button" data-manage-close>Close</button>
+      </div>
+      <div class="tracked-edit-panel" data-edit-panel>
+        <div class="section-header">
+          <h3>Edit Configuration</h3>
+          <p class="section-subtitle">Add new target countries and keywords for this playlist.</p>
+        </div>
+        <form class="form-grid" data-edit-form>
+          <label class="field">
+            <span class="field-label">Target Countries</span>
+            <div class="field-inline">
+              <select
+                name="edit_target_countries_select"
+                class="market-select"
+                data-edit-country-select
+              ></select>
+              <button class="btn btn-secondary" type="button" data-edit-country-add>Add</button>
+            </div>
+            <div class="pill-list market-pill-list" data-edit-country-pills></div>
+            <div class="info-box" data-edit-country-info hidden>
+              You have reached the maximum of 5 target countries.
+            </div>
+            <span class="field-help">Existing countries are locked. Add up to 5 total.</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Target Keywords</span>
+            <div class="field-inline">
+              <input
+                name="edit_target_keywords_input"
+                type="text"
+                placeholder="e.g. workout"
+                data-edit-keyword-input
+              />
+              <button class="btn btn-secondary" type="button" data-edit-keyword-add>Add</button>
+            </div>
+            <div class="pill-list" data-edit-keyword-pills></div>
+            <div class="info-box" data-edit-keyword-info hidden>
+              You have reached the maximum of 5 target keywords.
+            </div>
+            <span class="field-help">Existing keywords are locked. Add up to 5 total.</span>
+          </label>
+          <div class="warning-box">
+            Saved countries and keywords cannot be removed later. Please review before saving.
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary full-width" type="submit">Save Configuration</button>
+            <button class="btn btn-secondary full-width" type="button" data-edit-cancel>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {% endif %}
+</div>

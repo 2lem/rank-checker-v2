@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ playlist.name }} · Tracked Playlist</title>
+    <link rel="stylesheet" href="/static/ui.css" />
+    <link rel="stylesheet" href="/static/tracked.css" />
+  </head>
+  <body class="app-body">
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <h1 class="page-title dashboard-title" title="{{ playlist.dashboard_header_title }}">
+            <span class="dashboard-title-prefix">Dashboard</span>
+          </h1>
+        </div>
+        <div class="page-header-actions">
+          <button class="btn btn-tracked-outline dashboard-action-btn" type="button">Tracked Playlist</button>
+          <button class="btn btn-primary dashboard-action-btn" type="button" data-refresh-stats>Refresh Stats</button>
+          {% set label = 'Back To Tracked Playlists' %}
+          {% set button_variant = 'ghost' %}
+          {% set href = '/' %}
+          {% set extra_class = 'btn-back-blue dashboard-action-btn' %}
+          {% include "_components/button.html" %}
+        </div>
+      </header>
+
+      <section class="ui-card status-card">
+        <div class="status-card-header">
+          <h2>Status</h2>
+          <p class="status-card-subtitle">Live feedback for playlist actions.</p>
+        </div>
+        <div id="playlist-status" class="status-area" role="status" aria-live="polite">
+          Ready to refresh playlist metadata.
+        </div>
+      </section>
+
+      <div class="tracked-detail-stack">
+        {% set variant = 'detail' %}
+        {% include "_components/tracked_card.html" %}
+
+        <section class="toolbar-panel">
+          <div class="toolbar-actions">
+            <button class="btn btn-secondary" type="button" data-basic-scan-toggle aria-expanded="false">
+              Basic Scan (Manual)
+            </button>
+          </div>
+        </section>
+
+        <section class="panel basic-scan-panel is-hidden" id="basic-scan-section">
+          <div class="panel-header">
+            <h2>Basic Scan Panel</h2>
+            <p>Run a manual scan using stored targets.</p>
+          </div>
+          <div class="panel-body">
+            <div class="basic-scan" data-basic-scan>
+              <section class="scan-parameters" id="scan-parameters" data-basic-scan-parameters>
+                <div class="scan-config-row">
+                  <span class="scan-config-label">Countries</span>
+                  <div class="pill-list" data-basic-scan-countries>
+                    {% if playlist.target_countries %}
+                      {% for country in playlist.target_countries %}
+                        {% set label = playlist.target_country_labels.get(country|upper, country) %}
+                        <span class="chip chip-locked">
+                          <span class="chip-label">{{ label }}</span>
+                        </span>
+                      {% endfor %}
+                    {% else %}
+                      <span class="scan-config-empty">No target countries</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="scan-config-row">
+                  <span class="scan-config-label">Keywords</span>
+                  <div class="pill-list" data-basic-scan-keywords>
+                    {% if playlist.target_keywords %}
+                      {% for keyword in playlist.target_keywords %}
+                        <span class="chip chip-locked">
+                          <span class="chip-label">{{ keyword }}</span>
+                        </span>
+                      {% endfor %}
+                    {% else %}
+                      <span class="scan-config-empty">No target keywords</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="run-scan-controls" id="run-scan-controls" data-basic-scan-run-controls>
+                  <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
+                </div>
+              </section>
+              <section
+                class="run-progress basic-scan-progress"
+                id="basic-scan-progress"
+                data-basic-scan-progress
+                hidden
+              >
+                <div class="progress-bar">
+                  <div class="progress-fill" data-basic-scan-progress-fill></div>
+                </div>
+                <div class="progress-status" data-basic-scan-progress-status>Starting scan…</div>
+                <div class="progress-log" data-basic-scan-progress-log></div>
+              </section>
+              <section class="results" id="basic-scan-results" data-basic-scan-results hidden>
+                <div class="results-header">
+                  <h3>Basic Scan Results</h3>
+                  <div
+                    class="download-csv-controls basic-scan-download-actions"
+                    id="basic-scan-csv-controls"
+                    data-basic-scan-csv-controls
+                  >
+                    <a class="btn btn-csv" data-basic-scan-export-summary>Download Summary CSV</a>
+                    <a class="btn btn-csv" data-basic-scan-export-detailed>Download Detailed CSV</a>
+                  </div>
+                </div>
+                <div class="summary" id="basic-scan-summary">
+                  <h3>Summary</h3>
+                  <div class="summary-lead" data-basic-scan-summary-lead></div>
+                  <div class="summary-list" data-basic-scan-summary-list></div>
+                </div>
+                <div class="detailed-scan-insights" id="basic-scan-detailed">
+                  <h3>Detailed Scan Insights</h3>
+                  <div class="detailed-insights" data-basic-scan-detailed></div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      const statusArea = document.getElementById('playlist-status');
+      const refreshButton = document.querySelector('[data-refresh-stats]');
+      const toolbarButtons = document.querySelectorAll('[data-panel-target]');
+      const panels = document.querySelectorAll('.panel[data-panel]');
+      const toolbar = document.querySelector('.toolbar-panel');
+      let lastAnchor = toolbar;
+      const basicScanToggle = document.querySelector('[data-basic-scan-toggle]');
+      const basicScanSection = document.getElementById('basic-scan-section');
+      let basicScanStageController = null;
+      let preOpenScrollY = null;
+
+      const togglePanel = (targetId) => {
+        let activePanel = null;
+        panels.forEach((panel) => {
+          if (panel.id === targetId) {
+            activePanel = panel;
+          }
+        });
+
+        if (!activePanel) {
+          return;
+        }
+
+        const isActive = activePanel.classList.contains('is-active');
+        panels.forEach((panel) => panel.classList.remove('is-active'));
+
+        if (!isActive) {
+          lastAnchor = toolbar || document.body;
+          activePanel.classList.add('is-active');
+          activePanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          return;
+        }
+
+        if (lastAnchor) {
+          lastAnchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      };
+
+      toolbarButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          togglePanel(button.dataset.panelTarget);
+        });
+      });
+
+      if (panels.length) {
+        panels[0].classList.add('is-active');
+      }
+
+      const showSection = (section) => {
+        if (!section) {
+          return;
+        }
+        section.hidden = false;
+        section.style.removeProperty('display');
+      };
+
+      const hideSection = (section) => {
+        if (!section) {
+          return;
+        }
+        section.hidden = true;
+        section.style.display = 'none';
+      };
+
+      const scrollSectionToCenter = (section) => {
+        if (!section) {
+          return;
+        }
+        const rect = section.getBoundingClientRect();
+        const sectionTop = window.scrollY + rect.top;
+        const target =
+          sectionTop - window.innerHeight / 2 + rect.height / 2;
+        window.scrollTo({ top: Math.max(target, 0), behavior: 'smooth' });
+      };
+
+      const toggleBasicScan = () => {
+        if (!basicScanSection || !basicScanToggle) {
+          return;
+        }
+        const isHidden = basicScanSection.classList.contains('is-hidden');
+        if (isHidden) {
+          preOpenScrollY = window.scrollY;
+          basicScanSection.classList.remove('is-hidden');
+          basicScanSection.classList.add('is-active');
+          basicScanToggle.setAttribute('aria-expanded', 'true');
+          if (basicScanStageController) {
+            basicScanStageController.setStage(1);
+            return;
+          }
+          const fallbackTarget = document.getElementById('scan-parameters') || basicScanSection;
+          scrollSectionToCenter(fallbackTarget);
+          return;
+        }
+        basicScanSection.classList.add('is-hidden');
+        basicScanSection.classList.remove('is-active');
+        basicScanToggle.setAttribute('aria-expanded', 'false');
+        if (preOpenScrollY !== null) {
+          window.scrollTo({ top: preOpenScrollY, behavior: 'smooth' });
+        }
+      };
+
+      basicScanToggle?.addEventListener('click', toggleBasicScan);
+
+      const setStatus = (message, variant) => {
+        if (!statusArea) {
+          return;
+        }
+        statusArea.textContent = message;
+        statusArea.classList.remove('status-success', 'status-error', 'status-loading');
+        if (variant) {
+          statusArea.classList.add(variant);
+        }
+      };
+
+      refreshButton?.addEventListener('click', async () => {
+        if (!refreshButton) {
+          return;
+        }
+        refreshButton.disabled = true;
+        setStatus('Fetching data from Spotify… please wait', 'status-loading');
+
+        try {
+          const response = await fetch(`/api/playlists/{{ playlist.id }}/refresh-stats`, {
+            method: 'POST',
+          });
+          const data = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            const detail = data.detail || 'Unable to refresh playlist metadata.';
+            const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
+            setStatus(message, 'status-error');
+            refreshButton.disabled = false;
+            return;
+          }
+
+          const refreshedAt = data.refreshed_at ? new Date(data.refreshed_at) : null;
+          const timeLabel = refreshedAt ? refreshedAt.toLocaleString() : 'just now';
+          setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
+          window.location.reload();
+        } catch (error) {
+          setStatus('Network error while refreshing playlist.', 'status-error');
+          refreshButton.disabled = false;
+        }
+      });
+
+      const availableMarkets = {{ available_markets | tojson }};
+      const marketLabelMap = new Map(
+        availableMarkets.map((market) => [market.code.toUpperCase(), market.label])
+      );
+
+      const resolveMarketLabel = (code) => marketLabelMap.get((code || '').toUpperCase()) || code;
+
+      const formatTimestamp = (value) => {
+        if (!value) {
+          return '—';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return value;
+        }
+        return new Intl.DateTimeFormat('sv-SE', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        }).format(date);
+      };
+
+      const formatSummaryDateParts = (value) => {
+        if (!value) {
+          return { dateLabel: '—', timeLabel: '—' };
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return { dateLabel: value, timeLabel: value };
+        }
+        const dateLabel = date.toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        });
+        const timeLabel = date.toLocaleTimeString('en-GB', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        });
+        return { dateLabel, timeLabel };
+      };
+
+      const formatFileTimestamp = (value) => {
+        if (!value) {
+          return '';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return '';
+        }
+        const pad = (part) => String(part).padStart(2, '0');
+        const year = date.getFullYear();
+        const month = pad(date.getMonth() + 1);
+        const day = pad(date.getDate());
+        const hours = pad(date.getHours());
+        const minutes = pad(date.getMinutes());
+        return `${day}-${month}-${year}_${hours}-${minutes}`;
+      };
+
+      const formatFollowersValue = (value) => {
+        if (value === undefined || value === null || value === '') {
+          return '—';
+        }
+        if (typeof value === 'object') {
+          if ('total' in value) {
+            return formatFollowersValue(value.total);
+          }
+          return '—';
+        }
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) {
+          return numeric.toLocaleString();
+        }
+        return value;
+      };
+
+      const flagEmoji = (code) => {
+        const upper = (code || '').toUpperCase();
+        if (upper.length !== 2) {
+          return '';
+        }
+        return upper.replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt()));
+      };
+
+      const setupBasicScan = () => {
+        const scanRoot = document.querySelector('[data-basic-scan]');
+        if (!scanRoot) {
+          return;
+        }
+        const scanParameters = scanRoot.querySelector('[data-basic-scan-parameters]');
+        const runControls = scanRoot.querySelector('[data-basic-scan-run-controls]');
+        const runButton = scanRoot.querySelector('[data-basic-scan-run]');
+        const progressWrap = scanRoot.querySelector('[data-basic-scan-progress]');
+        const progressFill = scanRoot.querySelector('[data-basic-scan-progress-fill]');
+        const progressStatus = scanRoot.querySelector('[data-basic-scan-progress-status]');
+        const progressLog = scanRoot.querySelector('[data-basic-scan-progress-log]');
+        const resultsWrap = scanRoot.querySelector('[data-basic-scan-results]');
+        const summaryLead = scanRoot.querySelector('[data-basic-scan-summary-lead]');
+        const summaryList = scanRoot.querySelector('[data-basic-scan-summary-list]');
+        const detailedWrap = scanRoot.querySelector('[data-basic-scan-detailed]');
+        const exportSummary = scanRoot.querySelector('[data-basic-scan-export-summary]');
+        const exportDetailed = scanRoot.querySelector('[data-basic-scan-export-detailed]');
+        const summarySection = document.getElementById('basic-scan-summary');
+        const csvControls = scanRoot.querySelector('[data-basic-scan-csv-controls]');
+        const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+        let activeScanId = null;
+        let eventSource = null;
+        let currentStage = 1;
+
+        const setStage = (stage, scrollTarget) => {
+          currentStage = stage;
+          const showStage1 = stage === 1;
+          const showStage2 = stage === 2;
+          const showStage3 = stage === 3;
+
+          if (showStage1) {
+            showSection(scanParameters);
+            showSection(runControls);
+            hideSection(progressWrap);
+            hideSection(resultsWrap);
+            hideSection(csvControls);
+          }
+
+          if (showStage2) {
+            hideSection(scanParameters);
+            hideSection(runControls);
+            showSection(progressWrap);
+            hideSection(resultsWrap);
+            hideSection(csvControls);
+          }
+
+          if (showStage3) {
+            hideSection(scanParameters);
+            hideSection(runControls);
+            hideSection(progressWrap);
+            showSection(resultsWrap);
+            showSection(csvControls);
+          }
+
+          const target =
+            scrollTarget ||
+            (showStage1 ? scanParameters || scanRoot : showStage2 ? progressWrap : summarySection);
+          scrollSectionToCenter(target);
+        };
+        basicScanStageController = { setStage, getStage: () => currentStage };
+
+        const openBasicScanStage1 = () => {
+          setStage(1, scanParameters || scanRoot);
+        };
+
+        const openBasicScanStage2 = () => {
+          setStage(2, progressWrap || scanRoot);
+        };
+
+        const setProgress = (current, total, message) => {
+          if (!progressWrap) {
+            return;
+          }
+          const percent = total ? Math.min((current / total) * 100, 100) : 0;
+          if (progressFill) {
+            progressFill.style.width = `${percent}%`;
+          }
+          if (progressStatus) {
+            progressStatus.textContent = message || 'Scanning...';
+          }
+        };
+
+        const appendLog = (message) => {
+          if (!progressLog || !message) {
+            return;
+          }
+          const entry = document.createElement('div');
+          entry.className = 'progress-log-entry';
+          entry.textContent = message;
+          progressLog.appendChild(entry);
+          progressLog.scrollTop = progressLog.scrollHeight;
+        };
+
+        const renderSummary = (scan) => {
+          if (!summaryLead || !summaryList) {
+            return;
+          }
+          const follower = scan.follower_snapshot ?? '—';
+          summaryLead.textContent = `At ${formatTimestamp(
+            scan.started_at
+          )}, your playlist follower count was ${follower}.`;
+          summaryList.innerHTML = '';
+          (scan.summary || []).forEach((item) => {
+            const row = document.createElement('div');
+            row.className = `summary-row ${item.tracked_found_in_top20 ? '' : 'summary-row-missing'}`;
+            const countryLabel = resolveMarketLabel(item.country);
+            const { dateLabel, timeLabel } = formatSummaryDateParts(item.searched_at);
+            const rankText = item.tracked_found_in_top20
+              ? `your playlist rank was #${item.tracked_rank}.`
+              : 'your playlist was not found in the top 20.';
+            row.textContent = `On ${dateLabel} at ${timeLabel} in ${countryLabel} for ‘${item.keyword}’, ${rankText}`;
+            summaryList.appendChild(row);
+          });
+        };
+
+        const resolveFollowers = (result) => {
+          const nestedFollowers =
+            result.followers && typeof result.followers === 'object'
+              ? result.followers.total
+              : undefined;
+          const nestedPlaylistFollowers =
+            result.playlist && typeof result.playlist === 'object'
+              ? result.playlist.followers || result.playlist.followers_total || result.playlist.follower_count
+              : undefined;
+          const nestedPlaylistFollowersTotal =
+            nestedPlaylistFollowers && typeof nestedPlaylistFollowers === 'object'
+              ? nestedPlaylistFollowers.total
+              : undefined;
+          const candidate =
+            result.playlist_followers ??
+            result.followers_total ??
+            result.followers_count ??
+            result.follower_count ??
+            nestedFollowers ??
+            nestedPlaylistFollowersTotal ??
+            nestedPlaylistFollowers ??
+            result.followers;
+          return formatFollowersValue(candidate);
+        };
+
+        const renderDetailed = (scan) => {
+          if (!detailedWrap) {
+            return;
+          }
+          detailedWrap.innerHTML = '';
+          const detailed = scan.detailed || {};
+          const countryAccordions = [];
+          Object.values(detailed).forEach((countryData) => {
+            const countryCode = countryData.country;
+            const countryDetails = document.createElement('details');
+            countryDetails.className = 'accordion';
+            const summary = document.createElement('summary');
+            summary.textContent = `${flagEmoji(countryCode)} ${resolveMarketLabel(countryCode)}`;
+            countryDetails.addEventListener('toggle', () => {
+              if (!countryDetails.open) {
+                return;
+              }
+              countryAccordions.forEach((openDetails) => {
+                if (openDetails !== countryDetails) {
+                  openDetails.open = false;
+                }
+              });
+              requestAnimationFrame(() => {
+                scrollSectionToCenter(countryDetails);
+              });
+            });
+            countryDetails.appendChild(summary);
+            countryAccordions.push(countryDetails);
+
+            const keywordContainer = document.createElement('div');
+            keywordContainer.className = 'accordion-body';
+            const keywordAccordions = [];
+
+            Object.entries(countryData.keywords || {}).forEach(([keyword, keywordData]) => {
+              const keywordDetails = document.createElement('details');
+              keywordDetails.className = 'accordion nested';
+              const keywordSummary = document.createElement('summary');
+              keywordSummary.textContent = `${keyword} · ${formatTimestamp(keywordData.searched_at)}`;
+              keywordDetails.appendChild(keywordSummary);
+              keywordDetails.addEventListener('toggle', () => {
+                if (!keywordDetails.open) {
+                  return;
+                }
+                keywordAccordions.forEach((openKeyword) => {
+                  if (openKeyword !== keywordDetails) {
+                    openKeyword.open = false;
+                  }
+                });
+                requestAnimationFrame(() => {
+                  scrollSectionToCenter(keywordDetails);
+                });
+              });
+
+              const table = document.createElement('table');
+              table.className = 'results-table';
+              table.innerHTML = `
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Playlist</th>
+                    <th>Owner</th>
+                    <th>Followers</th>
+                    <th>Songs</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              `;
+              const tbody = table.querySelector('tbody');
+              (keywordData.results || []).forEach((result) => {
+                const followersValue = resolveFollowers(result);
+                const row = document.createElement('tr');
+                if (result.is_tracked_playlist) {
+                  row.classList.add('tracked-highlight');
+                }
+                row.innerHTML = `
+                  <td>${result.rank ?? '—'}</td>
+                  <td>
+                    ${
+                      result.playlist_url
+                        ? `<a href="${result.playlist_url}" target="_blank" rel="noopener noreferrer">${result.playlist_name || '—'}</a>`
+                        : result.playlist_name || '—'
+                    }
+                  </td>
+                  <td>${result.playlist_owner || '—'}</td>
+                  <td>${followersValue}</td>
+                  <td>${result.songs_count ?? '—'}</td>
+                `;
+                tbody.appendChild(row);
+              });
+
+              const tableScroll = document.createElement('div');
+              tableScroll.className = 'table-scroll';
+              tableScroll.appendChild(table);
+
+              const keywordBody = document.createElement('div');
+              keywordBody.className = 'accordion-body';
+              keywordBody.appendChild(tableScroll);
+              keywordDetails.appendChild(keywordBody);
+              keywordContainer.appendChild(keywordDetails);
+              keywordAccordions.push(keywordDetails);
+            });
+
+            countryDetails.appendChild(keywordContainer);
+            detailedWrap.appendChild(countryDetails);
+          });
+        };
+
+        const loadResults = async (scanId) => {
+          const response = await fetch(`/api/basic-rank-checker/scans/${scanId}`);
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.detail || 'Failed to load scan results.');
+          }
+          renderSummary(data);
+          renderDetailed(data);
+          const startedAt =
+            data.started_at || data.searched_at || data.summary?.[0]?.searched_at;
+          const timestamp = formatFileTimestamp(startedAt);
+          const effectiveScanId = data.scan_id || scanId;
+          const filenameBase = timestamp
+            ? `${timestamp}_${effectiveScanId}`
+            : `${effectiveScanId}`;
+          const buildExportUrl = (path) => {
+            const url = new URL(path, window.location.origin);
+            if (timeZone) {
+              url.searchParams.set('timezone', timeZone);
+            }
+            return `${url.pathname}${url.search}`;
+          };
+          if (exportSummary) {
+            exportSummary.href = buildExportUrl(
+              `/api/basic-rank-checker/scans/${scanId}/export/summary.csv`
+            );
+            exportSummary.download = `${filenameBase}_summary.csv`;
+          }
+          if (exportDetailed) {
+            exportDetailed.href = buildExportUrl(
+              `/api/basic-rank-checker/scans/${scanId}/export/detailed.csv`
+            );
+            exportDetailed.download = `${filenameBase}_detailed.csv`;
+          }
+        };
+
+        const startScan = async () => {
+          runButton.disabled = true;
+          progressLog.innerHTML = '';
+          setProgress(0, 0, 'Starting scan…');
+
+          try {
+            const response = await fetch('/api/basic-rank-checker/scans', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tracked_playlist_id: '{{ playlist.id }}' }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.detail || 'Failed to start scan.');
+            }
+            activeScanId = data.scan_id;
+            if (eventSource) {
+              eventSource.close();
+            }
+            eventSource = new EventSource(
+              `/api/basic-rank-checker/scans/${activeScanId}/events`
+            );
+            eventSource.onmessage = async (event) => {
+              const payload = JSON.parse(event.data);
+              if (payload.type === 'progress') {
+                setProgress(payload.step, payload.total, payload.message);
+                appendLog(payload.message);
+              }
+              if (payload.type === 'done') {
+                eventSource.close();
+                setProgress(payload.total || 1, payload.total || 1, 'Scan completed.');
+                await loadResults(activeScanId);
+                setStage(3, summarySection);
+                runButton.disabled = false;
+              }
+              if (payload.type === 'error') {
+                eventSource.close();
+                appendLog(payload.message || 'Scan failed.');
+                setProgress(0, 1, payload.message || 'Scan failed.');
+                setStage(1);
+                runButton.disabled = false;
+              }
+            };
+          } catch (error) {
+            setStage(1);
+            runButton.disabled = false;
+            setStatus(error.message || 'Failed to start scan.', 'status-error');
+          }
+        };
+
+        runButton?.addEventListener('click', () => {
+          openBasicScanStage2();
+          startScan();
+        });
+
+        basicScanStageController.openBasicScanStage1 = openBasicScanStage1;
+        basicScanStageController.openBasicScanStage2 = openBasicScanStage2;
+      };
+
+      setupBasicScan();
+    </script>
+  </body>
+</html>

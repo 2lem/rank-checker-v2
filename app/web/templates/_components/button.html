@@ -1,0 +1,22 @@
+{% set variant = button_variant|default(variant|default('primary')) %}
+{% set type = type|default('button') %}
+{% set extra_class = extra_class|default('') %}
+{% if href %}
+<a
+  class="btn btn-{{ variant }} {{ extra_class }}"
+  href="{{ href }}"
+  {% if target %}target="{{ target }}" rel="noopener noreferrer"{% endif %}
+  {% if data_target %}data-panel-target="{{ data_target }}"{% endif %}
+>
+  {{ label }}
+</a>
+{% else %}
+<button
+  class="btn btn-{{ variant }} {{ extra_class }}"
+  type="{{ type }}"
+  {% if data_target %}data-panel-target="{{ data_target }}"{% endif %}
+  {% if aria_controls %}aria-controls="{{ aria_controls }}"{% endif %}
+>
+  {{ label }}
+</button>
+{% endif %}

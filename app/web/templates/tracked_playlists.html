@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tracked Playlists</title>
+    <link rel="stylesheet" href="/static/ui.css" />
+    <link rel="stylesheet" href="/static/tracked.css" />
+  </head>
+  <body class="app-body">
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <h1>Tracked Playlists</h1>
+          <p class="page-subtitle">Monitor playlists and manage their tracking configuration.</p>
+        </div>
+        <div class="page-header-actions">
+          {% set label = 'Add New Playlist' %}
+          {% set button_variant = 'primary' %}
+          {% set type = 'button' %}
+          {% set aria_controls = 'add-playlist' %}
+          {% set data_target = 'add-playlist' %}
+          {% include "_components/button.html" %}
+        </div>
+      </header>
+
+      <section class="ui-card status-card">
+        <div class="status-card-header">
+          <h2>Status</h2>
+          <p class="status-card-subtitle">Use this space for feedback messages.</p>
+        </div>
+        <div id="playlist-status" class="status-area" role="status" aria-live="polite">
+          Ready to add a playlist.
+        </div>
+      </section>
+
+      <section class="ui-card form-card collapsible-card" id="add-playlist" data-collapsible="add-playlist">
+        <div class="section-header">
+          <h2>Add New Playlist</h2>
+          <p class="section-subtitle">Paste a Spotify playlist URL and optional targeting details.</p>
+        </div>
+        <form id="add-playlist-form" class="form-grid" data-form="add-playlist">
+          <label class="field">
+            <span class="field-label">Playlist URL</span>
+            <input
+              name="playlist_url"
+              type="url"
+              placeholder="https://open.spotify.com/playlist/..."
+              required
+              data-playlist-input
+            />
+          </label>
+          <label class="field">
+            <span class="field-label">Target Countries</span>
+            <div class="field-inline">
+              <select name="target_countries_select" class="market-select" data-country-select></select>
+              <button class="btn btn-secondary" type="button" data-country-add>Add</button>
+            </div>
+            <div class="pill-list market-pill-list" data-country-pills></div>
+            <div class="info-box" data-country-info hidden>
+              You have reached the maximum of 5 target countries.
+            </div>
+            <span class="field-help">Select up to 5 countries from Spotify markets.</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Target Keywords</span>
+            <div class="field-inline">
+              <input name="target_keywords_input" type="text" placeholder="e.g. lofi, focus, chill" data-keyword-input />
+              <button class="btn btn-secondary" type="button" data-keyword-add>Add</button>
+            </div>
+            <div class="pill-list" data-keyword-pills></div>
+            <div class="info-box" data-keyword-info hidden>
+              You have reached the maximum of 5 target keywords.
+            </div>
+            <span class="field-help">Add up to 5 keywords to scan for.</span>
+          </label>
+          <div class="warning-box">
+            Saved countries and keywords cannot be removed later. Please review before saving.
+          </div>
+          <div class="form-actions">
+            {% set label = 'Save Configuration' %}
+            {% set button_variant = 'primary' %}
+            {% set type = 'submit' %}
+            {% set extra_class = 'full-width' %}
+            {% include "_components/button.html" %}
+            {% set label = 'Cancel' %}
+            {% set button_variant = 'secondary' %}
+            {% set type = 'button' %}
+            {% set extra_class = 'full-width' %}
+            {% set data_target = 'add-playlist-cancel' %}
+            {% include "_components/button.html" %}
+          </div>
+        </form>
+      </section>
+
+      <section class="tracked-section">
+        <div class="section-header">
+          <h2>Tracked Playlists</h2>
+          <p class="section-subtitle">Click Manage to view details for a playlist.</p>
+        </div>
+        <div class="tracked-card-list">
+          {% if playlists %}
+            {% for playlist in playlists %}
+              {% set variant = 'list' %}
+              {% include "_components/tracked_card.html" %}
+            {% endfor %}
+          {% else %}
+            <div class="empty-state">
+              <h3>No tracked playlists yet</h3>
+              <p>Add one above to begin collecting results.</p>
+            </div>
+          {% endif %}
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById('add-playlist-form');
+      const statusArea = document.getElementById('playlist-status');
+      const addPanel = document.querySelector('[data-collapsible="add-playlist"]');
+      const addButton = document.querySelector('[data-panel-target="add-playlist"]');
+      const addCancelButton = document.querySelector('[data-panel-target="add-playlist-cancel"]');
+
+      const availableMarkets = {{ available_markets | tojson }};
+      const marketLabelMap = new Map(
+        availableMarkets.map((market) => [market.code.toUpperCase(), market.label])
+      );
+
+      const resolveMarketLabel = (code) => marketLabelMap.get((code || '').toUpperCase()) || code;
+      const formatTimestamp = (value) => {
+        if (!value) {
+          return '—';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return value;
+        }
+        return new Intl.DateTimeFormat('sv-SE', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        }).format(date);
+      };
+
+      const setStatus = (message, variant) => {
+        statusArea.textContent = message;
+        statusArea.classList.remove('status-success', 'status-error', 'status-loading');
+        if (variant) {
+          statusArea.classList.add(variant);
+        }
+      };
+
+      const createChip = ({ label, removable, locked, onRemove }) => {
+        const chip = document.createElement('span');
+        chip.className = `chip ${locked ? 'chip-locked' : ''}`;
+        const text = document.createElement('span');
+        text.className = 'chip-label';
+        text.textContent = label;
+        chip.appendChild(text);
+        if (removable) {
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'chip-remove';
+          remove.textContent = '×';
+          remove.addEventListener('click', onRemove);
+          chip.appendChild(remove);
+        }
+        return chip;
+      };
+
+      const createSelectionManager = ({
+        listElement,
+        infoElement,
+        max,
+        lockedValues = [],
+        normalize,
+        compare,
+        getLabel,
+      }) => {
+        let values = [...lockedValues];
+
+        const render = () => {
+          listElement.innerHTML = '';
+          values.forEach((value) => {
+            const isLocked = lockedValues.some((locked) => compare(locked, value));
+            const removable = !isLocked;
+            listElement.appendChild(
+              createChip({
+                label: getLabel ? getLabel(value) : value,
+                locked: isLocked,
+                removable,
+                onRemove: () => {
+                  if (isLocked) {
+                    return;
+                  }
+                  values = values.filter((entry) => !compare(entry, value));
+                  render();
+                },
+              })
+            );
+          });
+          infoElement.hidden = values.length < max;
+        };
+
+        const addValue = (raw) => {
+          const value = normalize(raw);
+          if (!value) {
+            return false;
+          }
+          if (values.some((entry) => compare(entry, value))) {
+            return false;
+          }
+          if (values.length >= max) {
+            infoElement.hidden = false;
+            return false;
+          }
+          values = [...values, value];
+          render();
+          return true;
+        };
+
+        const setValues = (nextValues) => {
+          values = [...nextValues];
+          render();
+        };
+
+        const getValues = () => [...values];
+
+        const reset = () => {
+          values = [...lockedValues];
+          render();
+        };
+
+        render();
+
+        return {
+          addValue,
+          getValues,
+          reset,
+          setValues,
+        };
+      };
+
+      const setupAddPanel = () => {
+        if (!addPanel || !form) {
+          return;
+        }
+        const playlistInput = form.querySelector('[data-playlist-input]');
+        const countrySelect = form.querySelector('[data-country-select]');
+        const countryAdd = form.querySelector('[data-country-add]');
+        const countryPills = form.querySelector('[data-country-pills]');
+        const countryInfo = form.querySelector('[data-country-info]');
+        const keywordInput = form.querySelector('[data-keyword-input]');
+        const keywordAdd = form.querySelector('[data-keyword-add]');
+        const keywordPills = form.querySelector('[data-keyword-pills]');
+        const keywordInfo = form.querySelector('[data-keyword-info]');
+
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Select a country';
+        defaultOption.disabled = true;
+        defaultOption.selected = true;
+        countrySelect.appendChild(defaultOption);
+
+        availableMarkets.forEach((market) => {
+          const option = document.createElement('option');
+          option.value = market.code;
+          option.textContent = market.label;
+          countrySelect.appendChild(option);
+        });
+
+        const countryManager = createSelectionManager({
+          listElement: countryPills,
+          infoElement: countryInfo,
+          max: 5,
+          lockedValues: [],
+          normalize: (value) => (value || '').trim().toUpperCase(),
+          compare: (a, b) => a.toUpperCase() === b.toUpperCase(),
+          getLabel: resolveMarketLabel,
+        });
+
+        const keywordManager = createSelectionManager({
+          listElement: keywordPills,
+          infoElement: keywordInfo,
+          max: 5,
+          lockedValues: [],
+          normalize: (value) => (value || '').trim(),
+          compare: (a, b) => a.toLowerCase() === b.toLowerCase(),
+        });
+
+        countryAdd?.addEventListener('click', () => {
+          if (countryManager.addValue(countrySelect.value)) {
+            countryInfo.hidden = countryManager.getValues().length < 5;
+          }
+        });
+
+        keywordAdd?.addEventListener('click', () => {
+          if (keywordManager.addValue(keywordInput.value)) {
+            keywordInput.value = '';
+          }
+        });
+
+        keywordInput?.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            keywordAdd.click();
+          }
+        });
+
+        playlistInput?.addEventListener('input', (event) => {
+          const input = event.target;
+          if (input.value.includes('?')) {
+            input.value = input.value.split('?')[0];
+          }
+        });
+
+        form.addEventListener('reset', () => {
+          countryManager.reset();
+          keywordManager.reset();
+        });
+
+        addCancelButton?.addEventListener('click', () => {
+          form.reset();
+          addPanel.classList.remove('is-open');
+        });
+
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          const payload = {
+            playlist_url: playlistInput.value,
+            target_countries: countryManager.getValues(),
+            target_keywords: keywordManager.getValues(),
+          };
+
+          setStatus('Adding playlist...', 'status-loading');
+
+          try {
+            const response = await fetch('/api/playlists', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+              const data = await response.json().catch(() => ({}));
+              const detail = data.detail || 'Unable to add playlist.';
+              const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
+              setStatus(message, 'status-error');
+              return;
+            }
+
+            setStatus('Playlist added successfully. Reloading...', 'status-success');
+            addPanel.classList.remove('is-open');
+            window.location.reload();
+          } catch (error) {
+            setStatus('Network error while adding playlist.', 'status-error');
+          }
+        });
+      };
+
+      let currentlyOpenId = null;
+      let preOpenScrollY = null;
+
+      const clampScrollTarget = (target) => {
+        const documentHeight = Math.max(
+          document.body.scrollHeight,
+          document.documentElement.scrollHeight
+        );
+        const maxScroll = Math.max(0, documentHeight - window.innerHeight);
+        return Math.min(Math.max(0, target), maxScroll);
+      };
+
+      const scrollToCentered = (element) => {
+        if (!element) {
+          return;
+        }
+        const rect = element.getBoundingClientRect();
+        const target =
+          window.scrollY + rect.top - (window.innerHeight / 2 - rect.height / 2);
+        window.scrollTo({ top: clampScrollTarget(target), behavior: 'smooth' });
+      };
+
+      const restorePreOpenScroll = () => {
+        if (preOpenScrollY === null) {
+          return;
+        }
+        window.scrollTo({ top: clampScrollTarget(preOpenScrollY), behavior: 'smooth' });
+        preOpenScrollY = null;
+      };
+
+      const setupManagePanels = () => {
+        const cards = document.querySelectorAll('[data-tracked-card]');
+        cards.forEach((card) => {
+          const manageToggle = card.querySelector('[data-manage-toggle]');
+          const managePanel = card.querySelector('[data-manage-panel]');
+          const editToggle = card.querySelector('[data-edit-toggle]');
+          const editPanel = card.querySelector('[data-edit-panel]');
+          const manageClose = card.querySelector('[data-manage-close]');
+          const editForm = card.querySelector('[data-edit-form]');
+          const editCancel = card.querySelector('[data-edit-cancel]');
+          const editCountrySelect = card.querySelector('[data-edit-country-select]');
+          const editCountryAdd = card.querySelector('[data-edit-country-add]');
+          const editCountryPills = card.querySelector('[data-edit-country-pills]');
+          const editCountryInfo = card.querySelector('[data-edit-country-info]');
+          const editKeywordInput = card.querySelector('[data-edit-keyword-input]');
+          const editKeywordAdd = card.querySelector('[data-edit-keyword-add]');
+          const editKeywordPills = card.querySelector('[data-edit-keyword-pills]');
+          const editKeywordInfo = card.querySelector('[data-edit-keyword-info]');
+          const refreshButton = card.querySelector('[data-refresh-stats]');
+          const playlistId = card.dataset.playlistId;
+
+          const existingCountries = JSON.parse(card.dataset.targetCountries || '[]');
+          const existingKeywords = JSON.parse(card.dataset.targetKeywords || '[]');
+
+          const defaultEditOption = document.createElement('option');
+          defaultEditOption.value = '';
+          defaultEditOption.textContent = 'Select a country';
+          defaultEditOption.disabled = true;
+          defaultEditOption.selected = true;
+          editCountrySelect.appendChild(defaultEditOption);
+
+          availableMarkets.forEach((market) => {
+            const option = document.createElement('option');
+            option.value = market.code;
+            option.textContent = market.label;
+            editCountrySelect.appendChild(option);
+          });
+
+          const editCountryManager = createSelectionManager({
+            listElement: editCountryPills,
+            infoElement: editCountryInfo,
+            max: 5,
+            lockedValues: existingCountries.map((value) => value.toUpperCase()),
+            normalize: (value) => (value || '').trim().toUpperCase(),
+            compare: (a, b) => a.toUpperCase() === b.toUpperCase(),
+            getLabel: resolveMarketLabel,
+          });
+
+          const editKeywordManager = createSelectionManager({
+            listElement: editKeywordPills,
+            infoElement: editKeywordInfo,
+            max: 5,
+            lockedValues: existingKeywords,
+            normalize: (value) => (value || '').trim(),
+            compare: (a, b) => a.toLowerCase() === b.toLowerCase(),
+          });
+
+          const closePanels = ({ restoreScroll }) => {
+            managePanel.classList.remove('is-open');
+            editPanel.classList.remove('is-open');
+            manageToggle?.setAttribute('aria-expanded', 'false');
+            if (restoreScroll) {
+              restorePreOpenScroll();
+              currentlyOpenId = null;
+            }
+          };
+
+          const openPanels = () => {
+            if (currentlyOpenId && currentlyOpenId !== playlistId) {
+              const openCard = document.querySelector(
+                `[data-tracked-card][data-playlist-id="${currentlyOpenId}"]`
+              );
+              if (openCard) {
+                const openManagePanel = openCard.querySelector('[data-manage-panel]');
+                const openEditPanel = openCard.querySelector('[data-edit-panel]');
+                const openManageToggle = openCard.querySelector('[data-manage-toggle]');
+                openManagePanel?.classList.remove('is-open');
+                openEditPanel?.classList.remove('is-open');
+                openManageToggle?.setAttribute('aria-expanded', 'false');
+              }
+            }
+            if (currentlyOpenId === null) {
+              preOpenScrollY = window.scrollY;
+            }
+            currentlyOpenId = playlistId;
+            managePanel.classList.add('is-open');
+            manageToggle?.setAttribute('aria-expanded', 'true');
+            scrollToCentered(managePanel);
+          };
+
+          manageToggle?.addEventListener('click', () => {
+            const isOpen = managePanel.classList.contains('is-open');
+            if (isOpen) {
+              closePanels({ restoreScroll: true });
+            } else {
+              openPanels();
+            }
+          });
+
+          manageClose?.addEventListener('click', () => {
+            closePanels({ restoreScroll: true });
+          });
+
+          editToggle?.addEventListener('click', () => {
+            const isOpen = editPanel.classList.toggle('is-open');
+            if (isOpen) {
+              scrollToCentered(editPanel);
+            }
+          });
+
+          editCountryAdd?.addEventListener('click', () => {
+            editCountryManager.addValue(editCountrySelect.value);
+          });
+
+          editKeywordAdd?.addEventListener('click', () => {
+            if (editKeywordManager.addValue(editKeywordInput.value)) {
+              editKeywordInput.value = '';
+            }
+          });
+
+          editKeywordInput?.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              editKeywordAdd.click();
+            }
+          });
+
+          editCancel?.addEventListener('click', () => {
+            editCountryManager.setValues(existingCountries.map((value) => value.toUpperCase()));
+            editKeywordManager.setValues(existingKeywords);
+            editPanel.classList.remove('is-open');
+          });
+
+          editForm?.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const targetCountries = editCountryManager.getValues();
+            const targetKeywords = editKeywordManager.getValues();
+
+            setStatus('Saving configuration...', 'status-loading');
+
+            try {
+              const response = await fetch(`/api/playlists/${playlistId}/targets`, {
+                method: 'PATCH',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  target_countries: targetCountries,
+                  target_keywords: targetKeywords,
+                }),
+              });
+
+              if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                const detail = data.detail || 'Unable to update playlist.';
+                const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
+                setStatus(message, 'status-error');
+                return;
+              }
+
+              setStatus('Configuration saved. Reloading...', 'status-success');
+              editPanel.classList.remove('is-open');
+              window.location.reload();
+            } catch (error) {
+              setStatus('Network error while updating playlist.', 'status-error');
+            }
+          });
+
+          refreshButton?.addEventListener('click', async () => {
+            refreshButton.disabled = true;
+            setStatus('Fetching data from Spotify… please wait', 'status-loading');
+
+            try {
+              const response = await fetch(`/api/playlists/${playlistId}/refresh-stats`, {
+                method: 'POST',
+              });
+
+              const data = await response.json().catch(() => ({}));
+
+              if (!response.ok) {
+                const detail = data.detail || 'Unable to refresh playlist metadata.';
+                const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
+                setStatus(message, 'status-error');
+                refreshButton.disabled = false;
+                return;
+              }
+
+              const refreshedAt = data.refreshed_at ? new Date(data.refreshed_at) : null;
+              const timeLabel = refreshedAt ? refreshedAt.toLocaleString() : 'just now';
+              setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
+              window.location.reload();
+            } catch (error) {
+              setStatus('Network error while refreshing playlist.', 'status-error');
+              refreshButton.disabled = false;
+            }
+          });
+        });
+      };
+
+      addButton?.addEventListener('click', () => {
+        if (!addPanel) {
+          return;
+        }
+        const isOpen = addPanel.classList.toggle('is-open');
+        if (isOpen) {
+          scrollToCentered(addPanel);
+        }
+      });
+
+      setupAddPanel();
+      setupManagePanels();
+    </script>
+  </body>
+</html>
