@@ -208,6 +208,12 @@ body {
   color: #111111;
 }
 
+.btn-outline {
+  background: transparent;
+  border-color: #111111;
+  color: #111111;
+}
+
 .btn-ghost {
   background: transparent;
   border-color: transparent;

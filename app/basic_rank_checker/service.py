@@ -47,16 +47,29 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
         return None
 
 
-def create_basic_scan(db: Session, tracked_playlist: TrackedPlaylist) -> BasicScan:
-    is_tracked_playlist = tracked_playlist.id is not None
+def create_basic_scan(
+    db: Session,
+    *,
+    tracked_playlist: TrackedPlaylist | None = None,
+    playlist_id: str | None = None,
+    scanned_countries: list[str] | None = None,
+    scanned_keywords: list[str] | None = None,
+    is_tracked_playlist: bool = False,
+) -> BasicScan:
+    playlist_identifier = playlist_id or (tracked_playlist.playlist_id if tracked_playlist else None)
     scan = BasicScan(
-        account_id=tracked_playlist.account_id,
-        tracked_playlist_id=tracked_playlist.id,
-        is_tracked_playlist=is_tracked_playlist,
+        account_id=tracked_playlist.account_id if tracked_playlist else None,
+        playlist_id=playlist_identifier,
+        tracked_playlist_id=tracked_playlist.id if tracked_playlist else None,
+        is_tracked_playlist=is_tracked_playlist or bool(tracked_playlist),
         started_at=_now_utc(),
         status="running",
-        scanned_countries=tracked_playlist.target_countries or [],
-        scanned_keywords=tracked_playlist.target_keywords or [],
+        scanned_countries=scanned_countries
+        if scanned_countries is not None
+        else (tracked_playlist.target_countries if tracked_playlist else []),
+        scanned_keywords=scanned_keywords
+        if scanned_keywords is not None
+        else (tracked_playlist.target_keywords if tracked_playlist else []),
     )
     db.add(scan)
     db.commit()
@@ -77,6 +90,20 @@ def _resolve_follower_snapshot(tracked_playlist: TrackedPlaylist, token: str) ->
         )
     except requests.RequestException as exc:
         logger.warning("Unable to fetch playlist followers for %s: %s", tracked_playlist.playlist_id, exc)
+        return None
+    return (detail.get("followers") or {}).get("total")
+
+
+def _resolve_follower_snapshot_by_playlist_id(playlist_id: str, token: str) -> int | None:
+    playlist_api_url = PLAYLIST_URL.format(playlist_id)
+    try:
+        detail = spotify_get(
+            playlist_api_url,
+            token,
+            params={"fields": "followers.total"},
+        )
+    except requests.RequestException as exc:
+        logger.warning("Unable to fetch playlist followers for %s: %s", playlist_id, exc)
         return None
     return (detail.get("followers") or {}).get("total")
 
@@ -103,22 +130,26 @@ def run_basic_scan(scan_id: str) -> None:
         scan = db.get(BasicScan, scan_id)
         if scan is None:
             return
-        tracked_playlist = db.get(TrackedPlaylist, scan.tracked_playlist_id)
-        if tracked_playlist is None:
+        tracked_playlist = db.get(TrackedPlaylist, scan.tracked_playlist_id) if scan.tracked_playlist_id else None
+        target_playlist_id = scan.playlist_id or (tracked_playlist.playlist_id if tracked_playlist else None)
+        if target_playlist_id is None:
             scan.status = "failed"
-            scan.error_message = "Tracked playlist not found."
+            scan.error_message = "Target playlist not found."
             scan.finished_at = _now_utc()
             db.add(scan)
             db.commit()
             scan_event_manager.publish(scan_id, {"type": "error", "message": scan.error_message})
             return
 
-        countries = scan.scanned_countries or []
-        keywords = scan.scanned_keywords or []
+        countries = scan.scanned_countries or (tracked_playlist.target_countries if tracked_playlist else []) or []
+        keywords = scan.scanned_keywords or (tracked_playlist.target_keywords if tracked_playlist else []) or []
         total_steps = max(len(countries) * len(keywords), 1)
 
         token = get_access_token()
-        scan.follower_snapshot = _resolve_follower_snapshot(tracked_playlist, token)
+        if tracked_playlist:
+            scan.follower_snapshot = _resolve_follower_snapshot(tracked_playlist, token)
+        else:
+            scan.follower_snapshot = _resolve_follower_snapshot_by_playlist_id(target_playlist_id, token)
         db.add(scan)
         db.commit()
 
@@ -191,8 +222,8 @@ def run_basic_scan(scan_id: str) -> None:
                         "spotify"
                     )
 
-                    is_tracked = playlist_id == tracked_playlist.playlist_id
-                    if is_tracked and tracked_rank is None:
+                    is_target_playlist = playlist_id == target_playlist_id
+                    if is_target_playlist and tracked_rank is None:
                         tracked_rank = index
                     results.append(
                         BasicScanResult(
@@ -206,7 +237,7 @@ def run_basic_scan(scan_id: str) -> None:
                             playlist_last_added_track_at=playlist_last_added_track_at,
                             playlist_description=playlist_description,
                             playlist_url=playlist_url,
-                            is_tracked_playlist=is_tracked,
+                            is_tracked_playlist=is_target_playlist,
                         )
                     )
 
@@ -252,7 +283,7 @@ def fetch_scan_details(db: Session, scan_id: str) -> dict | None:
     if scan is None:
         return None
 
-    tracked_playlist = db.get(TrackedPlaylist, scan.tracked_playlist_id)
+    tracked_playlist = db.get(TrackedPlaylist, scan.tracked_playlist_id) if scan.tracked_playlist_id else None
     queries = (
         db.execute(
             select(BasicScanQuery).where(BasicScanQuery.basic_scan_id == scan.id).order_by(
@@ -318,6 +349,7 @@ def fetch_scan_details(db: Session, scan_id: str) -> dict | None:
     return {
         "scan_id": scan.id,
         "tracked_playlist_id": scan.tracked_playlist_id,
+        "playlist_id": scan.playlist_id,
         "status": scan.status,
         "started_at": scan.started_at,
         "finished_at": scan.finished_at,

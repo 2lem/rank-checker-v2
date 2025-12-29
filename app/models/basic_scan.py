@@ -17,10 +17,11 @@ class BasicScan(Base):
     account_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True
     )
-    tracked_playlist_id: Mapped[uuid.UUID] = mapped_column(
+    playlist_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    tracked_playlist_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("tracked_playlists.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
