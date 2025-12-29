@@ -1,10 +1,11 @@
 import logging
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 import requests
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
 
+from app.core.db import SessionLocal
 from app.core.spotify import PLAYLIST_URL, get_access_token, get_latest_track_added_at, spotify_get
 from app.repositories.tracked_playlists import get_tracked_playlist_by_id
 
@@ -93,9 +94,22 @@ def _resolve_playlist_last_updated_at(
     return parse_spotify_timestamp(last_track_added_at)
 
 
-def refresh_playlist_metadata(db: Session, tracked_playlist_id: str):
+@contextmanager
+def _session_scope(label: str):
+    if SessionLocal is None:
+        raise RuntimeError("DATABASE_URL not configured")
+    db = SessionLocal()
+    logger.info("TEMP HOTFIX SessionLocal open label=%s session_id=%s", label, id(db))
     try:
-        tracked = get_tracked_playlist_by_id(db, tracked_playlist_id)
+        yield db
+    finally:
+        logger.info("TEMP HOTFIX SessionLocal close label=%s session_id=%s", label, id(db))
+        db.close()
+
+
+def refresh_playlist_metadata(tracked_playlist_id: str):
+    with _session_scope("refresh_playlist_metadata_snapshot") as session:
+        tracked = get_tracked_playlist_by_id(session, tracked_playlist_id)
         if not tracked:
             raise HTTPException(status_code=404, detail="Tracked playlist not found.")
 
@@ -105,12 +119,6 @@ def refresh_playlist_metadata(db: Session, tracked_playlist_id: str):
             "playlist_url": tracked.playlist_url,
             "target_countries": list(tracked.target_countries or []),
         }
-    except Exception:
-        db.rollback()
-        raise
-
-    # End any open transaction before network calls to avoid "idle in transaction" hangs.
-    db.rollback()
 
     token = get_access_token()
     playlist_api_url = PLAYLIST_URL.format(tracked_snapshot["playlist_id"])
@@ -179,9 +187,8 @@ def refresh_playlist_metadata(db: Session, tracked_playlist_id: str):
     refreshed_at = datetime.now(timezone.utc)
     playlist_url = (detail.get("external_urls") or {}).get("spotify") or tracked_snapshot["playlist_url"]
 
-    try:
-        # Avoid creating nested sessions inside request handlers; reuse the provided session.
-        tracked = get_tracked_playlist_by_id(db, tracked_playlist_id)
+    with _session_scope("refresh_playlist_metadata_update") as session:
+        tracked = get_tracked_playlist_by_id(session, tracked_playlist_id)
         if not tracked:
             raise HTTPException(status_code=404, detail="Tracked playlist not found.")
 
@@ -196,10 +203,7 @@ def refresh_playlist_metadata(db: Session, tracked_playlist_id: str):
         tracked.playlist_last_updated_at = playlist_last_updated_at
         tracked.last_meta_refresh_at = refreshed_at
 
-        db.add(tracked)
-        db.commit()
-        db.refresh(tracked)
+        session.add(tracked)
+        session.commit()
+        session.refresh(tracked)
         return tracked
-    except Exception:
-        db.rollback()
-        raise
