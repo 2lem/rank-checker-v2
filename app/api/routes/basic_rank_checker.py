@@ -166,7 +166,10 @@ def export_summary_csv(
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found.")
 
-    tracked = get_tracked_playlist_by_id(db, str(scan.tracked_playlist_id))
+    tracked = None
+    if scan.tracked_playlist_id is not None:
+        tracked = get_tracked_playlist_by_id(db, str(scan.tracked_playlist_id))
+    playlist_name = tracked.name if tracked else scan.manual_playlist_name
     tz = _resolve_timezone(timezone_name)
     rows = []
     queries = (
@@ -185,7 +188,7 @@ def export_summary_csv(
                 query.keyword,
                 query.country_code,
                 query.tracked_rank,
-                tracked.name if tracked else None,
+                playlist_name,
                 scan.follower_snapshot,
             ]
         )
