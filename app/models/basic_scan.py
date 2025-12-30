@@ -17,10 +17,10 @@ class BasicScan(Base):
     account_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True
     )
-    tracked_playlist_id: Mapped[uuid.UUID] = mapped_column(
+    tracked_playlist_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("tracked_playlists.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -41,6 +41,23 @@ class BasicScan(Base):
     follower_snapshot: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_tracked_playlist: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    manual_playlist_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manual_playlist_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    manual_playlist_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    manual_playlist_owner: Mapped[str | None] = mapped_column(String, nullable=True)
+    manual_playlist_image_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    manual_target_countries: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    manual_target_keywords: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
