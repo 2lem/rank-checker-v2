@@ -411,7 +411,23 @@
           const editKeywordPills = card.querySelector('[data-edit-keyword-pills]');
           const editKeywordInfo = card.querySelector('[data-edit-keyword-info]');
           const refreshButton = card.querySelector('[data-refresh-stats]');
+          const manualScanButton = card.querySelector('[data-manual-scan]');
+          const manualScanStatus = card.querySelector('[data-manual-status]');
           const playlistId = card.dataset.playlistId;
+          let manualScanEventSource = null;
+
+          const setManualStatus = (message) => {
+            if (manualScanStatus) {
+              manualScanStatus.textContent = message;
+            }
+          };
+
+          const closeManualEventSource = () => {
+            if (manualScanEventSource) {
+              manualScanEventSource.close();
+              manualScanEventSource = null;
+            }
+          };
 
           const existingCountries = JSON.parse(card.dataset.targetCountries || '[]');
           const existingKeywords = JSON.parse(card.dataset.targetKeywords || '[]');
@@ -557,6 +573,69 @@
               window.location.reload();
             } catch (error) {
               setStatus('Network error while updating playlist.', 'status-error');
+            }
+          });
+
+          manualScanButton?.addEventListener('click', async () => {
+            manualScanButton.disabled = true;
+            setManualStatus('Starting scan…');
+            closeManualEventSource();
+
+            const handleComplete = (scanId) => {
+              if (!manualScanStatus) {
+                return;
+              }
+              manualScanStatus.innerHTML = '';
+              manualScanStatus.append('Done — ');
+              const link = document.createElement('a');
+              link.href = `/api/basic-rank-checker/scans/${scanId}`;
+              link.textContent = 'View scan';
+              manualScanStatus.append(link);
+            };
+
+            try {
+              const response = await fetch('/api/scans/manual', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tracked_playlist_id: playlistId }),
+              });
+              const data = await response.json().catch(() => ({}));
+
+              if (!response.ok || !data.scan_id) {
+                const detail = data.detail || 'Unable to start scan.';
+                const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
+                setManualStatus(message);
+                manualScanButton.disabled = false;
+                return;
+              }
+
+              const scanId = data.scan_id;
+              setManualStatus('Scan started…');
+              manualScanEventSource = new EventSource(`/api/basic-rank-checker/scans/${scanId}/events`);
+              manualScanEventSource.onmessage = (event) => {
+                const payload = JSON.parse(event.data || '{}');
+                if (payload.type === 'progress') {
+                  setManualStatus(payload.message || 'Scanning…');
+                }
+                if (payload.type === 'done') {
+                  closeManualEventSource();
+                  handleComplete(scanId);
+                  manualScanButton.disabled = false;
+                }
+                if (payload.type === 'error') {
+                  closeManualEventSource();
+                  setManualStatus(payload.message || 'Scan failed.');
+                  manualScanButton.disabled = false;
+                }
+              };
+              manualScanEventSource.onerror = () => {
+                closeManualEventSource();
+                setManualStatus('Connection lost.');
+                manualScanButton.disabled = false;
+              };
+            } catch (error) {
+              setManualStatus(error.message || 'Network error while starting scan.');
+              manualScanButton.disabled = false;
             }
           });
 

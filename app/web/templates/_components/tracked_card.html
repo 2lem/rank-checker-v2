@@ -81,13 +81,15 @@
     </div>
   </div>
   {% if variant != 'detail' %}
-    <div class="tracked-manage-panel" data-manage-panel>
+      <div class="tracked-manage-panel" data-manage-panel>
       <div class="tracked-manage-actions">
         <button class="btn btn-primary" type="button" data-edit-toggle>Edit Configuration</button>
         <button class="btn btn-secondary" type="button" data-refresh-stats>Refresh Stats</button>
+        <button class="btn btn-secondary" type="button" data-manual-scan>Manual Scan</button>
         <button class="btn btn-secondary" type="button" disabled>Delete Playlist</button>
         <button class="btn btn-ghost tracked-manage-close" type="button" data-manage-close>Close</button>
       </div>
+      <div class="tracked-manage-status" data-manual-status aria-live="polite"></div>
       <div class="tracked-edit-panel" data-edit-panel>
         <div class="section-header">
           <h3>Edit Configuration</h3>
