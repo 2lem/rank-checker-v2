@@ -374,6 +374,17 @@
   gap: 12px;
 }
 
+.tracked-manage-actions-group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.tracked-manage-actions-spacer {
+  display: none;
+}
+
 .tracked-manage-actions .btn {
   width: 100%;
 }
@@ -384,11 +395,25 @@
   cursor: not-allowed;
 }
 
+.pill-secondary.is-active {
+  filter: brightness(0.9);
+}
+
 @media (min-width: 768px) {
   .tracked-manage-actions {
     flex-direction: row;
     align-items: center;
     flex-wrap: wrap;
+  }
+
+  .tracked-manage-actions-group {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .tracked-manage-actions-spacer {
+    display: block;
+    flex: 1 1 auto;
   }
 
   .tracked-manage-actions .btn {

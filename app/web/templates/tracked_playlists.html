@@ -420,6 +420,7 @@
         cards.forEach((card) => {
           const manageToggle = card.querySelector('[data-manage-toggle]');
           const managePanel = card.querySelector('[data-manage-panel]');
+          const manageClose = card.querySelector('[data-manage-close]');
           const editToggle = card.querySelector('[data-edit-toggle]');
           const editPanel = card.querySelector('[data-edit-panel]');
           const editForm = card.querySelector('[data-edit-form]');
@@ -474,6 +475,7 @@
             managePanel.classList.remove('is-open');
             editPanel.classList.remove('is-open');
             manageToggle?.setAttribute('aria-expanded', 'false');
+            manageToggle?.classList.remove('is-active');
             if (restoreScroll) {
               restorePreOpenScroll();
               currentlyOpenId = null;
@@ -492,6 +494,7 @@
                 openManagePanel?.classList.remove('is-open');
                 openEditPanel?.classList.remove('is-open');
                 openManageToggle?.setAttribute('aria-expanded', 'false');
+                openManageToggle?.classList.remove('is-active');
               }
             }
             if (currentlyOpenId === null) {
@@ -500,6 +503,7 @@
             currentlyOpenId = playlistId;
             managePanel.classList.add('is-open');
             manageToggle?.setAttribute('aria-expanded', 'true');
+            manageToggle?.classList.add('is-active');
             scrollToCentered(managePanel);
           };
 
@@ -510,6 +514,10 @@
             } else {
               openPanels();
             }
+          });
+
+          manageClose?.addEventListener('click', () => {
+            closePanels({ restoreScroll: true });
           });
 
           editToggle?.addEventListener('click', () => {
