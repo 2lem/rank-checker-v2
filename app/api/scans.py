@@ -1,14 +1,25 @@
-from fastapi import APIRouter, Depends, HTTPException
+import threading
 
-from app.api.routes.basic_rank_checker import start_basic_scan
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app.basic_rank_checker.events import scan_event_manager
+from app.basic_rank_checker.manual_service import create_manual_scan, run_manual_scan
+from app.core.db import get_db
+from app.schemas.manual_scan import ManualScanCreate
 
 router = APIRouter(tags=["scans"])
 
 
 @router.post("/manual")
-def manual_scan(start_response: dict = Depends(start_basic_scan)):
-    scan_id = (start_response or {}).get("scan_id")
-    if not scan_id:
-        raise HTTPException(status_code=500, detail="Failed to start manual scan.")
-
-    return {"ok": True, "scan_id": scan_id}
+def manual_scan(payload: ManualScanCreate, db: Session = Depends(get_db)):
+    scan = create_manual_scan(
+        db,
+        playlist_url=payload.playlist_url,
+        target_keywords=payload.target_keywords,
+        target_countries=payload.target_countries,
+    )
+    scan_event_manager.create_queue(str(scan.id))
+    thread = threading.Thread(target=run_manual_scan, args=(str(scan.id),), daemon=True)
+    thread.start()
+    return {"ok": True, "scan_id": str(scan.id)}
