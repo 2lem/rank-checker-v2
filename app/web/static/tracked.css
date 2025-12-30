@@ -453,7 +453,7 @@
 }
 
 .manual-scan-section.is-open {
-  max-height: 320px;
+  max-height: 1200px;
   opacity: 1;
   margin-top: 16px;
 }
@@ -499,12 +499,24 @@
 }
 
 .run-scan-controls {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 12px;
   padding: 12px;
+}
+
+.manual-scan-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.manual-scan-actions .btn {
+  width: 100%;
+}
+
+.manual-scan-actions-spacer {
+  display: none;
 }
 
 .run-scan-button {
@@ -517,6 +529,22 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+@media (min-width: 768px) {
+  .manual-scan-actions {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .manual-scan-actions .btn {
+    width: auto;
+  }
+
+  .manual-scan-actions-spacer {
+    display: block;
+    flex: 1 1 auto;
+  }
 }
 
 .basic-scan-config.compact {

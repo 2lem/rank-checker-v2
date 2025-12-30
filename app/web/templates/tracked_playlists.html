@@ -122,7 +122,6 @@
         </div>
       </section>
 
-      <div id="manual-scan-anchor" aria-hidden="true"></div>
       <section class="ui-card manual-scan-section" id="manual-scan-section" aria-hidden="true">
         <div class="manual-scan-panel">
           <div class="panel-header">
@@ -145,7 +144,11 @@
                   </div>
                 </div>
                 <div class="run-scan-controls" id="manual-run-scan-controls" data-manual-scan-run-controls>
-                  <button class="btn btn-primary" type="button" data-manual-scan-run>Run Manual Scan</button>
+                  <div class="manual-scan-actions">
+                    <button class="btn btn-primary" type="button" data-manual-scan-run>Run Manual Scan</button>
+                    <span class="manual-scan-actions-spacer" aria-hidden="true"></span>
+                    <button class="btn btn-secondary" type="button" data-manual-scan-close>Close</button>
+                  </div>
                 </div>
               </section>
               <section
@@ -196,8 +199,8 @@
       const addCancelButton = document.querySelector('[data-panel-target="add-playlist-cancel"]');
       const manualScanToggle = document.getElementById('manual-scan-toggle');
       const manualScanSection = document.getElementById('manual-scan-section');
-      const manualScanAnchor = document.getElementById('manual-scan-anchor');
       const playlistControls = document.getElementById('playlist-controls');
+      const manualScanCloseButton = manualScanSection?.querySelector('[data-manual-scan-close]');
 
       const availableMarkets = {{ available_markets | tojson }};
       const marketLabelMap = new Map(
@@ -658,17 +661,37 @@
           return;
         }
 
+        const openManualScan = () => {
+          if (manualScanSection.classList.contains('is-open')) {
+            return;
+          }
+          manualScanSection.classList.add('is-open');
+          manualScanToggle.classList.add('is-active');
+          manualScanToggle.setAttribute('aria-expanded', 'true');
+          manualScanSection.setAttribute('aria-hidden', 'false');
+          manualScanSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+
+        const closeManualScan = () => {
+          if (!manualScanSection.classList.contains('is-open')) {
+            return;
+          }
+          manualScanSection.classList.remove('is-open');
+          manualScanToggle.classList.remove('is-active');
+          manualScanToggle.setAttribute('aria-expanded', 'false');
+          manualScanSection.setAttribute('aria-hidden', 'true');
+          playlistControls?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+
         manualScanToggle.addEventListener('click', () => {
-          const isOpen = manualScanSection.classList.toggle('is-open');
-          manualScanToggle.classList.toggle('is-active', isOpen);
-          manualScanToggle.setAttribute('aria-expanded', String(isOpen));
-          manualScanSection.setAttribute('aria-hidden', String(!isOpen));
-          if (isOpen) {
-            manualScanAnchor?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          if (manualScanSection.classList.contains('is-open')) {
+            closeManualScan();
           } else {
-            playlistControls?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            openManualScan();
           }
         });
+
+        manualScanCloseButton?.addEventListener('click', closeManualScan);
       };
 
       setupAddPanel();
