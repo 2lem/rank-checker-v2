@@ -47,21 +47,46 @@
         <div class="manual-scan-panel">
           <div class="panel-header">
             <h2>Manual Scan Panel</h2>
-            <p>Run a manual scan using stored targets.</p>
+            <p>Run a manual scan using a custom playlist and targets.</p>
           </div>
           <div class="panel-body">
             <div class="basic-scan" data-manual-scan>
               <section class="scan-parameters" id="manual-scan-parameters" data-manual-scan-parameters>
+                <label class="field">
+                  <span class="field-label">Playlist URL</span>
+                  <input
+                    name="manual_playlist_url"
+                    type="url"
+                    placeholder="https://open.spotify.com/playlist/..."
+                    required
+                    data-manual-scan-playlist
+                  />
+                </label>
                 <div class="scan-config-row">
                   <span class="scan-config-label">Countries</span>
-                  <div class="pill-list" data-manual-scan-countries>
-                    <span class="scan-config-empty">No target countries</span>
+                  <div class="field-inline">
+                    <select class="market-select" data-manual-scan-country-select></select>
+                    <button class="btn btn-secondary" type="button" data-manual-scan-country-add>Add</button>
+                  </div>
+                  <div class="pill-list" data-manual-scan-country-pills></div>
+                  <div class="info-box" data-manual-scan-country-info hidden>
+                    You have reached the maximum of 10 target countries.
                   </div>
                 </div>
                 <div class="scan-config-row">
                   <span class="scan-config-label">Keywords</span>
-                  <div class="pill-list" data-manual-scan-keywords>
-                    <span class="scan-config-empty">No target keywords</span>
+                  <div class="field-inline">
+                    <input
+                      name="manual_target_keywords_input"
+                      type="text"
+                      placeholder="e.g. lofi, focus, chill"
+                      data-manual-scan-keyword-input
+                    />
+                    <button class="btn btn-secondary" type="button" data-manual-scan-keyword-add>Add</button>
+                  </div>
+                  <div class="pill-list" data-manual-scan-keyword-pills></div>
+                  <div class="info-box" data-manual-scan-keyword-info hidden>
+                    You have reached the maximum of 10 target keywords.
                   </div>
                 </div>
                 <div class="run-scan-controls" id="manual-run-scan-controls" data-manual-scan-run-controls>
@@ -223,6 +248,69 @@
           hour: '2-digit',
           minute: '2-digit',
         }).format(date);
+      };
+
+      const formatSummaryDateParts = (value) => {
+        if (!value) {
+          return { dateLabel: '—', timeLabel: '—' };
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return { dateLabel: value, timeLabel: value };
+        }
+        const dateLabel = date.toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        });
+        const timeLabel = date.toLocaleTimeString('en-GB', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        });
+        return { dateLabel, timeLabel };
+      };
+
+      const formatFileTimestamp = (value) => {
+        if (!value) {
+          return '';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return '';
+        }
+        const pad = (part) => String(part).padStart(2, '0');
+        const year = date.getFullYear();
+        const month = pad(date.getMonth() + 1);
+        const day = pad(date.getDate());
+        const hours = pad(date.getHours());
+        const minutes = pad(date.getMinutes());
+        return `${day}-${month}-${year}_${hours}-${minutes}`;
+      };
+
+      const formatFollowersValue = (value) => {
+        if (value === undefined || value === null || value === '') {
+          return '—';
+        }
+        if (typeof value === 'object') {
+          if ('total' in value) {
+            return formatFollowersValue(value.total);
+          }
+          return '—';
+        }
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) {
+          return numeric.toLocaleString();
+        }
+        return value;
+      };
+
+      const flagEmoji = (code) => {
+        const upper = (code || '').toUpperCase();
+        if (upper.length !== 2) {
+          return '';
+        }
+        return upper.replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt()));
       };
 
       const setStatus = (message, variant) => {
@@ -713,6 +801,16 @@
           return;
         }
 
+        const playlistInput = scanRoot.querySelector('[data-manual-scan-playlist]');
+        const countrySelect = scanRoot.querySelector('[data-manual-scan-country-select]');
+        const countryAdd = scanRoot.querySelector('[data-manual-scan-country-add]');
+        const countryPills = scanRoot.querySelector('[data-manual-scan-country-pills]');
+        const countryInfo = scanRoot.querySelector('[data-manual-scan-country-info]');
+        const keywordInput = scanRoot.querySelector('[data-manual-scan-keyword-input]');
+        const keywordAdd = scanRoot.querySelector('[data-manual-scan-keyword-add]');
+        const keywordPills = scanRoot.querySelector('[data-manual-scan-keyword-pills]');
+        const keywordInfo = scanRoot.querySelector('[data-manual-scan-keyword-info]');
+
         const scanParameters = scanRoot.querySelector('[data-manual-scan-parameters]');
         const runControls = scanRoot.querySelector('[data-manual-scan-run-controls]');
         const runButton = scanRoot.querySelector('[data-manual-scan-run]');
@@ -726,9 +824,70 @@
         const detailedWrap = scanRoot.querySelector('[data-manual-scan-detailed]');
         const csvControls = scanRoot.querySelector('[data-manual-scan-csv-controls]');
         const summarySection = document.getElementById('manual-scan-summary');
+        const exportSummary = scanRoot.querySelector('[data-manual-scan-export-summary]');
+        const exportDetailed = scanRoot.querySelector('[data-manual-scan-export-detailed]');
+        const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
         let currentStage = 1;
-        let progressTimer = null;
+        let activeScanId = null;
+        let eventSource = null;
+
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Select a country';
+        defaultOption.disabled = true;
+        defaultOption.selected = true;
+        countrySelect?.appendChild(defaultOption);
+
+        availableMarkets.forEach((market) => {
+          const option = document.createElement('option');
+          option.value = market.code;
+          option.textContent = market.label;
+          countrySelect?.appendChild(option);
+        });
+
+        const countryManager = createSelectionManager({
+          listElement: countryPills,
+          infoElement: countryInfo,
+          max: 10,
+          lockedValues: [],
+          normalize: (value) => (value || '').trim().toUpperCase(),
+          compare: (a, b) => a.toUpperCase() === b.toUpperCase(),
+          getLabel: resolveMarketLabel,
+        });
+
+        const keywordManager = createSelectionManager({
+          listElement: keywordPills,
+          infoElement: keywordInfo,
+          max: 10,
+          lockedValues: [],
+          normalize: (value) => (value || '').trim(),
+          compare: (a, b) => a.toLowerCase() === b.toLowerCase(),
+        });
+
+        countryAdd?.addEventListener('click', () => {
+          countryManager.addValue(countrySelect.value);
+        });
+
+        keywordAdd?.addEventListener('click', () => {
+          if (keywordManager.addValue(keywordInput.value)) {
+            keywordInput.value = '';
+          }
+        });
+
+        keywordInput?.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            keywordAdd.click();
+          }
+        });
+
+        playlistInput?.addEventListener('input', (event) => {
+          const input = event.target;
+          if (input.value.includes('?')) {
+            input.value = input.value.split('?')[0];
+          }
+        });
 
         const setStage = (stage, scrollTarget) => {
           currentStage = stage;
@@ -791,10 +950,6 @@
         };
 
         const resetProgress = () => {
-          if (progressTimer) {
-            clearInterval(progressTimer);
-            progressTimer = null;
-          }
           if (progressLog) {
             progressLog.innerHTML = '';
           }
@@ -809,39 +964,260 @@
           }
         };
 
-        const startManualScan = () => {
-          if (!runButton) {
+        const resolveFollowers = (result) => {
+          const nestedFollowers =
+            result.followers && typeof result.followers === 'object'
+              ? result.followers.total
+              : undefined;
+          const nestedPlaylistFollowers =
+            result.playlist && typeof result.playlist === 'object'
+              ? result.playlist.followers || result.playlist.followers_total || result.playlist.follower_count
+              : undefined;
+          const nestedPlaylistFollowersTotal =
+            nestedPlaylistFollowers && typeof nestedPlaylistFollowers === 'object'
+              ? nestedPlaylistFollowers.total
+              : undefined;
+          const candidate =
+            result.playlist_followers ??
+            result.followers_total ??
+            result.followers_count ??
+            result.follower_count ??
+            nestedFollowers ??
+            nestedPlaylistFollowersTotal ??
+            nestedPlaylistFollowers ??
+            result.followers;
+          return formatFollowersValue(candidate);
+        };
+
+        const renderSummary = (scan) => {
+          if (!summaryLead || !summaryList) {
             return;
           }
+          const follower = scan.follower_snapshot ?? '—';
+          const manualName = scan.manual_playlist?.playlist_name || scan.tracked_playlist_name;
+          const playlistLabel = manualName ? `“${manualName}”` : 'the playlist';
+          summaryLead.textContent = `At ${formatTimestamp(
+            scan.started_at
+          )}, ${playlistLabel} had ${follower} followers.`;
+          summaryList.innerHTML = '';
+          (scan.summary || []).forEach((item) => {
+            const row = document.createElement('div');
+            row.className = `summary-row ${item.tracked_found_in_top20 ? '' : 'summary-row-missing'}`;
+            const countryLabel = resolveMarketLabel(item.country);
+            const { dateLabel, timeLabel } = formatSummaryDateParts(item.searched_at);
+            const rankText = item.tracked_found_in_top20
+              ? `the playlist rank was #${item.tracked_rank}.`
+              : 'the playlist was not found in the top 20.';
+            row.textContent = `On ${dateLabel} at ${timeLabel} in ${countryLabel} for ‘${item.keyword}’, ${rankText}`;
+            summaryList.appendChild(row);
+          });
+        };
+
+        const renderDetailed = (scan) => {
+          if (!detailedWrap) {
+            return;
+          }
+          detailedWrap.innerHTML = '';
+          const detailed = scan.detailed || {};
+          const countryAccordions = [];
+          Object.values(detailed).forEach((countryData) => {
+            const countryCode = countryData.country;
+            const countryDetails = document.createElement('details');
+            countryDetails.className = 'accordion';
+            const summary = document.createElement('summary');
+            summary.textContent = `${flagEmoji(countryCode)} ${resolveMarketLabel(countryCode)}`;
+            countryDetails.addEventListener('toggle', () => {
+              if (!countryDetails.open) {
+                return;
+              }
+              countryAccordions.forEach((openDetails) => {
+                if (openDetails !== countryDetails) {
+                  openDetails.open = false;
+                }
+              });
+              requestAnimationFrame(() => {
+                scrollSectionToCenter(countryDetails);
+              });
+            });
+            countryDetails.appendChild(summary);
+            countryAccordions.push(countryDetails);
+
+            const keywordContainer = document.createElement('div');
+            keywordContainer.className = 'accordion-body';
+            const keywordAccordions = [];
+
+            Object.entries(countryData.keywords || {}).forEach(([keyword, keywordData]) => {
+              const keywordDetails = document.createElement('details');
+              keywordDetails.className = 'accordion nested';
+              const keywordSummary = document.createElement('summary');
+              keywordSummary.textContent = `${keyword} · ${formatTimestamp(keywordData.searched_at)}`;
+              keywordDetails.appendChild(keywordSummary);
+              keywordDetails.addEventListener('toggle', () => {
+                if (!keywordDetails.open) {
+                  return;
+                }
+                keywordAccordions.forEach((openKeyword) => {
+                  if (openKeyword !== keywordDetails) {
+                    openKeyword.open = false;
+                  }
+                });
+                requestAnimationFrame(() => {
+                  scrollSectionToCenter(keywordDetails);
+                });
+              });
+
+              const table = document.createElement('table');
+              table.className = 'results-table';
+              table.innerHTML = `
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Playlist</th>
+                    <th>Owner</th>
+                    <th>Followers</th>
+                    <th>Songs</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              `;
+              const tbody = table.querySelector('tbody');
+              (keywordData.results || []).forEach((result) => {
+                const followersValue = resolveFollowers(result);
+                const row = document.createElement('tr');
+                if (result.is_tracked_playlist) {
+                  row.classList.add('tracked-highlight');
+                }
+                row.innerHTML = `
+                  <td>${result.rank ?? '—'}</td>
+                  <td>
+                    ${
+                      result.playlist_url
+                        ? `<a href="${result.playlist_url}" target="_blank" rel="noopener noreferrer">${result.playlist_name || '—'}</a>`
+                        : result.playlist_name || '—'
+                    }
+                  </td>
+                  <td>${result.playlist_owner || '—'}</td>
+                  <td>${followersValue}</td>
+                  <td>${result.songs_count ?? '—'}</td>
+                `;
+                tbody.appendChild(row);
+              });
+
+              const tableScroll = document.createElement('div');
+              tableScroll.className = 'table-scroll';
+              tableScroll.appendChild(table);
+
+              const keywordBody = document.createElement('div');
+              keywordBody.className = 'accordion-body';
+              keywordBody.appendChild(tableScroll);
+              keywordDetails.appendChild(keywordBody);
+              keywordContainer.appendChild(keywordDetails);
+              keywordAccordions.push(keywordDetails);
+            });
+
+            countryDetails.appendChild(keywordContainer);
+            detailedWrap.appendChild(countryDetails);
+          });
+        };
+
+        const loadResults = async (scanId) => {
+          const response = await fetch(`/api/basic-rank-checker/scans/${scanId}`);
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.detail || 'Failed to load scan results.');
+          }
+          renderSummary(data);
+          renderDetailed(data);
+          const startedAt =
+            data.started_at || data.searched_at || data.summary?.[0]?.searched_at;
+          const timestamp = formatFileTimestamp(startedAt);
+          const effectiveScanId = data.scan_id || scanId;
+          const filenameBase = timestamp
+            ? `${timestamp}_${effectiveScanId}`
+            : `${effectiveScanId}`;
+          const buildExportUrl = (path) => {
+            const url = new URL(path, window.location.origin);
+            if (timeZone) {
+              url.searchParams.set('timezone', timeZone);
+            }
+            return `${url.pathname}${url.search}`;
+          };
+          if (exportSummary) {
+            exportSummary.href = buildExportUrl(
+              `/api/basic-rank-checker/scans/${scanId}/export/summary.csv`
+            );
+            exportSummary.download = `${filenameBase}_summary.csv`;
+          }
+          if (exportDetailed) {
+            exportDetailed.href = buildExportUrl(
+              `/api/basic-rank-checker/scans/${scanId}/export/detailed.csv`
+            );
+            exportDetailed.download = `${filenameBase}_detailed.csv`;
+          }
+        };
+
+        const startManualScan = async () => {
+          if (!runButton || !playlistInput) {
+            return;
+          }
+          const playlistUrl = (playlistInput.value || '').trim();
+          if (!playlistUrl) {
+            setStatus('Playlist URL is required.', 'status-error');
+            setStage(1, scanParameters || scanRoot);
+            return;
+          }
+
           runButton.disabled = true;
           resetProgress();
           setProgress(0, 0, 'Starting scan…');
 
-          const steps = [
-            'Preparing scan targets…',
-            'Fetching playlist data…',
-            'Scanning markets…',
-            'Compiling results…',
-          ];
-          let stepIndex = 0;
-          const total = steps.length;
-
-          progressTimer = window.setInterval(() => {
-            const message = steps[stepIndex];
-            stepIndex += 1;
-            setProgress(stepIndex, total, message);
-            appendLog(message);
-            if (stepIndex >= total) {
-              clearInterval(progressTimer);
-              progressTimer = null;
-              setProgress(total, total, 'Scan completed.');
-              if (summaryLead) {
-                summaryLead.textContent = 'Manual scan completed.';
-              }
-              setStage(3, summarySection);
-              runButton.disabled = false;
+          try {
+            const response = await fetch('/api/scans/manual', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                playlist_url: playlistUrl,
+                target_keywords: keywordManager.getValues(),
+                target_countries: countryManager.getValues(),
+              }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.detail || 'Failed to start scan.');
             }
-          }, 700);
+            activeScanId = data.scan_id;
+            if (eventSource) {
+              eventSource.close();
+            }
+            eventSource = new EventSource(
+              `/api/basic-rank-checker/scans/${activeScanId}/events`
+            );
+            eventSource.onmessage = async (event) => {
+              const payload = JSON.parse(event.data);
+              if (payload.type === 'progress') {
+                setProgress(payload.step, payload.total, payload.message);
+                appendLog(payload.message);
+              }
+              if (payload.type === 'done') {
+                eventSource.close();
+                setProgress(payload.total || 1, payload.total || 1, 'Scan completed.');
+                await loadResults(activeScanId);
+                setStage(3, summarySection);
+                runButton.disabled = false;
+              }
+              if (payload.type === 'error') {
+                eventSource.close();
+                appendLog(payload.message || 'Scan failed.');
+                setProgress(0, 1, payload.message || 'Scan failed.');
+                setStage(1);
+                runButton.disabled = false;
+              }
+            };
+          } catch (error) {
+            setStage(1);
+            runButton.disabled = false;
+            setStatus(error.message || 'Failed to start scan.', 'status-error');
+          }
         };
 
         const openManualScan = () => {
@@ -861,9 +1237,19 @@
             return;
           }
           resetProgress();
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          activeScanId = null;
           if (runButton) {
             runButton.disabled = false;
           }
+          if (playlistInput) {
+            playlistInput.value = '';
+          }
+          countryManager.reset();
+          keywordManager.reset();
           manualScanSection.classList.remove('is-open');
           manualScanToggle.classList.remove('is-active');
           manualScanToggle.setAttribute('aria-expanded', 'false');
@@ -881,7 +1267,9 @@
 
         manualScanCloseButton?.addEventListener('click', closeManualScan);
 
-        runButton?.addEventListener('click', () => {
+        runButton?.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
           setStage(2, progressWrap || scanRoot);
           startManualScan();
         });

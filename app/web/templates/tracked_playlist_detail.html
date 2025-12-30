@@ -697,7 +697,9 @@
           }
         };
 
-        runButton?.addEventListener('click', () => {
+        runButton?.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
           openBasicScanStage2();
           startScan();
         });

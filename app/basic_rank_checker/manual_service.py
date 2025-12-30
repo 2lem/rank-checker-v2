@@ -1,62 +1,42 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 
-import requests
-import pycountry
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.basic_rank_checker import service as basic_service
 from app.basic_rank_checker.events import scan_event_manager
 from app.core.db import SessionLocal
 from app.core.spotify import (
-    PLAYLIST_URL,
-    fetch_playlist_details,
+    extract_playlist_id,
+    fetch_spotify_playlist_metadata,
     get_access_token,
+    normalize_spotify_playlist_url,
     search_playlists,
-    spotify_get,
 )
 from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
-from app.models.tracked_playlist import TrackedPlaylist
 
 logger = logging.getLogger(__name__)
-_MARKET_OVERRIDES = {"XK": "Kosovo"}
 
 
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _market_label(code: str) -> str:
-    normalized = (code or "").strip().upper()
-    if not normalized:
-        return code
-    if normalized in _MARKET_OVERRIDES:
-        return _MARKET_OVERRIDES[normalized]
-    country = pycountry.countries.get(alpha_2=normalized)
-    return country.name if country else normalized
-
-
-def _parse_iso_datetime(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def create_basic_scan(db: Session, tracked_playlist: TrackedPlaylist) -> BasicScan:
-    is_tracked_playlist = tracked_playlist.id is not None
+def create_manual_scan(
+    db: Session,
+    playlist_url: str,
+    target_keywords: list[str],
+    target_countries: list[str],
+) -> BasicScan:
     scan = BasicScan(
-        account_id=tracked_playlist.account_id,
-        tracked_playlist_id=tracked_playlist.id,
-        is_tracked_playlist=is_tracked_playlist,
-        started_at=_now_utc(),
+        account_id=None,
+        tracked_playlist_id=None,
+        is_tracked_playlist=False,
+        started_at=basic_service._now_utc(),
         status="running",
-        scanned_countries=tracked_playlist.target_countries or [],
-        scanned_keywords=tracked_playlist.target_keywords or [],
+        scanned_countries=target_countries or [],
+        scanned_keywords=target_keywords or [],
+        manual_playlist_url=playlist_url,
+        manual_target_keywords=target_keywords or [],
+        manual_target_countries=target_countries or [],
     )
     db.add(scan)
     db.commit()
@@ -64,44 +44,16 @@ def create_basic_scan(db: Session, tracked_playlist: TrackedPlaylist) -> BasicSc
     return scan
 
 
-def _resolve_follower_snapshot(
-    playlist_id: str | None,
-    followers_total: int | None,
-    token: str,
-) -> int | None:
-    if followers_total is not None:
-        return followers_total
-
-    if not playlist_id:
-        return None
-
-    playlist_api_url = PLAYLIST_URL.format(playlist_id)
-    try:
-        detail = spotify_get(
-            playlist_api_url,
-            token,
-            params={"fields": "followers.total"},
-        )
-    except requests.RequestException as exc:
-        logger.warning("Unable to fetch playlist followers for %s: %s", playlist_id, exc)
-        return None
-    return (detail.get("followers") or {}).get("total")
+def _fail_scan(db: Session, scan: BasicScan, message: str) -> None:
+    scan.status = "failed"
+    scan.error_message = message
+    scan.finished_at = basic_service._now_utc()
+    db.add(scan)
+    db.commit()
+    scan_event_manager.publish(str(scan.id), {"type": "error", "message": message})
 
 
-def _extract_owner(item: dict) -> str | None:
-    owner = item.get("owner") or {}
-    return owner.get("display_name") or owner.get("id")
-
-
-def _prefetch_playlist_metadata(
-    playlist_ids: list[str], token: str, playlist_meta_cache: dict[str, dict]
-) -> int:
-    previous_cache_size = len(playlist_meta_cache)
-    fetch_playlist_details(playlist_ids, token, playlist_meta_cache)
-    return len(playlist_meta_cache) - previous_cache_size
-
-
-def run_basic_scan(scan_id: str) -> None:
+def run_manual_scan(scan_id: str) -> None:
     if SessionLocal is None:
         return
 
@@ -110,19 +62,19 @@ def run_basic_scan(scan_id: str) -> None:
         scan = db.get(BasicScan, scan_id)
         if scan is None:
             return
-        tracked_playlist = db.get(TrackedPlaylist, scan.tracked_playlist_id)
-        if tracked_playlist is None:
-            scan.status = "failed"
-            scan.error_message = "Tracked playlist not found."
-            scan.finished_at = _now_utc()
-            db.add(scan)
-            db.commit()
-            scan_event_manager.publish(scan_id, {"type": "error", "message": scan.error_message})
+
+        playlist_url = normalize_spotify_playlist_url(scan.manual_playlist_url or "")
+        playlist_id = extract_playlist_id(playlist_url)
+        if not playlist_id:
+            _fail_scan(db, scan, "Invalid Spotify playlist URL.")
             return
 
+        scan.manual_playlist_url = playlist_url
+        scan.manual_playlist_id = playlist_id
+        db.add(scan)
+        db.commit()
+
         scan_id_value = scan.id
-        tracked_playlist_playlist_id = tracked_playlist.playlist_id
-        tracked_playlist_followers_total = tracked_playlist.followers_total
         countries = list(scan.scanned_countries or [])
         keywords = list(scan.scanned_keywords or [])
         total_steps = max(len(countries) * len(keywords), 1)
@@ -131,23 +83,33 @@ def run_basic_scan(scan_id: str) -> None:
         db.rollback()
 
         token = get_access_token()
-        follower_snapshot = _resolve_follower_snapshot(
-            tracked_playlist_playlist_id,
-            tracked_playlist_followers_total,
+        manual_meta = fetch_spotify_playlist_metadata(playlist_id, token)
+        follower_snapshot = basic_service._resolve_follower_snapshot(
+            playlist_id,
+            manual_meta.get("playlist_followers"),
             token,
         )
+
         scan = db.get(BasicScan, scan_id_value)
         if scan is None:
             return
+
         scan.follower_snapshot = follower_snapshot
+        scan.manual_playlist_id = playlist_id
+        scan.manual_playlist_url = manual_meta.get("playlist_url") or playlist_url
+        scan.manual_playlist_name = manual_meta.get("playlist_name")
+        scan.manual_playlist_owner = manual_meta.get("playlist_owner")
+        scan.manual_playlist_image_url = manual_meta.get("playlist_image_url") or manual_meta.get(
+            "playlist_image"
+        )
         db.add(scan)
         db.commit()
 
         playlist_meta_cache: dict[str, dict] = {}
         total_playlist_occurrences = 0
         unique_playlists_fetched = 0
-
         step = 0
+
         for country in countries:
             for keyword in keywords:
                 step += 1
@@ -157,12 +119,12 @@ def run_basic_scan(scan_id: str) -> None:
                         "type": "progress",
                         "country": country,
                         "keyword": keyword,
-                        "message": f"Scanning {_market_label(country)} for '{keyword}'...",
+                        "message": f"Scanning {basic_service._market_label(country)} for '{keyword}'...",
                         "step": step,
                         "total": total_steps,
                     },
                 )
-                searched_at = _now_utc()
+                searched_at = basic_service._now_utc()
                 items = search_playlists(keyword, country, token, limit=35, offset=0)[:20]
 
                 playlist_ids_to_fetch = [
@@ -171,7 +133,7 @@ def run_basic_scan(scan_id: str) -> None:
                     if item.get("id") and not item.get("placeholder")
                 ]
                 total_playlist_occurrences += len(playlist_ids_to_fetch)
-                unique_playlists_fetched += _prefetch_playlist_metadata(
+                unique_playlists_fetched += basic_service._prefetch_playlist_metadata(
                     playlist_ids_to_fetch, token, playlist_meta_cache
                 )
 
@@ -189,11 +151,15 @@ def run_basic_scan(scan_id: str) -> None:
 
                 results: list[BasicScanResult] = []
                 for index, item in enumerate(items, start=1):
-                    playlist_id = item.get("id")
+                    result_playlist_id = item.get("id")
                     is_placeholder = item.get("placeholder")
-                    meta = playlist_meta_cache.get(playlist_id or "") if playlist_id else {}
+                    meta = (
+                        playlist_meta_cache.get(result_playlist_id or "")
+                        if result_playlist_id
+                        else {}
+                    )
                     playlist_name = meta.get("playlist_name") or item.get("name")
-                    playlist_owner = meta.get("playlist_owner") or _extract_owner(item)
+                    playlist_owner = meta.get("playlist_owner") or basic_service._extract_owner(item)
                     playlist_followers = None if is_placeholder else meta.get("playlist_followers")
                     tracks_total = (item.get("tracks") or {}).get("total")
                     songs_count = (
@@ -203,23 +169,24 @@ def run_basic_scan(scan_id: str) -> None:
                     )
                     playlist_last_added_track_at_raw = meta.get("playlist_last_track_added_at")
                     playlist_last_added_track_at = (
-                        _parse_iso_datetime(playlist_last_added_track_at_raw)
+                        basic_service._parse_iso_datetime(playlist_last_added_track_at_raw)
                         if isinstance(playlist_last_added_track_at_raw, str)
                         else playlist_last_added_track_at_raw
                     )
                     playlist_description = meta.get("playlist_description") or item.get("description")
-                    playlist_url = meta.get("playlist_url") or (item.get("external_urls") or {}).get(
-                        "spotify"
+                    playlist_url = meta.get("playlist_url") or (
+                        (item.get("external_urls") or {}).get("spotify")
                     )
 
-                    is_tracked = playlist_id == tracked_playlist_playlist_id
-                    if is_tracked and tracked_rank is None:
+                    is_manual_playlist = result_playlist_id == playlist_id
+                    if is_manual_playlist and tracked_rank is None:
                         tracked_rank = index
+
                     results.append(
                         BasicScanResult(
                             basic_scan_query_id=query.id,
                             rank=index,
-                            playlist_id=playlist_id,
+                            playlist_id=result_playlist_id,
                             playlist_name=playlist_name,
                             playlist_owner=playlist_owner,
                             playlist_followers=playlist_followers,
@@ -227,7 +194,7 @@ def run_basic_scan(scan_id: str) -> None:
                             playlist_last_added_track_at=playlist_last_added_track_at,
                             playlist_description=playlist_description,
                             playlist_url=playlist_url,
-                            is_tracked_playlist=is_tracked,
+                            is_tracked_playlist=is_manual_playlist,
                         )
                     )
 
@@ -238,11 +205,11 @@ def run_basic_scan(scan_id: str) -> None:
                 db.commit()
 
         scan.status = "completed"
-        scan.finished_at = _now_utc()
+        scan.finished_at = basic_service._now_utc()
         db.add(scan)
         db.commit()
         logger.info(
-            "Basic scan playlist metadata fetch stats",
+            "Manual scan playlist metadata fetch stats",
             extra={
                 "scan_id": scan_id,
                 "unique_playlists_fetched": unique_playlists_fetched,
@@ -252,13 +219,13 @@ def run_basic_scan(scan_id: str) -> None:
         )
         scan_event_manager.publish(scan_id, {"type": "done", "scan_id": scan_id})
     except Exception as exc:
-        logger.exception("Basic scan failed")
+        logger.exception("Manual scan failed")
         try:
             scan = db.get(BasicScan, scan_id)
             if scan:
                 scan.status = "failed"
                 scan.error_message = str(exc)
-                scan.finished_at = _now_utc()
+                scan.finished_at = basic_service._now_utc()
                 db.add(scan)
                 db.commit()
         except Exception:
@@ -268,17 +235,16 @@ def run_basic_scan(scan_id: str) -> None:
         db.close()
 
 
-def fetch_scan_details(db: Session, scan_id: str) -> dict | None:
+def fetch_manual_scan_details(db: Session, scan_id: str) -> dict | None:
     scan = db.get(BasicScan, scan_id)
     if scan is None:
         return None
 
-    tracked_playlist = db.get(TrackedPlaylist, scan.tracked_playlist_id)
     queries = (
         db.execute(
-            select(BasicScanQuery).where(BasicScanQuery.basic_scan_id == scan.id).order_by(
-                BasicScanQuery.searched_at.asc()
-            )
+            select(BasicScanQuery)
+            .where(BasicScanQuery.basic_scan_id == scan.id)
+            .order_by(BasicScanQuery.searched_at.asc())
         )
         .scalars()
         .all()
@@ -288,7 +254,12 @@ def fetch_scan_details(db: Session, scan_id: str) -> dict | None:
             select(BasicScanResult)
             .join(BasicScanQuery, BasicScanResult.basic_scan_query_id == BasicScanQuery.id)
             .where(BasicScanQuery.basic_scan_id == scan.id)
-            .order_by(BasicScanQuery.searched_at, BasicScanQuery.keyword, BasicScanQuery.country_code, BasicScanResult.rank)
+            .order_by(
+                BasicScanQuery.searched_at,
+                BasicScanQuery.keyword,
+                BasicScanQuery.country_code,
+                BasicScanResult.rank,
+            )
         )
         .scalars()
         .all()
@@ -336,18 +307,6 @@ def fetch_scan_details(db: Session, scan_id: str) -> dict | None:
             ],
         }
 
-    manual_playlist = None
-    tracked_playlist_name = tracked_playlist.name if tracked_playlist else None
-    if tracked_playlist is None and scan.tracked_playlist_id is None:
-        manual_playlist = {
-            "playlist_id": scan.manual_playlist_id,
-            "playlist_url": scan.manual_playlist_url,
-            "playlist_name": scan.manual_playlist_name,
-            "playlist_owner": scan.manual_playlist_owner,
-            "playlist_image_url": scan.manual_playlist_image_url,
-        }
-        tracked_playlist_name = scan.manual_playlist_name
-
     return {
         "scan_id": scan.id,
         "tracked_playlist_id": scan.tracked_playlist_id,
@@ -357,8 +316,13 @@ def fetch_scan_details(db: Session, scan_id: str) -> dict | None:
         "follower_snapshot": scan.follower_snapshot,
         "scanned_countries": scan.scanned_countries,
         "scanned_keywords": scan.scanned_keywords,
-        "tracked_playlist_name": tracked_playlist_name,
-        "manual_playlist": manual_playlist,
+        "manual_playlist": {
+            "playlist_id": scan.manual_playlist_id,
+            "playlist_url": scan.manual_playlist_url,
+            "playlist_name": scan.manual_playlist_name,
+            "playlist_owner": scan.manual_playlist_owner,
+            "playlist_image_url": scan.manual_playlist_image_url,
+        },
         "summary": summary,
         "detailed": detailed,
     }
