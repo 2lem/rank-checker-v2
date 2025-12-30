@@ -83,13 +83,17 @@
   {% if variant != 'detail' %}
       <div class="tracked-manage-panel" data-manage-panel>
       <div class="tracked-manage-actions">
-        <button class="btn btn-primary" type="button" data-edit-toggle>Edit Configuration</button>
-        <button class="btn btn-secondary" type="button" disabled aria-disabled="true">
-          Scan History (Coming soon)
-        </button>
-        <button class="btn btn-secondary" type="button" disabled aria-disabled="true">
-          Delete Playlist (Coming soon)
-        </button>
+        <div class="tracked-manage-actions-group">
+          <button class="btn btn-primary" type="button" data-edit-toggle>Edit Configuration</button>
+          <button class="btn btn-secondary" type="button" disabled aria-disabled="true">
+            Scan History (Coming soon)
+          </button>
+          <button class="btn btn-secondary" type="button" disabled aria-disabled="true">
+            Delete Playlist (Coming soon)
+          </button>
+        </div>
+        <span class="tracked-manage-actions-spacer" aria-hidden="true"></span>
+        <button class="btn btn-secondary" type="button" data-manage-close>Close</button>
       </div>
       <div class="tracked-edit-panel" data-edit-panel>
         <div class="section-header">
