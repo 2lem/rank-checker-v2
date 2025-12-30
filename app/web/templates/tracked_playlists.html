@@ -465,6 +465,27 @@
         window.scrollTo({ top: clampScrollTarget(target), behavior: 'smooth' });
       };
 
+      const scrollToManualScanPanel = (panel) => {
+        if (!panel) {
+          return;
+        }
+        const padding = 16;
+        const headerOffset = 0;
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const rect = panel.getBoundingClientRect();
+            const panelHeight = rect.height;
+            const viewportHeight = window.innerHeight;
+            const currentTop = window.scrollY + rect.top;
+            const targetY =
+              panelHeight <= viewportHeight
+                ? currentTop - Math.max(padding, (viewportHeight - panelHeight) / 2) - headerOffset
+                : currentTop - padding - headerOffset;
+            window.scrollTo({ top: clampScrollTarget(targetY), behavior: 'smooth' });
+          });
+        });
+      };
+
       const restorePreOpenScroll = () => {
         if (preOpenScrollY === null) {
           return;
@@ -669,7 +690,7 @@
           manualScanToggle.classList.add('is-active');
           manualScanToggle.setAttribute('aria-expanded', 'true');
           manualScanSection.setAttribute('aria-hidden', 'false');
-          manualScanSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          scrollToManualScanPanel(manualScanSection);
         };
 
         const closeManualScan = () => {
