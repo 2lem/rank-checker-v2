@@ -43,6 +43,74 @@
         </div>
       </section>
 
+      <section class="ui-card manual-scan-section" id="manual-scan-section" aria-hidden="true">
+        <div class="manual-scan-panel">
+          <div class="panel-header">
+            <h2>Manual Scan Panel</h2>
+            <p>Run a manual scan using stored targets.</p>
+          </div>
+          <div class="panel-body">
+            <div class="basic-scan" data-manual-scan>
+              <section class="scan-parameters" id="manual-scan-parameters" data-manual-scan-parameters>
+                <div class="scan-config-row">
+                  <span class="scan-config-label">Countries</span>
+                  <div class="pill-list" data-manual-scan-countries>
+                    <span class="scan-config-empty">No target countries</span>
+                  </div>
+                </div>
+                <div class="scan-config-row">
+                  <span class="scan-config-label">Keywords</span>
+                  <div class="pill-list" data-manual-scan-keywords>
+                    <span class="scan-config-empty">No target keywords</span>
+                  </div>
+                </div>
+                <div class="run-scan-controls" id="manual-run-scan-controls" data-manual-scan-run-controls>
+                  <div class="manual-scan-actions">
+                    <button class="btn btn-primary" type="button" data-manual-scan-run>Run Manual Scan</button>
+                    <span class="manual-scan-actions-spacer" aria-hidden="true"></span>
+                    <button class="btn btn-secondary" type="button" data-manual-scan-close>Close</button>
+                  </div>
+                </div>
+              </section>
+              <section
+                class="run-progress basic-scan-progress"
+                id="manual-scan-progress"
+                data-manual-scan-progress
+                hidden
+              >
+                <div class="progress-bar">
+                  <div class="progress-fill" data-manual-scan-progress-fill></div>
+                </div>
+                <div class="progress-status" data-manual-scan-progress-status>Starting scan…</div>
+                <div class="progress-log" data-manual-scan-progress-log></div>
+              </section>
+              <section class="results" id="manual-scan-results" data-manual-scan-results hidden>
+                <div class="results-header">
+                  <h3>Basic Scan Results</h3>
+                  <div
+                    class="download-csv-controls basic-scan-download-actions"
+                    id="manual-scan-csv-controls"
+                    data-manual-scan-csv-controls
+                  >
+                    <a class="btn btn-csv" data-manual-scan-export-summary>Download Summary CSV</a>
+                    <a class="btn btn-csv" data-manual-scan-export-detailed>Download Detailed CSV</a>
+                  </div>
+                </div>
+                <div class="summary" id="manual-scan-summary">
+                  <h3>Summary</h3>
+                  <div class="summary-lead" data-manual-scan-summary-lead></div>
+                  <div class="summary-list" data-manual-scan-summary-list></div>
+                </div>
+                <div class="detailed-scan-insights" id="manual-scan-detailed">
+                  <h3>Detailed Scan Insights</h3>
+                  <div class="detailed-insights" data-manual-scan-detailed></div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="ui-card form-card collapsible-card" id="add-playlist" data-collapsible="add-playlist">
         <div class="section-header">
           <h2>Add New Playlist</h2>
@@ -119,74 +187,6 @@
               <p>Add one above to begin collecting results.</p>
             </div>
           {% endif %}
-        </div>
-      </section>
-
-      <section class="ui-card manual-scan-section" id="manual-scan-section" aria-hidden="true">
-        <div class="manual-scan-panel">
-          <div class="panel-header">
-            <h2>Manual Scan Panel</h2>
-            <p>Run a manual scan using stored targets.</p>
-          </div>
-          <div class="panel-body">
-            <div class="basic-scan" data-manual-scan>
-              <section class="scan-parameters" id="manual-scan-parameters" data-manual-scan-parameters>
-                <div class="scan-config-row">
-                  <span class="scan-config-label">Countries</span>
-                  <div class="pill-list" data-manual-scan-countries>
-                    <span class="scan-config-empty">No target countries</span>
-                  </div>
-                </div>
-                <div class="scan-config-row">
-                  <span class="scan-config-label">Keywords</span>
-                  <div class="pill-list" data-manual-scan-keywords>
-                    <span class="scan-config-empty">No target keywords</span>
-                  </div>
-                </div>
-                <div class="run-scan-controls" id="manual-run-scan-controls" data-manual-scan-run-controls>
-                  <div class="manual-scan-actions">
-                    <button class="btn btn-primary" type="button" data-manual-scan-run>Run Manual Scan</button>
-                    <span class="manual-scan-actions-spacer" aria-hidden="true"></span>
-                    <button class="btn btn-secondary" type="button" data-manual-scan-close>Close</button>
-                  </div>
-                </div>
-              </section>
-              <section
-                class="run-progress basic-scan-progress"
-                id="manual-scan-progress"
-                data-manual-scan-progress
-                hidden
-              >
-                <div class="progress-bar">
-                  <div class="progress-fill" data-manual-scan-progress-fill></div>
-                </div>
-                <div class="progress-status" data-manual-scan-progress-status>Starting scan…</div>
-                <div class="progress-log" data-manual-scan-progress-log></div>
-              </section>
-              <section class="results" id="manual-scan-results" data-manual-scan-results hidden>
-                <div class="results-header">
-                  <h3>Basic Scan Results</h3>
-                  <div
-                    class="download-csv-controls basic-scan-download-actions"
-                    id="manual-scan-csv-controls"
-                    data-manual-scan-csv-controls
-                  >
-                    <a class="btn btn-csv" data-manual-scan-export-summary>Download Summary CSV</a>
-                    <a class="btn btn-csv" data-manual-scan-export-detailed>Download Detailed CSV</a>
-                  </div>
-                </div>
-                <div class="summary" id="manual-scan-summary">
-                  <h3>Summary</h3>
-                  <div class="summary-lead" data-manual-scan-summary-lead></div>
-                  <div class="summary-list" data-manual-scan-summary-list></div>
-                </div>
-                <div class="detailed-scan-insights" id="manual-scan-detailed">
-                  <h3>Detailed Scan Insights</h3>
-                  <div class="detailed-insights" data-manual-scan-detailed></div>
-                </div>
-              </section>
-            </div>
-          </div>
         </div>
       </section>
     </main>
