@@ -233,6 +233,33 @@
         }
       };
 
+      const showSection = (section) => {
+        if (!section) {
+          return;
+        }
+        section.hidden = false;
+        section.style.removeProperty('display');
+      };
+
+      const hideSection = (section) => {
+        if (!section) {
+          return;
+        }
+        section.hidden = true;
+        section.style.display = 'none';
+      };
+
+      const scrollSectionToCenter = (section) => {
+        if (!section) {
+          return;
+        }
+        const rect = section.getBoundingClientRect();
+        const sectionTop = window.scrollY + rect.top;
+        const target =
+          sectionTop - window.innerHeight / 2 + rect.height / 2;
+        window.scrollTo({ top: Math.max(target, 0), behavior: 'smooth' });
+      };
+
       const createChip = ({ label, removable, locked, onRemove }) => {
         const chip = document.createElement('span');
         chip.className = `chip ${locked ? 'chip-locked' : ''}`;
@@ -681,6 +708,141 @@
         if (!manualScanToggle || !manualScanSection) {
           return;
         }
+        const scanRoot = manualScanSection.querySelector('[data-manual-scan]');
+        if (!scanRoot) {
+          return;
+        }
+
+        const scanParameters = scanRoot.querySelector('[data-manual-scan-parameters]');
+        const runControls = scanRoot.querySelector('[data-manual-scan-run-controls]');
+        const runButton = scanRoot.querySelector('[data-manual-scan-run]');
+        const progressWrap = scanRoot.querySelector('[data-manual-scan-progress]');
+        const progressFill = scanRoot.querySelector('[data-manual-scan-progress-fill]');
+        const progressStatus = scanRoot.querySelector('[data-manual-scan-progress-status]');
+        const progressLog = scanRoot.querySelector('[data-manual-scan-progress-log]');
+        const resultsWrap = scanRoot.querySelector('[data-manual-scan-results]');
+        const summaryLead = scanRoot.querySelector('[data-manual-scan-summary-lead]');
+        const summaryList = scanRoot.querySelector('[data-manual-scan-summary-list]');
+        const detailedWrap = scanRoot.querySelector('[data-manual-scan-detailed]');
+        const csvControls = scanRoot.querySelector('[data-manual-scan-csv-controls]');
+        const summarySection = document.getElementById('manual-scan-summary');
+
+        let currentStage = 1;
+        let progressTimer = null;
+
+        const setStage = (stage, scrollTarget) => {
+          currentStage = stage;
+          const showStage1 = stage === 1;
+          const showStage2 = stage === 2;
+          const showStage3 = stage === 3;
+
+          if (showStage1) {
+            showSection(scanParameters);
+            showSection(runControls);
+            hideSection(progressWrap);
+            hideSection(resultsWrap);
+            hideSection(csvControls);
+          }
+
+          if (showStage2) {
+            hideSection(scanParameters);
+            hideSection(runControls);
+            showSection(progressWrap);
+            hideSection(resultsWrap);
+            hideSection(csvControls);
+          }
+
+          if (showStage3) {
+            hideSection(scanParameters);
+            hideSection(runControls);
+            hideSection(progressWrap);
+            showSection(resultsWrap);
+            showSection(csvControls);
+          }
+
+          const target =
+            scrollTarget ||
+            (showStage1 ? scanParameters || scanRoot : showStage2 ? progressWrap : summarySection);
+          scrollSectionToCenter(target);
+        };
+
+        const setProgress = (current, total, message) => {
+          if (!progressWrap) {
+            return;
+          }
+          const percent = total ? Math.min((current / total) * 100, 100) : 0;
+          if (progressFill) {
+            progressFill.style.width = `${percent}%`;
+          }
+          if (progressStatus) {
+            progressStatus.textContent = message || 'Scanning...';
+          }
+        };
+
+        const appendLog = (message) => {
+          if (!progressLog || !message) {
+            return;
+          }
+          const entry = document.createElement('div');
+          entry.className = 'progress-log-entry';
+          entry.textContent = message;
+          progressLog.appendChild(entry);
+          progressLog.scrollTop = progressLog.scrollHeight;
+        };
+
+        const resetProgress = () => {
+          if (progressTimer) {
+            clearInterval(progressTimer);
+            progressTimer = null;
+          }
+          if (progressLog) {
+            progressLog.innerHTML = '';
+          }
+          if (summaryList) {
+            summaryList.innerHTML = '';
+          }
+          if (detailedWrap) {
+            detailedWrap.innerHTML = '';
+          }
+          if (summaryLead) {
+            summaryLead.textContent = '';
+          }
+        };
+
+        const startManualScan = () => {
+          if (!runButton) {
+            return;
+          }
+          runButton.disabled = true;
+          resetProgress();
+          setProgress(0, 0, 'Starting scan…');
+
+          const steps = [
+            'Preparing scan targets…',
+            'Fetching playlist data…',
+            'Scanning markets…',
+            'Compiling results…',
+          ];
+          let stepIndex = 0;
+          const total = steps.length;
+
+          progressTimer = window.setInterval(() => {
+            const message = steps[stepIndex];
+            stepIndex += 1;
+            setProgress(stepIndex, total, message);
+            appendLog(message);
+            if (stepIndex >= total) {
+              clearInterval(progressTimer);
+              progressTimer = null;
+              setProgress(total, total, 'Scan completed.');
+              if (summaryLead) {
+                summaryLead.textContent = 'Manual scan completed.';
+              }
+              setStage(3, summarySection);
+              runButton.disabled = false;
+            }
+          }, 700);
+        };
 
         const openManualScan = () => {
           if (manualScanSection.classList.contains('is-open')) {
@@ -690,12 +852,17 @@
           manualScanToggle.classList.add('is-active');
           manualScanToggle.setAttribute('aria-expanded', 'true');
           manualScanSection.setAttribute('aria-hidden', 'false');
+          setStage(1, scanParameters || scanRoot);
           scrollToManualScanPanel(manualScanSection);
         };
 
         const closeManualScan = () => {
           if (!manualScanSection.classList.contains('is-open')) {
             return;
+          }
+          resetProgress();
+          if (runButton) {
+            runButton.disabled = false;
           }
           manualScanSection.classList.remove('is-open');
           manualScanToggle.classList.remove('is-active');
@@ -713,6 +880,11 @@
         });
 
         manualScanCloseButton?.addEventListener('click', closeManualScan);
+
+        runButton?.addEventListener('click', () => {
+          setStage(2, progressWrap || scanRoot);
+          startManualScan();
+        });
       };
 
       setupAddPanel();
