@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import Table, func, inspect, select, text
@@ -8,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.core.debug_tools import require_debug_tools
 from app.core.db import engine, get_database_url, get_db
 from app.core.spotify import get_access_token_payload
+from app.core.version import get_build_time, get_git_sha
 from app.models.base import Base
 from app.models.basic_scan import BasicScan
 from app.services.playlist_metadata import refresh_playlist_metadata
@@ -281,3 +283,13 @@ def spotify_token():
         response["token_preview"] = f"...{access_token[-8:]}"
 
     return response
+
+
+@router.get("/version")
+def version():
+    return {
+        "ok": True,
+        "git_sha": get_git_sha(),
+        "build_time": get_build_time(),
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }

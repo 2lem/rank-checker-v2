@@ -1,3 +1,5 @@
+import logging
+import os
 from pathlib import Path
 
 from contextvars import Token
@@ -8,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import basic_rank_checker_router, debug_router, playlists_router, scans_router
 from app.core.debug_tools import debug_tools_enabled
 from app.core.db import request_path_var
+from app.core.version import get_git_sha
 from app.web.routes import pages_router
 
 app = FastAPI(title="Rank Checker v2")
@@ -17,6 +20,11 @@ STATIC_DIR = BASE_DIR / "web" / "static"
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+logger = logging.getLogger(__name__)
+
+if os.getenv("DEBUG_STABILITY") == "1":
+    logger.info("DEBUG_STABILITY git_sha=%s", get_git_sha())
 
 
 def _set_request_path(path: str) -> Token[str | None]:
