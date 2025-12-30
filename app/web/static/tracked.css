@@ -369,18 +369,31 @@
 
 .tracked-manage-actions {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 12px;
 }
 
-.tracked-manage-actions .tracked-manage-close {
-  margin-left: auto;
+.tracked-manage-actions .btn {
+  width: 100%;
 }
 
-.tracked-manage-actions .tracked-manage-close:focus {
-  outline: none;
-  box-shadow: none;
+.tracked-manage-actions .btn[disabled],
+.tracked-manage-actions .btn[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (min-width: 768px) {
+  .tracked-manage-actions {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .tracked-manage-actions .btn {
+    width: auto;
+  }
 }
 
 .tracked-edit-panel {
@@ -395,6 +408,36 @@
 
 .tracked-edit-panel.is-open {
   display: flex;
+}
+
+.manual-scan-toggle.is-active {
+  background: #ff4c00;
+  border-color: #ff4c00;
+  color: #ffffff;
+}
+
+.manual-scan-section {
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 0.35s ease, opacity 0.3s ease;
+}
+
+.manual-scan-section.is-open {
+  max-height: 320px;
+  opacity: 1;
+  margin-top: 16px;
+}
+
+.manual-scan-panel {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  padding: 16px;
+  background: #ffffff;
 }
 
 .toolbar-panel {

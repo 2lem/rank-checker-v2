@@ -9,7 +9,7 @@
   </head>
   <body class="app-body">
     <main class="page">
-      <header class="page-header">
+      <header class="page-header" id="playlist-controls">
         <div>
           <h1>Tracked Playlists</h1>
           <p class="page-subtitle">Monitor playlists and manage their tracking configuration.</p>
@@ -21,6 +21,15 @@
           {% set aria_controls = 'add-playlist' %}
           {% set data_target = 'add-playlist' %}
           {% include "_components/button.html" %}
+          <button
+            class="btn btn-secondary manual-scan-toggle"
+            type="button"
+            id="manual-scan-toggle"
+            aria-controls="manual-scan-section"
+            aria-expanded="false"
+          >
+            Manual Scan
+          </button>
         </div>
       </header>
 
@@ -112,6 +121,16 @@
           {% endif %}
         </div>
       </section>
+
+      <div id="manual-scan-anchor" aria-hidden="true"></div>
+      <section class="ui-card manual-scan-section" id="manual-scan-section" aria-hidden="true">
+        <div class="manual-scan-panel">
+          <div class="section-header">
+            <h2>Manual Scan</h2>
+            <p class="section-subtitle">Coming soon.</p>
+          </div>
+        </div>
+      </section>
     </main>
 
     <script>
@@ -120,6 +139,10 @@
       const addPanel = document.querySelector('[data-collapsible="add-playlist"]');
       const addButton = document.querySelector('[data-panel-target="add-playlist"]');
       const addCancelButton = document.querySelector('[data-panel-target="add-playlist-cancel"]');
+      const manualScanToggle = document.getElementById('manual-scan-toggle');
+      const manualScanSection = document.getElementById('manual-scan-section');
+      const manualScanAnchor = document.getElementById('manual-scan-anchor');
+      const playlistControls = document.getElementById('playlist-controls');
 
       const availableMarkets = {{ available_markets | tojson }};
       const marketLabelMap = new Map(
@@ -399,7 +422,6 @@
           const managePanel = card.querySelector('[data-manage-panel]');
           const editToggle = card.querySelector('[data-edit-toggle]');
           const editPanel = card.querySelector('[data-edit-panel]');
-          const manageClose = card.querySelector('[data-manage-close]');
           const editForm = card.querySelector('[data-edit-form]');
           const editCancel = card.querySelector('[data-edit-cancel]');
           const editCountrySelect = card.querySelector('[data-edit-country-select]');
@@ -410,24 +432,7 @@
           const editKeywordAdd = card.querySelector('[data-edit-keyword-add]');
           const editKeywordPills = card.querySelector('[data-edit-keyword-pills]');
           const editKeywordInfo = card.querySelector('[data-edit-keyword-info]');
-          const refreshButton = card.querySelector('[data-refresh-stats]');
-          const manualScanButton = card.querySelector('[data-manual-scan]');
-          const manualScanStatus = card.querySelector('[data-manual-status]');
           const playlistId = card.dataset.playlistId;
-          let manualScanEventSource = null;
-
-          const setManualStatus = (message) => {
-            if (manualScanStatus) {
-              manualScanStatus.textContent = message;
-            }
-          };
-
-          const closeManualEventSource = () => {
-            if (manualScanEventSource) {
-              manualScanEventSource.close();
-              manualScanEventSource = null;
-            }
-          };
 
           const existingCountries = JSON.parse(card.dataset.targetCountries || '[]');
           const existingKeywords = JSON.parse(card.dataset.targetKeywords || '[]');
@@ -507,10 +512,6 @@
             }
           });
 
-          manageClose?.addEventListener('click', () => {
-            closePanels({ restoreScroll: true });
-          });
-
           editToggle?.addEventListener('click', () => {
             const isOpen = editPanel.classList.toggle('is-open');
             if (isOpen) {
@@ -576,97 +577,6 @@
             }
           });
 
-          manualScanButton?.addEventListener('click', async () => {
-            manualScanButton.disabled = true;
-            setManualStatus('Starting scan…');
-            closeManualEventSource();
-
-            const handleComplete = (scanId) => {
-              if (!manualScanStatus) {
-                return;
-              }
-              manualScanStatus.innerHTML = '';
-              manualScanStatus.append('Done — ');
-              const link = document.createElement('a');
-              link.href = `/api/basic-rank-checker/scans/${scanId}`;
-              link.textContent = 'View scan';
-              manualScanStatus.append(link);
-            };
-
-            try {
-              const response = await fetch('/api/scans/manual', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tracked_playlist_id: playlistId }),
-              });
-              const data = await response.json().catch(() => ({}));
-
-              if (!response.ok || !data.scan_id) {
-                const detail = data.detail || 'Unable to start scan.';
-                const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
-                setManualStatus(message);
-                manualScanButton.disabled = false;
-                return;
-              }
-
-              const scanId = data.scan_id;
-              setManualStatus('Scan started…');
-              manualScanEventSource = new EventSource(`/api/basic-rank-checker/scans/${scanId}/events`);
-              manualScanEventSource.onmessage = (event) => {
-                const payload = JSON.parse(event.data || '{}');
-                if (payload.type === 'progress') {
-                  setManualStatus(payload.message || 'Scanning…');
-                }
-                if (payload.type === 'done') {
-                  closeManualEventSource();
-                  handleComplete(scanId);
-                  manualScanButton.disabled = false;
-                }
-                if (payload.type === 'error') {
-                  closeManualEventSource();
-                  setManualStatus(payload.message || 'Scan failed.');
-                  manualScanButton.disabled = false;
-                }
-              };
-              manualScanEventSource.onerror = () => {
-                closeManualEventSource();
-                setManualStatus('Connection lost.');
-                manualScanButton.disabled = false;
-              };
-            } catch (error) {
-              setManualStatus(error.message || 'Network error while starting scan.');
-              manualScanButton.disabled = false;
-            }
-          });
-
-          refreshButton?.addEventListener('click', async () => {
-            refreshButton.disabled = true;
-            setStatus('Fetching data from Spotify… please wait', 'status-loading');
-
-            try {
-              const response = await fetch(`/api/playlists/${playlistId}/refresh-stats`, {
-                method: 'POST',
-              });
-
-              const data = await response.json().catch(() => ({}));
-
-              if (!response.ok) {
-                const detail = data.detail || 'Unable to refresh playlist metadata.';
-                const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
-                setStatus(message, 'status-error');
-                refreshButton.disabled = false;
-                return;
-              }
-
-              const refreshedAt = data.refreshed_at ? new Date(data.refreshed_at) : null;
-              const timeLabel = refreshedAt ? refreshedAt.toLocaleString() : 'just now';
-              setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
-              window.location.reload();
-            } catch (error) {
-              setStatus('Network error while refreshing playlist.', 'status-error');
-              refreshButton.disabled = false;
-            }
-          });
         });
       };
 
@@ -680,8 +590,27 @@
         }
       });
 
+      const setupManualScanSection = () => {
+        if (!manualScanToggle || !manualScanSection) {
+          return;
+        }
+
+        manualScanToggle.addEventListener('click', () => {
+          const isOpen = manualScanSection.classList.toggle('is-open');
+          manualScanToggle.classList.toggle('is-active', isOpen);
+          manualScanToggle.setAttribute('aria-expanded', String(isOpen));
+          manualScanSection.setAttribute('aria-hidden', String(!isOpen));
+          if (isOpen) {
+            manualScanAnchor?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } else {
+            playlistControls?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        });
+      };
+
       setupAddPanel();
       setupManagePanels();
+      setupManualScanSection();
     </script>
   </body>
 </html>
