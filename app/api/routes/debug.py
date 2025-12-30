@@ -79,7 +79,7 @@ def schema_version(request: Request):
         version_row = session.execute(text("SELECT version_num FROM alembic_version")).one()
         manual_columns = session.execute(
             text(
-                \"\"\"
+                """
                 SELECT column_name
                 FROM information_schema.columns
                 WHERE table_name = 'basic_scans'
@@ -92,7 +92,7 @@ def schema_version(request: Request):
                     'manual_target_countries',
                     'manual_target_keywords'
                   )
-                \"\"\"
+                """
             )
         ).all()
     except Exception as exc:  # pragma: no cover - best effort defensive response

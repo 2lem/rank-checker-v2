@@ -38,7 +38,7 @@ def upgrade():
     for column in JSON_COLUMNS:
         op.execute(
             "ALTER TABLE basic_scans "
-            f"ADD COLUMN IF NOT EXISTS {column} JSONB DEFAULT '[]'::jsonb NOT NULL"
+            f"ADD COLUMN IF NOT EXISTS {column} JSONB DEFAULT '[]'::jsonb"
         )
         op.execute(
             "ALTER TABLE basic_scans "
@@ -47,18 +47,10 @@ def upgrade():
         op.execute(
             f"UPDATE basic_scans SET {column} = '[]'::jsonb WHERE {column} IS NULL"
         )
-        op.execute(
-            "ALTER TABLE basic_scans "
-            f"ALTER COLUMN {column} SET NOT NULL"
-        )
 
 
 def downgrade():
     for column in JSON_COLUMNS:
-        op.execute(
-            "ALTER TABLE basic_scans "
-            f"ALTER COLUMN {column} DROP NOT NULL"
-        )
         op.execute(
             "ALTER TABLE basic_scans "
             f"ALTER COLUMN {column} DROP DEFAULT"
