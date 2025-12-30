@@ -1267,7 +1267,9 @@
 
         manualScanCloseButton?.addEventListener('click', closeManualScan);
 
-        runButton?.addEventListener('click', () => {
+        runButton?.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
           setStage(2, progressWrap || scanRoot);
           startManualScan();
         });
