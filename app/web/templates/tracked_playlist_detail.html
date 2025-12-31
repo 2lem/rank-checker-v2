@@ -100,6 +100,9 @@
                   <div class="progress-fill" data-basic-scan-progress-fill></div>
                 </div>
                 <div class="progress-status" data-basic-scan-progress-status>Starting scan…</div>
+                <div class="progress-eta" data-basic-scan-progress-eta>
+                  Estimated remaining time: Estimating…
+                </div>
                 <div class="progress-log" data-basic-scan-progress-log></div>
               </section>
               {% set results_id = 'basic-scan-results' %}
@@ -567,6 +570,7 @@
         const progressWrap = scanRoot.querySelector('[data-basic-scan-progress]');
         const progressFill = scanRoot.querySelector('[data-basic-scan-progress-fill]');
         const progressStatus = scanRoot.querySelector('[data-basic-scan-progress-status]');
+        const progressEta = scanRoot.querySelector('[data-basic-scan-progress-eta]');
         const progressLog = scanRoot.querySelector('[data-basic-scan-progress-log]');
         const buildScanElements = (prefix) => ({
           resultsWrap: scanRoot.querySelector(`[data-${prefix}-results]`),
@@ -652,13 +656,29 @@
           setStage(2, progressWrap || scanRoot);
         };
 
-        const buildProgressMessage = (message, progress) => {
-          const etaLabel = progress?.eta_human ? `ETA ${progress.eta_human}` : '';
-          if (!etaLabel) {
-            return message || 'Scanning...';
+        const formatEta = (progress) => {
+          const etaMs = progress?.eta_ms;
+          if (Number.isFinite(etaMs) && etaMs !== null) {
+            const totalSeconds = Math.max(Math.round(etaMs / 1000), 0);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes}:${String(seconds).padStart(2, '0')}`;
           }
-          return `${message || 'Scanning...'} · ${etaLabel}`;
+          if (progress?.eta_human) {
+            return progress.eta_human;
+          }
+          return null;
         };
+
+        const updateEta = (progress) => {
+          if (!progressEta) {
+            return;
+          }
+          const formatted = formatEta(progress);
+          progressEta.textContent = `Estimated remaining time: ${formatted || 'Estimating…'}`;
+        };
+
+        const buildProgressMessage = (message) => message || 'Scanning...';
 
         const setProgress = (current, total, message, progress = null) => {
           if (!progressWrap) {
@@ -669,8 +689,9 @@
             progressFill.style.width = `${percent}%`;
           }
           if (progressStatus) {
-            progressStatus.textContent = buildProgressMessage(message, progress);
+            progressStatus.textContent = buildProgressMessage(message);
           }
+          updateEta(progress);
         };
 
         const appendLog = (message) => {
@@ -821,7 +842,7 @@
           const variant = reason === 'completed' ? 'status-success' : 'status-error';
 
           if (reason === 'completed') {
-            setProgress(options.total || 1, options.total || 1, 'Scan completed.');
+            setProgress(options.total || 1, options.total || 1, 'Scan completed.', { eta_ms: 0 });
             if (options.scanId) {
               try {
                 await loadResults(options.scanId);

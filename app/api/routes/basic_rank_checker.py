@@ -98,7 +98,7 @@ def start_basic_scan(payload: dict, db: Session = Depends(get_db)):
     scan_event_manager.create_queue(str(scan.id))
     thread = threading.Thread(target=run_basic_scan, args=(str(scan.id),), daemon=True)
     thread.start()
-    return {"scan_id": str(scan.id)}
+    return {"scan_id": str(scan.id), "status": "started"}
 
 
 @router.get("/scans/{scan_id}/events")
@@ -135,6 +135,8 @@ def stream_scan_events(scan_id: str):
                     "message": "Resuming scan…",
                     "step": scan_progress.get("completed_units"),
                     "total": scan_progress.get("total_units"),
+                    "completed_units": scan_progress.get("completed_units"),
+                    "total_units": scan_progress.get("total_units"),
                     "progress_pct": scan_progress.get("progress_pct"),
                     "eta_ms": scan_progress.get("eta_ms"),
                     "eta_human": scan_progress.get("eta_human"),
