@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.basic_rank_checker.events import scan_event_manager
 from app.basic_rank_checker.service import create_basic_scan, fetch_scan_details, run_basic_scan
+from app.basic_rank_checker.scan_logging import log_scan_cancel_requested, log_scan_cancelled
 from app.core.db import get_db
 from app.core.basic_scan_visibility import log_basic_scan_start
 from app.core.sse_guard import db_preflight_check
@@ -125,7 +126,12 @@ def stream_scan_events(scan_id: str):
         elif scan_status == "failed":
             scan_event_manager.publish(
                 scan_id,
-                {"type": "error", "message": scan_error_message or "Scan failed."},
+                {"type": "failed", "message": scan_error_message or "Scan failed."},
+            )
+        elif scan_status == "cancelled":
+            scan_event_manager.publish(
+                scan_id,
+                {"type": "cancelled", "message": "Scan cancelled."},
             )
         elif scan_status in {"running", "queued"}:
             scan_event_manager.publish(
@@ -152,6 +158,41 @@ def stream_scan_events(scan_id: str):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/scans/{scan_id}/cancel")
+def cancel_scan(scan_id: str, db: Session = Depends(get_db)):
+    try:
+        UUID(scan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Scan not found.") from exc
+
+    scan = db.get(BasicScan, scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+
+    now = datetime.now(timezone.utc)
+    if scan.cancel_requested_at is None:
+        scan.cancel_requested_at = now
+        log_scan_cancel_requested(scan_id=scan_id, source="ui")
+
+    if scan.status in {"queued", "running"}:
+        scan.status = "cancelled"
+        scan.cancelled_at = now
+        scan.finished_at = now
+        scan.error_message = scan.error_message or "Scan cancelled."
+        scan.error_reason = scan.error_reason or "cancelled"
+        scan.last_event_at = now
+        db.add(scan)
+        db.commit()
+        scan_event_manager.publish(scan_id, {"type": "cancelled", "message": "Scan cancelled."})
+        log_scan_cancelled(scan_id=scan_id)
+    else:
+        scan.last_event_at = now
+        db.add(scan)
+        db.commit()
+
+    return {"ok": True, "scan_id": scan_id, "status": scan.status}
 
 
 @router.get("/scans/latest")

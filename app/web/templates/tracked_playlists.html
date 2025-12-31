@@ -1737,11 +1737,17 @@
                   });
                   uiDebug('manual-scan:completed', activeScanId);
                 }
-                if (payload.type === 'error') {
+                if (payload.type === 'error' || payload.type === 'failed') {
                   stopPolling();
                   appendLog(payload.message || 'Scan failed.');
                   safeStop('scan failed');
                   uiDebug('manual-scan:error', payload.message || 'Scan failed.');
+                }
+                if (payload.type === 'cancelled') {
+                  stopPolling();
+                  appendLog(payload.message || 'Scan cancelled.');
+                  safeStop('scan failed');
+                  uiDebug('manual-scan:cancelled', payload.message || 'Scan cancelled.');
                 }
               } catch (error) {
                 if (typeof console !== 'undefined' && console.error) {

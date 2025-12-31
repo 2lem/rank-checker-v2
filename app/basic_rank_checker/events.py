@@ -128,8 +128,12 @@ class ScanEventManager:
                     payload.setdefault("status", "completed")
                 elif payload.get("type") == "completed_partial":
                     payload.setdefault("status", "completed_partial")
+                elif payload.get("type") == "failed":
+                    payload.setdefault("status", "failed")
                 elif payload.get("type") == "error":
                     payload.setdefault("status", "error")
+                elif payload.get("type") == "cancelled":
+                    payload.setdefault("status", "cancelled")
 
                 try:
                     yield f"data: {_serialize_event(payload)}\n\n"
@@ -146,7 +150,14 @@ class ScanEventManager:
                     yield "event: error\ndata: {\"message\":\"internal_sse_error\"}\n\n"
                     break
                 last_heartbeat_at = time.monotonic()
-                if payload.get("type") in {"completed", "completed_partial", "partial", "error"}:
+                if payload.get("type") in {
+                    "completed",
+                    "completed_partial",
+                    "partial",
+                    "error",
+                    "failed",
+                    "cancelled",
+                }:
                     break
 
         return _generator()
