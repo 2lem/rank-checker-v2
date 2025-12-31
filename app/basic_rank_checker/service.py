@@ -33,6 +33,93 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _format_eta_human(seconds_remaining: float) -> str:
+    total_seconds = max(int(round(seconds_remaining)), 0)
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+def _calculate_eta(
+    *, started_at: datetime | None, completed_units: int, total_units: int, now: datetime
+) -> tuple[int | None, str | None]:
+    if not started_at or completed_units <= 0 or total_units <= 0:
+        return None, None
+    elapsed_seconds = (now - started_at).total_seconds()
+    if elapsed_seconds <= 0:
+        return None, None
+    avg_seconds = elapsed_seconds / max(completed_units, 1)
+    remaining_units = max(total_units - completed_units, 0)
+    remaining_seconds = avg_seconds * remaining_units
+    eta_ms = int(max(remaining_seconds * 1000, 0))
+    return eta_ms, _format_eta_human(remaining_seconds)
+
+
+def _persist_scan_progress(
+    db: Session,
+    scan_id: str,
+    *,
+    completed_units: int,
+    total_units: int,
+    started_at: datetime | None,
+) -> dict[str, int | str | None]:
+    scan = db.get(BasicScan, scan_id)
+    if scan is None:
+        return {
+            "completed_units": completed_units,
+            "total_units": total_units,
+            "progress_pct": None,
+            "eta_ms": None,
+            "eta_human": None,
+        }
+    now = _now_utc()
+    eta_ms, eta_human = _calculate_eta(
+        started_at=started_at,
+        completed_units=completed_units,
+        total_units=total_units,
+        now=now,
+    )
+    progress_pct = int(round((completed_units / total_units) * 100)) if total_units else 0
+    scan.progress_completed_units = completed_units
+    scan.progress_total_units = total_units
+    scan.progress_pct = progress_pct
+    scan.eta_ms = eta_ms
+    scan.eta_human = eta_human
+    scan.last_progress_at = now
+    db.add(scan)
+    db.commit()
+    return {
+        "completed_units": completed_units,
+        "total_units": total_units,
+        "progress_pct": progress_pct,
+        "eta_ms": eta_ms,
+        "eta_human": eta_human,
+    }
+
+
+def _progress_payload(scan: BasicScan, completed_units: int, total_units: int) -> dict:
+    stored_completed = scan.progress_completed_units
+    stored_total = scan.progress_total_units
+    stored_pct = scan.progress_pct
+    completed = stored_completed if stored_completed is not None else completed_units
+    total = stored_total if stored_total is not None else total_units
+    progress_pct = stored_pct
+    if progress_pct is None:
+        progress_pct = int(round((completed / total) * 100)) if total else 0
+    return {
+        "completed_units": completed,
+        "total_units": total,
+        "progress_pct": progress_pct,
+        "eta_ms": scan.eta_ms,
+        "eta_human": scan.eta_human,
+    }
+
+
 def _market_label(code: str) -> str:
     normalized = (code or "").strip().upper()
     if not normalized:
@@ -170,6 +257,13 @@ def run_basic_scan(scan_id: str) -> None:
         countries_count = len(countries)
         keywords_count = len(keywords)
         total_steps = max(len(countries) * len(keywords), 1)
+        _persist_scan_progress(
+            db,
+            scan_id,
+            completed_units=0,
+            total_units=total_steps,
+            started_at=scan.started_at,
+        )
 
         # Release the initial SELECT transaction before long-running Spotify requests.
         db.rollback()
@@ -202,6 +296,13 @@ def run_basic_scan(scan_id: str) -> None:
                 if not first_sse_event_logged:
                     log_scan_lifecycle("first_sse_event", scan_id)
                     first_sse_event_logged = True
+                progress_payload = _persist_scan_progress(
+                    db,
+                    scan_id,
+                    completed_units=step,
+                    total_units=total_steps,
+                    started_at=scan.started_at,
+                )
                 scan_event_manager.publish(
                     scan_id,
                     {
@@ -211,6 +312,9 @@ def run_basic_scan(scan_id: str) -> None:
                         "message": f"Scanning {_market_label(country)} for '{keyword}'...",
                         "step": step,
                         "total": total_steps,
+                        "progress_pct": progress_payload.get("progress_pct"),
+                        "eta_ms": progress_payload.get("eta_ms"),
+                        "eta_human": progress_payload.get("eta_human"),
                     },
                 )
                 _log_iteration_event(
@@ -470,15 +574,20 @@ def fetch_scan_details(db: Session, scan_id: str) -> dict | None:
         }
         tracked_playlist_name = scan.manual_playlist_name
 
+    total_units = max(len(scan.scanned_countries or []) * len(scan.scanned_keywords or []), 1)
+    progress_payload = _progress_payload(scan, len(queries), total_units)
+
     return {
         "scan_id": scan.id,
         "tracked_playlist_id": scan.tracked_playlist_id,
         "status": scan.status,
+        "created_at": scan.created_at,
         "started_at": scan.started_at,
         "finished_at": scan.finished_at,
         "follower_snapshot": scan.follower_snapshot,
         "scanned_countries": scan.scanned_countries,
         "scanned_keywords": scan.scanned_keywords,
+        "progress": progress_payload,
         "tracked_playlist_name": tracked_playlist_name,
         "manual_playlist": manual_playlist,
         "summary": summary,

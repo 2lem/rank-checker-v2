@@ -87,6 +87,7 @@
                 </div>
                 <div class="run-scan-controls" id="run-scan-controls" data-basic-scan-run-controls>
                   <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
+                  <button class="btn btn-secondary" type="button" data-basic-scan-latest>Latest Scan</button>
                 </div>
               </section>
               <section
@@ -569,6 +570,7 @@
         const scanParameters = scanRoot.querySelector('[data-basic-scan-parameters]');
         const runControls = scanRoot.querySelector('[data-basic-scan-run-controls]');
         const runButton = scanRoot.querySelector('[data-basic-scan-run]');
+        const latestButton = scanRoot.querySelector('[data-basic-scan-latest]');
         const progressWrap = scanRoot.querySelector('[data-basic-scan-progress]');
         const progressFill = scanRoot.querySelector('[data-basic-scan-progress-fill]');
         const progressStatus = scanRoot.querySelector('[data-basic-scan-progress-status]');
@@ -580,6 +582,7 @@
         const exportSummary = scanRoot.querySelector('[data-basic-scan-export-summary]');
         const exportDetailed = scanRoot.querySelector('[data-basic-scan-export-detailed]');
         const summarySection = document.getElementById('basic-scan-summary');
+        const detailedSection = document.getElementById('basic-scan-detailed');
         const csvControls = scanRoot.querySelector('[data-basic-scan-csv-controls]');
         const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -589,6 +592,10 @@
         let watchdogTimer = null;
         let lastMessageAt = null;
         let hasStopped = false;
+        let pollTimer = null;
+        let pollActiveScanId = null;
+        let pollInFlight = false;
+        let pollStartAt = null;
         const WATCHDOG_MS = 45000;
         const WATCHDOG_CHECK_MS = 5000;
 
@@ -637,7 +644,15 @@
           setStage(2, progressWrap || scanRoot);
         };
 
-        const setProgress = (current, total, message) => {
+        const buildProgressMessage = (message, progress) => {
+          const etaLabel = progress?.eta_human ? `ETA ${progress.eta_human}` : '';
+          if (!etaLabel) {
+            return message || 'Scanning...';
+          }
+          return `${message || 'Scanning...'} · ${etaLabel}`;
+        };
+
+        const setProgress = (current, total, message, progress = null) => {
           if (!progressWrap) {
             return;
           }
@@ -646,7 +661,7 @@
             progressFill.style.width = `${percent}%`;
           }
           if (progressStatus) {
-            progressStatus.textContent = message || 'Scanning...';
+            progressStatus.textContent = buildProgressMessage(message, progress);
           }
         };
 
@@ -659,6 +674,92 @@
           entry.textContent = message;
           progressLog.appendChild(entry);
           progressLog.scrollTop = progressLog.scrollHeight;
+        };
+
+        const hasResults = (scan) => {
+          if (!scan || typeof scan !== 'object') {
+            return false;
+          }
+          if (Array.isArray(scan.summary)) {
+            return scan.summary.length > 0;
+          }
+          if (scan.detailed && typeof scan.detailed === 'object') {
+            return Object.keys(scan.detailed).length > 0;
+          }
+          return false;
+        };
+
+        const isScanComplete = (scan) =>
+          scan?.status === 'completed' ||
+          scan?.status === 'completed_partial' ||
+          Boolean(scan?.finished_at) ||
+          hasResults(scan);
+
+        const applyProgressSnapshot = (progress, messageOverride) => {
+          if (!progress || typeof progress !== 'object') {
+            return;
+          }
+          const completed = progress.completed_units ?? 0;
+          const total = progress.total_units ?? 0;
+          const message = messageOverride || 'Scan in progress...';
+          setProgress(completed, total, message, progress);
+        };
+
+        const stopPolling = () => {
+          if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+          }
+          pollStartAt = null;
+          pollActiveScanId = null;
+          pollInFlight = false;
+        };
+
+        const startCompletionPoll = (scanId) => {
+          if (!scanId) {
+            return;
+          }
+          stopPolling();
+          pollActiveScanId = scanId;
+          pollStartAt = Date.now();
+          pollTimer = setInterval(async () => {
+            if (!pollActiveScanId || pollInFlight) {
+              return;
+            }
+            if (Date.now() - pollStartAt > 10 * 60 * 1000) {
+              stopPolling();
+              return;
+            }
+            pollInFlight = true;
+            try {
+              const response = await fetch(
+                `/api/basic-rank-checker/scans/${pollActiveScanId}`
+              );
+              const data = await readErrorPayload(response);
+              if (!response.ok) {
+                throw new Error(
+                  normalizeErrorMessage(data, 'Unable to check scan status.')
+                );
+              }
+              if (data?.progress) {
+                applyProgressSnapshot(data.progress);
+              }
+              if (isScanComplete(data)) {
+                await safeStop('completed', { scanId: pollActiveScanId });
+                stopPolling();
+              } else if (data?.status === 'failed') {
+                appendLog('Scan failed.');
+                await safeStop('scan failed');
+                stopPolling();
+              }
+            } catch (error) {
+              if (typeof console !== 'undefined' && console.debug) {
+                console.debug('[basic-scan] polling error', error);
+              }
+            } finally {
+              pollInFlight = false;
+            }
+          }, 5000);
         };
 
         const clearWatchdog = () => {
@@ -696,6 +797,7 @@
             eventSource = null;
           }
           clearWatchdog();
+          stopPolling();
           if (progressLog) {
             progressLog.innerHTML = '';
           }
@@ -924,6 +1026,91 @@
           }
         };
 
+        const showEmptyState = (message) => {
+          if (summaryLead) {
+            summaryLead.textContent = message;
+            summaryLead.hidden = false;
+          }
+          if (summaryList) {
+            summaryList.innerHTML = '';
+            summaryList.hidden = true;
+          }
+          if (detailedWrap) {
+            detailedWrap.innerHTML = '';
+          }
+          if (detailedSection) {
+            detailedSection.hidden = true;
+          }
+          if (csvControls) {
+            hideSection(csvControls);
+          }
+          setStage(3, summarySection);
+        };
+
+        const connectEventStream = (scanId) => {
+          if (!scanId) {
+            return;
+          }
+          activeScanId = scanId;
+          if (eventSource) {
+            eventSource.close();
+          }
+          const eventsUrl = `/api/basic-rank-checker/scans/${scanId}/events`;
+          eventSource = new EventSource(eventsUrl);
+          startWatchdog();
+          startCompletionPoll(scanId);
+          eventSource.onmessage = async (event) => {
+            try {
+              updateLastMessageAt();
+              const rawText = event?.data ?? '';
+              let payload = null;
+              try {
+                payload = JSON.parse(rawText);
+              } catch (error) {
+                payload = null;
+              }
+              const statusValue = `${payload?.status ?? payload?.type ?? ''}`.toLowerCase();
+              const completionText = rawText.toLowerCase();
+              const completionSignals = ['completed', 'done', 'finished'];
+              if (
+                completionSignals.includes(statusValue) ||
+                completionSignals.some((signal) => completionText.includes(signal))
+              ) {
+                await safeStop('completed', {
+                  scanId: activeScanId,
+                  total: payload?.total,
+                });
+                return;
+              }
+              if (payload?.type === 'progress') {
+                setProgress(payload.step, payload.total, payload.message, payload);
+                appendLog(payload.message);
+              }
+              if (payload?.type === 'done') {
+                await safeStop('completed', {
+                  scanId: activeScanId,
+                  total: payload?.total,
+                });
+              }
+              if (payload?.type === 'error') {
+                appendLog(payload.message || 'Scan failed.');
+                await safeStop('scan failed');
+              }
+            } catch (error) {
+              if (typeof console !== 'undefined' && console.error) {
+                console.error('[basic-scan] event handling failed', error);
+              }
+              await safeStop('handler error');
+            }
+          };
+          eventSource.onerror = (error) => {
+            if (typeof console !== 'undefined' && console.error) {
+              console.error('[basic-scan] connection error', error);
+            }
+            safeStop('connection error');
+          };
+        };
+
         const resolveTrackedPlaylistId = () => {
           const datasetId = scanRoot?.dataset?.trackedPlaylistId;
           if (datasetId) {
@@ -964,62 +1151,7 @@
             }
             activeScanId = data.scan_id;
             scanStarted = Boolean(activeScanId);
-            if (eventSource) {
-              eventSource.close();
-            }
-            const eventsUrl = `/api/basic-rank-checker/scans/${activeScanId}/events`;
-            eventSource = new EventSource(eventsUrl);
-            startWatchdog();
-            eventSource.onmessage = async (event) => {
-              try {
-                updateLastMessageAt();
-                const rawText = event?.data ?? '';
-                let payload = null;
-                try {
-                  payload = JSON.parse(rawText);
-                } catch (error) {
-                  payload = null;
-                }
-                const statusValue = `${payload?.status ?? payload?.type ?? ''}`.toLowerCase();
-                const completionText = rawText.toLowerCase();
-                const completionSignals = ['completed', 'done', 'finished'];
-                if (
-                  completionSignals.includes(statusValue) ||
-                  completionSignals.some((signal) => completionText.includes(signal))
-                ) {
-                  await safeStop('completed', {
-                    scanId: activeScanId,
-                    total: payload?.total,
-                  });
-                  return;
-                }
-                if (payload.type === 'progress') {
-                  setProgress(payload.step, payload.total, payload.message);
-                  appendLog(payload.message);
-                }
-                if (payload.type === 'done') {
-                  await safeStop('completed', {
-                    scanId: activeScanId,
-                    total: payload?.total,
-                  });
-                }
-                if (payload.type === 'error') {
-                  appendLog(payload.message || 'Scan failed.');
-                  await safeStop('scan failed');
-                }
-              } catch (error) {
-                if (typeof console !== 'undefined' && console.error) {
-                  console.error('[basic-scan] event handling failed', error);
-                }
-                await safeStop('handler error');
-              }
-            };
-            eventSource.onerror = (error) => {
-              if (typeof console !== 'undefined' && console.error) {
-                console.error('[basic-scan] connection error', error);
-              }
-              safeStop('connection error');
-            };
+            connectEventStream(activeScanId);
           } catch (error) {
             if (typeof console !== 'undefined' && console.error) {
               console.error('[basic-scan] start failed', error);
@@ -1037,11 +1169,80 @@
           }
         };
 
+        const loadLatestScan = async () => {
+          if (!latestButton) {
+            return;
+          }
+          const trackedPlaylistId = resolveTrackedPlaylistId();
+          latestButton.disabled = true;
+          hasStopped = false;
+          if (progressLog) {
+            progressLog.innerHTML = '';
+          }
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          clearWatchdog();
+          stopPolling();
+          setProgress(0, 0, 'Loading latest scan…');
+          setStage(2, progressWrap || scanRoot);
+
+          try {
+            const url = new URL('/api/basic-rank-checker/scans/latest', window.location.origin);
+            if (trackedPlaylistId) {
+              url.searchParams.set('tracked_playlist_id', trackedPlaylistId);
+            }
+            const response = await fetch(`${url.pathname}${url.search}`);
+            const data = await readErrorPayload(response);
+            if (response.status === 404) {
+              showEmptyState('No scans yet.');
+              return;
+            }
+            if (!response.ok) {
+              throw new Error(normalizeErrorMessage(data, 'Failed to load latest scan.'));
+            }
+            if (!data || typeof data !== 'object' || !data.scan_id) {
+              throw new Error('Failed to load latest scan.');
+            }
+
+            activeScanId = data.scan_id;
+            if (data.status === 'failed') {
+              setStatus('Scan interrupted. Please run again.', 'status-error');
+              setStage(1, scanParameters || scanRoot);
+              return;
+            }
+
+            if (data.progress) {
+              applyProgressSnapshot(data.progress, 'Scan in progress...');
+            }
+
+            if (data.status === 'completed' || data.status === 'completed_partial') {
+              await loadResults(activeScanId);
+              setStage(3, summarySection);
+              return;
+            }
+
+            connectEventStream(activeScanId);
+          } catch (error) {
+            setStage(1, scanParameters || scanRoot);
+            setStatus(normalizeErrorMessage(error, 'Failed to load latest scan.'), 'status-error');
+          } finally {
+            latestButton.disabled = false;
+          }
+        };
+
         runButton?.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
           openBasicScanStage2();
           startScan();
+        });
+
+        latestButton?.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          loadLatestScan();
         });
 
         basicScanStageController.openBasicScanStage1 = openBasicScanStage1;

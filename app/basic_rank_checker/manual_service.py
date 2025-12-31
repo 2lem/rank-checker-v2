@@ -104,6 +104,13 @@ def run_manual_scan(scan_id: str) -> None:
         countries_count = len(countries)
         keywords_count = len(keywords)
         total_steps = max(len(countries) * len(keywords), 1)
+        basic_service._persist_scan_progress(
+            db,
+            scan_id,
+            completed_units=0,
+            total_units=total_steps,
+            started_at=scan.started_at,
+        )
 
         # Release the initial SELECT transaction before long-running Spotify requests.
         db.rollback()
@@ -150,6 +157,13 @@ def run_manual_scan(scan_id: str) -> None:
                 if not first_sse_event_logged:
                     log_scan_lifecycle("first_sse_event", scan_id)
                     first_sse_event_logged = True
+                progress_payload = basic_service._persist_scan_progress(
+                    db,
+                    scan_id,
+                    completed_units=step,
+                    total_units=total_steps,
+                    started_at=scan.started_at,
+                )
                 scan_event_manager.publish(
                     scan_id,
                     {
@@ -159,6 +173,9 @@ def run_manual_scan(scan_id: str) -> None:
                         "message": f"Scanning {basic_service._market_label(country)} for '{keyword}'...",
                         "step": step,
                         "total": total_steps,
+                        "progress_pct": progress_payload.get("progress_pct"),
+                        "eta_ms": progress_payload.get("eta_ms"),
+                        "eta_human": progress_payload.get("eta_human"),
                     },
                 )
                 basic_service._log_iteration_event(
