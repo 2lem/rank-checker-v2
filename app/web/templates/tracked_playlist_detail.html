@@ -261,6 +261,14 @@
         }
       };
 
+      const parseJsonSafely = async (response) => {
+        try {
+          return await response.json();
+        } catch (error) {
+          return null;
+        }
+      };
+
       const normalizeErrorMessage = (payload, fallback) => {
         if (!payload) {
           return fallback;
@@ -291,14 +299,18 @@
           const response = await fetch(`/api/playlists/{{ playlist.id }}/refresh-stats`, {
             method: 'POST',
           });
-          const data = await readErrorPayload(response);
-
           if (!response.ok) {
-            const message = normalizeErrorMessage(data, 'Unable to refresh playlist metadata.');
+            const errorPayload = await readErrorPayload(response);
+            const message = normalizeErrorMessage(
+              errorPayload,
+              'Unable to refresh playlist metadata.'
+            );
             setStatus(message, 'status-error');
             return;
           }
 
+          let data = null;
+          data = await parseJsonSafely(response);
           const refreshedAt =
             data && typeof data === 'object' && data.refreshed_at ? new Date(data.refreshed_at) : null;
           const timeLabel = refreshedAt ? refreshedAt.toLocaleString() : 'just now';
@@ -306,15 +318,16 @@
           didReload = true;
           window.location.reload();
         } catch (error) {
+          if (typeof console !== 'undefined' && console.error) {
+            console.error('[ui] refresh stats failed', error);
+          }
           const message = normalizeErrorMessage(
             error,
             'Network error while refreshing playlist.'
           );
           setStatus(message, 'status-error');
         } finally {
-          if (!didReload) {
-            refreshButton.disabled = false;
-          }
+          refreshButton.disabled = false;
           if (!didReload && statusArea?.classList.contains('status-loading')) {
             setStatus('Unable to refresh playlist metadata.', 'status-error');
           }
@@ -657,11 +670,14 @@
           });
         };
 
-        const loadResults = async (scanId) => {
+      const loadResults = async (scanId) => {
           const response = await fetch(`/api/basic-rank-checker/scans/${scanId}`);
-          const data = await response.json();
+          const data = await parseJsonSafely(response);
           if (!response.ok) {
-            throw new Error(data.detail || 'Failed to load scan results.');
+            throw new Error(normalizeErrorMessage(data, 'Failed to load scan results.'));
+          }
+          if (!data || typeof data !== 'object') {
+            throw new Error('Failed to load scan results.');
           }
           renderSummary(data);
           renderDetailed(data);
@@ -724,7 +740,10 @@
             if (!response.ok) {
               throw new Error(normalizeErrorMessage(data, 'Failed to start scan.'));
             }
-            activeScanId = data?.scan_id;
+            if (!data || typeof data !== 'object' || !data.scan_id) {
+              throw new Error('Failed to start scan.');
+            }
+            activeScanId = data.scan_id;
             scanStarted = Boolean(activeScanId);
             if (eventSource) {
               eventSource.close();
@@ -775,6 +794,9 @@
               }
             };
           } catch (error) {
+            if (typeof console !== 'undefined' && console.error) {
+              console.error('[basic-scan] start failed', error);
+            }
             setStage(1);
             runButton.disabled = false;
             setStatus(normalizeErrorMessage(error, 'Failed to start scan.'), 'status-error');

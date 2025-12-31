@@ -220,7 +220,11 @@
 
     <script>
       const initTrackedPlaylistsPage = () => {
-        const pageRoot = document.querySelector('[data-tracked-playlists-page]');
+        const pageRoots = document.querySelectorAll('[data-tracked-playlists-page]');
+        if (pageRoots.length !== 1) {
+          return;
+        }
+        const pageRoot = pageRoots[0];
         if (!pageRoot) {
           return;
         }
@@ -351,6 +355,14 @@
         try {
           const text = await response.text();
           return text || null;
+        } catch (error) {
+          return null;
+        }
+      };
+
+      const parseJsonSafely = async (response) => {
+        try {
+          return await response.json();
         } catch (error) {
           return null;
         }
@@ -522,6 +534,7 @@
             return;
           }
           const playlistInput = form.querySelector('[data-playlist-input]');
+          const submitButton = form.querySelector('button[type="submit"]');
           const countrySelect = form.querySelector('[data-country-select]');
           const countryAdd = form.querySelector('[data-country-add]');
           const countryPills = form.querySelector('[data-country-pills]');
@@ -607,6 +620,9 @@
 
           form.addEventListener('submit', async (event) => {
             event.preventDefault();
+            if (submitButton) {
+              submitButton.disabled = true;
+            }
             const payload = {
               playlist_url: playlistInput?.value,
               target_countries: countryManager.getValues(),
@@ -643,12 +659,18 @@
               didReload = true;
               window.location.reload();
             } catch (error) {
+              if (typeof console !== 'undefined' && console.error) {
+                console.error('[ui] add playlist failed', error);
+              }
               const message = normalizeErrorMessage(error, 'Network error while adding playlist.');
               setStatus(message, 'status-error');
               uiDebug('add-playlist:error', message);
             } finally {
               if (!didReload && statusArea?.classList.contains('status-loading')) {
                 setStatus('Unable to add playlist.', 'status-error');
+              }
+              if (submitButton) {
+                submitButton.disabled = false;
               }
             }
           });
@@ -871,8 +893,8 @@
               });
 
               if (!response.ok) {
-                const data = await response.json().catch(() => ({}));
-                const detail = data.detail || 'Unable to update playlist.';
+                const data = await parseJsonSafely(response);
+                const detail = data?.detail || 'Unable to update playlist.';
                 const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
                 setStatus(message, 'status-error');
                 return;
@@ -1279,11 +1301,14 @@
           });
         };
 
-        const loadResults = async (scanId) => {
+      const loadResults = async (scanId) => {
           const response = await fetch(`/api/basic-rank-checker/scans/${scanId}`);
-          const data = await response.json();
+          const data = await parseJsonSafely(response);
           if (!response.ok) {
-            throw new Error(data.detail || 'Failed to load scan results.');
+            throw new Error(normalizeErrorMessage(data, 'Failed to load scan results.'));
+          }
+          if (!data || typeof data !== 'object') {
+            throw new Error('Failed to load scan results.');
           }
           renderSummary(data);
           renderDetailed(data);
@@ -1370,9 +1395,9 @@
               const response = await fetch(
                 `/api/basic-rank-checker/scans/${pollActiveScanId}`
               );
-              const data = await response.json();
+              const data = await parseJsonSafely(response);
               if (!response.ok) {
-                throw new Error(data.detail || 'Unable to check scan status.');
+                throw new Error(normalizeErrorMessage(data, 'Unable to check scan status.'));
               }
               if (isScanComplete(data)) {
                 // Guard against reconnect/status updates after a terminal completion.
@@ -1525,10 +1550,13 @@
                 target_countries: countryManager.getValues(),
               }),
             });
-            const data = await response.json().catch(() => ({}));
+            const data = await parseJsonSafely(response);
             uiDebug('manual-scan:response', response.status);
             if (!response.ok) {
               throw new Error(normalizeErrorMessage(data, 'Failed to start scan.'));
+            }
+            if (!data || typeof data !== 'object' || !data.scan_id) {
+              throw new Error('Failed to start scan.');
             }
             activeScanId = data.scan_id;
             startedScan = true;
@@ -1609,6 +1637,9 @@
               };
             }
           } catch (error) {
+            if (typeof console !== 'undefined' && console.error) {
+              console.error('[ui] manual scan start failed', error);
+            }
             setStage(1);
             runButton.disabled = false;
             const message = normalizeErrorMessage(error, 'Failed to start scan.');
