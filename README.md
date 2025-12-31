@@ -40,6 +40,27 @@ BASE_URL=http://localhost:8080 npx playwright test
 
 Railway deploy is triggered by merging to main (GitHub auto-deploy).
 
+## Production diagnose workflow
+
+The GitHub Actions workflow `.github/workflows/prod-diagnose.yml` runs manual, production-facing diagnostics
+against the deployed URL using stored secrets.
+
+How to run:
+
+1. Open **Actions** in GitHub.
+2. Select **Prod Diagnose**.
+3. Click **Run workflow**.
+
+Artifacts are uploaded under `prod-diagnose` and include per-endpoint metrics, headers, and response bodies.
+
+How to interpret:
+
+- `*.metrics.txt` files contain `CURL_HTTP_CODE`, `CURL_TIME_TOTAL`, `CURL_TIME_STARTTRANSFER` (TTFB),
+  `CURL_TIME_CONNECT`, and `CURL_EXIT_CODE` (28 indicates a timeout).
+- `*.body.txt` files contain the first 5KB of response body for each endpoint.
+- Debug endpoint responses (best-effort) are stored in `debug-*.body.txt` and can show pool saturation or
+  thread/scan stalls when available.
+
 ## Health check
 
 ```bash

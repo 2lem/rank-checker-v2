@@ -1,8 +1,12 @@
 import { expect, test } from '@playwright/test';
+import { attachSseStateOnFailure, installSseObserver } from './sse-helpers';
 
 test('Tracked playlist refresh completes', async ({ page }) => {
+  test.setTimeout(60_000);
   const playlistId = process.env.TEST_TRACKED_PLAYLIST_ID;
   test.skip(!playlistId, 'TEST_TRACKED_PLAYLIST_ID is not set');
+
+  await installSseObserver(page);
 
   await page.goto(`/playlists/${playlistId}`);
 
@@ -27,4 +31,8 @@ test('Tracked playlist refresh completes', async ({ page }) => {
   ]);
 
   await expect(status).not.toHaveClass(/status-loading/);
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  await attachSseStateOnFailure(page, testInfo);
 });

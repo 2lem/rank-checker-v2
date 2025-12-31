@@ -1,9 +1,13 @@
 import { expect, test } from '@playwright/test';
+import { attachSseStateOnFailure, installSseObserver } from './sse-helpers';
 
 test('Add playlist submission completes', async ({ page }) => {
+  test.setTimeout(60_000);
   const playlistInput = process.env.TEST_PLAYLIST_URL_OR_ID;
   const addPath = process.env.ADD_PLAYLIST_PATH || '/';
   test.skip(!playlistInput, 'TEST_PLAYLIST_URL_OR_ID is not set');
+
+  await installSseObserver(page);
 
   await page.goto(addPath);
 
@@ -40,4 +44,9 @@ test('Add playlist submission completes', async ({ page }) => {
   ]);
 
   await expect(status).not.toHaveClass(/status-loading/);
+  await expect(status).toHaveClass(/status-(success|error)/);
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  await attachSseStateOnFailure(page, testInfo);
 });

@@ -1,9 +1,13 @@
 import { expect, test } from '@playwright/test';
+import { attachSseStateOnFailure, installSseObserver, waitForSseCompletion } from './sse-helpers';
 
 test('Manual scan completes without hanging', async ({ page }) => {
+  test.setTimeout(90_000);
   const playlistId = process.env.TEST_TRACKED_PLAYLIST_ID;
   const playlistUrl = process.env.TEST_PLAYLIST_URL_OR_ID;
   test.skip(!playlistUrl, 'TEST_PLAYLIST_URL_OR_ID is not set');
+
+  await installSseObserver(page);
 
   const primaryPath = playlistId ? `/playlists/${playlistId}` : '/';
   await page.goto(primaryPath);
@@ -45,6 +49,8 @@ test('Manual scan completes without hanging', async ({ page }) => {
   const progressStatus = page.locator('[data-manual-scan-progress-status]');
   await expect(progressStatus).toContainText(/scan|starting/i, { timeout: 10000 });
 
+  await waitForSseCompletion(page, 45_000);
+
   await page.waitForFunction(
     () => {
       const progressEl = document.querySelector('[data-manual-scan-progress]');
@@ -60,4 +66,8 @@ test('Manual scan completes without hanging', async ({ page }) => {
 
   const status = page.locator('#playlist-status');
   await expect(status).not.toHaveClass(/status-loading/);
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  await attachSseStateOnFailure(page, testInfo);
 });
