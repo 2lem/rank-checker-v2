@@ -1,5 +1,7 @@
 import logging
 import os
+import time
+import uuid
 from pathlib import Path
 
 from contextvars import Token
@@ -39,6 +41,30 @@ async def request_path_context_middleware(request: Request, call_next):
         response = await call_next(request)
     finally:
         request_path_var.reset(token)
+    return response
+
+
+@app.middleware("http")
+async def request_tracing_middleware(request: Request, call_next):
+    request_id = uuid.uuid4().hex[:8]
+    method = request.method
+    path = request.url.path
+    logger.info("REQ_START %s %s %s", request_id, method, path)
+    start_time = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as err:
+        logger.error("REQ_ERR %s %s %s %s", request_id, method, path, err)
+        raise
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(
+        "REQ_END %s %s %s %s %.2fms",
+        request_id,
+        method,
+        path,
+        response.status_code,
+        elapsed_ms,
+    )
     return response
 
 app.include_router(debug_router)
