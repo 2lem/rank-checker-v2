@@ -114,11 +114,9 @@
                   <div class="progress-fill" data-basic-scan-progress-fill></div>
                 </div>
                 <div class="progress-status" data-basic-scan-progress-status>Starting scan…</div>
-                <div class="progress-eta" data-basic-scan-progress-eta>
-                  Estimated remaining time: Estimating…
-                </div>
                 <div class="progress-helper" data-basic-scan-progress-helper>
-                  Your scan is still in progress. Estimating remaining time...
+                  Your scan is still in progress. Estimating remaining time. Refresh this page soon to
+                  see your scan results.
                 </div>
                 <div class="progress-log" data-basic-scan-progress-log></div>
                 <div class="progress-actions">
@@ -628,7 +626,6 @@
         const progressWrap = scanRoot.querySelector('[data-basic-scan-progress]');
         const progressFill = scanRoot.querySelector('[data-basic-scan-progress-fill]');
         const progressStatus = scanRoot.querySelector('[data-basic-scan-progress-status]');
-        const progressEta = scanRoot.querySelector('[data-basic-scan-progress-eta]');
         const progressHelper = scanRoot.querySelector('[data-basic-scan-progress-helper]');
         const progressLog = scanRoot.querySelector('[data-basic-scan-progress-log]');
         const stopButton = scanRoot.querySelector('[data-basic-scan-stop]');
@@ -694,26 +691,29 @@
           setStage(2, progressWrap || scanRoot);
         };
 
-        const formatEtaMs = (etaMs) => {
+        const computeEtaMinutes = (etaMs) => {
           if (!Number.isFinite(etaMs)) {
             return null;
           }
-          const totalSeconds = Math.max(Math.floor(etaMs / 1000), 0);
-          const hours = Math.floor(totalSeconds / 3600);
-          const minutes = Math.floor((totalSeconds % 3600) / 60);
-          const seconds = totalSeconds % 60;
-          if (hours > 0) {
-            return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+          const clampedMs = Math.max(0, etaMs);
+          const minutes = Math.ceil(clampedMs / 60000);
+          if (clampedMs > 0 && minutes < 1) {
+            return 1;
           }
-          return `${minutes}:${String(seconds).padStart(2, '0')}`;
+          return minutes;
         };
 
-        const updateEtaDisplay = () => {
-          if (!progressEta) {
+        const updateProgressHelper = (etaMsValue = null) => {
+          if (!progressHelper) {
             return;
           }
-          const formatted = formatEtaMs(etaMsLive);
-          progressEta.textContent = `Estimated remaining time: ${formatted || 'Estimating…'}`;
+          const minutes = computeEtaMinutes(etaMsValue);
+          if (minutes !== null) {
+            progressHelper.textContent = `Your scan is still in progress. Estimated time remaining: ${minutes} minutes. Refresh this page in ${minutes} minutes to see your scan results.`;
+          } else {
+            progressHelper.textContent =
+              'Your scan is still in progress. Estimating remaining time. Refresh this page soon to see your scan results.';
+          }
         };
 
         const setEtaMsFromServer = (etaMs) => {
@@ -724,7 +724,7 @@
             etaMsFromServer = null;
             etaMsLive = null;
           }
-          updateEtaDisplay();
+          updateProgressHelper(etaMsLive);
         };
 
         const stopEtaTick = () => {
@@ -747,7 +747,7 @@
               return;
             }
             etaMsLive = Math.max(0, etaMsLive - 1000);
-            updateEtaDisplay();
+            updateProgressHelper(etaMsLive);
           }, 1000);
         };
 
@@ -765,21 +765,7 @@
             setEtaMsFromServer(etaMs);
             return;
           }
-          updateEtaDisplay();
-        };
-
-        const updateProgressHelper = (progress) => {
-          if (!progressHelper) {
-            return;
-          }
-          const etaMs = progress?.eta_ms;
-          if (Number.isFinite(etaMs)) {
-            const minutes = Math.max(Math.ceil(etaMs / 60000), 0);
-            progressHelper.textContent = `Your scan is still in progress. Estimated time remaining: ${minutes} minutes. Refresh this page in ${minutes} minutes to see your scan results.`;
-          } else {
-            progressHelper.textContent =
-              'Your scan is still in progress. Estimating remaining time...';
-          }
+          updateProgressHelper(etaMsLive);
         };
 
         const buildProgressMessage = (message) => message || 'Scanning...';
@@ -803,7 +789,6 @@
             progressStatus.textContent = buildProgressMessage(message);
           }
           updateEta(progress);
-          updateProgressHelper(progress);
         };
 
         const appendLog = (message) => {
