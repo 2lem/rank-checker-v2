@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 _spotify_semaphore = Semaphore(SPOTIFY_MAX_CONCURRENCY)
 _REDACT_KEYS = {"access_token", "refresh_token", "client_secret", "authorization", "token"}
 _METRICS_WINDOW_SECONDS = 15 * 60
+MAX_SPOTIFY_CALLS_PER_MINUTE = 120
+MAX_SPOTIFY_CALLS_PER_SCAN = 300
 
 
 class SpotifyMetrics:
@@ -85,6 +87,55 @@ def _log_event(event: str, **fields: object) -> None:
     logger.info(json.dumps(payload, sort_keys=True, default=str))
 
 
+def _spotify_client_id_suffix() -> str | None:
+    if not SPOTIFY_CLIENT_ID:
+        return None
+    return SPOTIFY_CLIENT_ID[-4:]
+
+
+def _log_spotify_call(
+    *,
+    phase: str,
+    endpoint: str,
+    method: str,
+    status_code: int | None,
+    duration_ms: float | None,
+    retry_after_sec: int | str | None,
+    scan_id: str | None,
+    playlist_id: str | None,
+    country: str | None,
+    keyword: str | None,
+) -> None:
+    payload = {
+        "type": "spotify_api_call",
+        "phase": phase,
+        "endpoint": endpoint,
+        "method": method,
+        "status_code": status_code,
+        "duration_ms": duration_ms,
+        "retry_after_sec": retry_after_sec,
+        "scan_id": scan_id,
+        "playlist_id": playlist_id,
+        "country": country,
+        "keyword": keyword,
+        "app_client_id_suffix": _spotify_client_id_suffix(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    logger.info(json.dumps(payload, sort_keys=True, default=str))
+
+
+def _log_budget_warning(*, scope: str, limit: int, current: int, scan_id: str | None) -> None:
+    payload = {
+        "type": "spotify_budget_warning",
+        "scope": scope,
+        "limit": limit,
+        "current": current,
+        "scan_id": scan_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    logger.warning(json.dumps(payload, sort_keys=True, default=str))
+
+
 def _redact_value(value: object) -> object:
     if isinstance(value, dict):
         return {key: ("***" if key.lower() in _REDACT_KEYS else _redact_value(val)) for key, val in value.items()}
@@ -117,6 +168,53 @@ def _compute_backoff(attempt: int, base_seconds: float, cap_seconds: float) -> f
     return min(backoff + jitter, cap_seconds)
 
 
+class SpotifyCallBudget:
+    def __init__(self) -> None:
+        self._global_calls: deque[float] = deque()
+        self._scan_counts: dict[str, int] = {}
+        self._lock = Lock()
+
+    def record(self, scan_id: str | None) -> list[dict]:
+        now = time.time()
+        warnings: list[dict] = []
+        with self._lock:
+            self._global_calls.append(now)
+            self._prune_locked(now)
+            global_count = len(self._global_calls)
+            if global_count > MAX_SPOTIFY_CALLS_PER_MINUTE:
+                warnings.append(
+                    {
+                        "scope": "global",
+                        "limit": MAX_SPOTIFY_CALLS_PER_MINUTE,
+                        "current": global_count,
+                        "scan_id": None,
+                    }
+                )
+
+            if scan_id:
+                current = self._scan_counts.get(scan_id, 0) + 1
+                self._scan_counts[scan_id] = current
+                if current > MAX_SPOTIFY_CALLS_PER_SCAN:
+                    warnings.append(
+                        {
+                            "scope": "scan",
+                            "limit": MAX_SPOTIFY_CALLS_PER_SCAN,
+                            "current": current,
+                            "scan_id": scan_id,
+                        }
+                    )
+
+        return warnings
+
+    def _prune_locked(self, now: float) -> None:
+        cutoff = now - 60
+        while self._global_calls and self._global_calls[0] < cutoff:
+            self._global_calls.popleft()
+
+
+_spotify_budget = SpotifyCallBudget()
+
+
 def _spotify_request(
     method: str,
     url: str,
@@ -127,6 +225,9 @@ def _spotify_request(
     headers: dict | None = None,
     scan_id: str | None = None,
     job_id: str | None = None,
+    playlist_id: str | None = None,
+    country: str | None = None,
+    keyword: str | None = None,
 ) -> dict:
     request_id = str(uuid.uuid4())
     attempt = 0
@@ -139,8 +240,27 @@ def _spotify_request(
 
     while True:
         attempt += 1
+        for warning in _spotify_budget.record(scan_id):
+            _log_budget_warning(
+                scope=warning["scope"],
+                limit=warning["limit"],
+                current=warning["current"],
+                scan_id=warning["scan_id"],
+            )
         started_at = datetime.now(timezone.utc).isoformat()
         start_monotonic = time.monotonic()
+        _log_spotify_call(
+            phase="start",
+            endpoint=path,
+            method=method,
+            status_code=None,
+            duration_ms=None,
+            retry_after_sec=None,
+            scan_id=scan_id,
+            playlist_id=playlist_id,
+            country=country,
+            keyword=keyword,
+        )
         _log_event(
             "spotify_api_request",
             request_id=request_id,
@@ -164,6 +284,18 @@ def _spotify_request(
         except requests.RequestException as exc:
             duration_ms = round((time.monotonic() - start_monotonic) * 1000, 2)
             _spotify_metrics.record(None, duration_ms)
+            _log_spotify_call(
+                phase="error",
+                endpoint=path,
+                method=method,
+                status_code=None,
+                duration_ms=duration_ms,
+                retry_after_sec=None,
+                scan_id=scan_id,
+                playlist_id=playlist_id,
+                country=country,
+                keyword=keyword,
+            )
             _log_event(
                 "spotify_api_error",
                 request_id=request_id,
@@ -194,9 +326,30 @@ def _spotify_request(
 
         duration_ms = round((time.monotonic() - start_monotonic) * 1000, 2)
         retry_after_header = response.headers.get("Retry-After")
+        retry_after_sec: int | str | None = None
+        if retry_after_header is not None:
+            try:
+                retry_after_sec = int(retry_after_header)
+            except ValueError:
+                retry_after_sec = retry_after_header
         body_preview = _redact_body_preview(response.text)
         response_size = len(response.content or b"")
         _spotify_metrics.record(response.status_code, duration_ms)
+        phase = "success" if 200 <= response.status_code < 300 else "error"
+        if response.status_code == 429:
+            phase = "rate_limited"
+        _log_spotify_call(
+            phase=phase,
+            endpoint=path,
+            method=method,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            retry_after_sec=retry_after_sec,
+            scan_id=scan_id,
+            playlist_id=playlist_id,
+            country=country,
+            keyword=keyword,
+        )
         _log_event(
             "spotify_api_response",
             request_id=request_id,
@@ -326,7 +479,17 @@ def get_access_token() -> str:
     return access_token
 
 
-def spotify_get(url: str, token: str, params=None, *, scan_id: str | None = None, job_id: str | None = None):
+def spotify_get(
+    url: str,
+    token: str,
+    params=None,
+    *,
+    scan_id: str | None = None,
+    job_id: str | None = None,
+    playlist_id: str | None = None,
+    country: str | None = None,
+    keyword: str | None = None,
+):
     return _spotify_request(
         "GET",
         url,
@@ -334,6 +497,9 @@ def spotify_get(url: str, token: str, params=None, *, scan_id: str | None = None
         params=params,
         scan_id=scan_id,
         job_id=job_id,
+        playlist_id=playlist_id,
+        country=country,
+        keyword=keyword,
     )
 
 
@@ -352,7 +518,7 @@ def search_playlists(keyword: str, market: str, token: str, limit: int = 50, off
         "limit": limit,
         "offset": offset,
     }
-    data = spotify_get(SEARCH_URL, token, params=params)
+    data = spotify_get(SEARCH_URL, token, params=params, country=market, keyword=keyword)
     items = ((data.get("playlists") or {}).get("items") or [])
     items = [item for item in items if isinstance(item, dict)]
     return items
@@ -420,6 +586,7 @@ def get_latest_track_added_at(playlist_id: str, snapshot_id: str, token: str) ->
                 "limit": limit,
                 "offset": offset,
             },
+            playlist_id=playlist_id,
         )
 
         items = data.get("items") or []
@@ -466,6 +633,7 @@ def fetch_playlist_details(playlist_ids, token: str, cache: dict):
             params={
                 "fields": "name,external_urls.spotify,followers.total,tracks.total,description,images,snapshot_id,owner.display_name,owner.id",
             },
+            playlist_id=pid,
         )
         followers = (detail.get("followers") or {}).get("total")
         tracks_total = (detail.get("tracks") or {}).get("total")
