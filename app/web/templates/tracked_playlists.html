@@ -1235,6 +1235,22 @@
 
         let isCompleted = false;
 
+        const hasResults = (scan) => {
+          if (!scan || typeof scan !== 'object') {
+            return false;
+          }
+          if (Array.isArray(scan.summary)) {
+            return scan.summary.length > 0;
+          }
+          if (scan.detailed && typeof scan.detailed === 'object') {
+            return Object.keys(scan.detailed).length > 0;
+          }
+          return false;
+        };
+
+        const isScanComplete = (scan) =>
+          scan?.status === 'completed' || Boolean(scan?.finished_at) || hasResults(scan);
+
         const stopPolling = () => {
           if (pollTimer) {
             clearInterval(pollTimer);
@@ -1270,7 +1286,7 @@
               if (!response.ok) {
                 throw new Error(data.detail || 'Unable to check scan status.');
               }
-              if (data.status === 'completed' || data.summary || data.detailed) {
+              if (isScanComplete(data)) {
                 // Guard against reconnect/status updates after a terminal completion.
                 isCompleted = true;
                 stopEventSource();
