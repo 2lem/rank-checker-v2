@@ -43,7 +43,7 @@
         <section class="toolbar-panel">
           <div class="toolbar-actions">
             <button
-              class="btn btn-secondary"
+              class="btn btn-secondary scan-tab-button"
               type="button"
               data-scan-tab="dedicated"
               aria-pressed="false"
@@ -51,7 +51,7 @@
               Dedicated Scan
             </button>
             <button
-              class="btn btn-secondary"
+              class="btn btn-secondary scan-tab-button"
               type="button"
               data-scan-tab="latest"
               aria-pressed="true"
@@ -167,6 +167,7 @@
       let activeSection = null;
       let loadLatestScan = null;
       let lastTabScrollY = null;
+      let activeScanStatus = null;
 
       const togglePanel = (targetId) => {
         let activePanel = null;
@@ -234,6 +235,13 @@
 
       const setActiveSection = (nextTab, options = {}) => {
         if (!nextTab || nextTab === activeSection) {
+          return;
+        }
+        if (
+          nextTab === 'latest' &&
+          ['queued', 'running'].includes(activeScanStatus) &&
+          !options.allowRunningSwitch
+        ) {
           return;
         }
         lastTabScrollY = window.scrollY;
@@ -739,20 +747,48 @@
           if (!scan || typeof scan !== 'object') {
             return false;
           }
-          if (Array.isArray(scan.summary)) {
-            return scan.summary.length > 0;
+          const summary = scan.summary || scan.results?.summary;
+          if (Array.isArray(summary)) {
+            return summary.length > 0;
           }
-          if (scan.detailed && typeof scan.detailed === 'object') {
-            return Object.keys(scan.detailed).length > 0;
+          const detailed = scan.detailed || scan.results?.detailed;
+          if (detailed && typeof detailed === 'object') {
+            return Object.keys(detailed).length > 0;
           }
           return false;
         };
 
-        const isScanComplete = (scan) =>
-          scan?.status === 'completed' ||
-          scan?.status === 'completed_partial' ||
-          Boolean(scan?.finished_at) ||
-          hasResults(scan);
+        const logScanState = (scan, scanIdOverride = null) => {
+          const scanId = scanIdOverride || scan?.scan_id || 'unknown';
+          const status = scan?.status ?? 'unknown';
+          const completedAt = scan?.completed_at || scan?.finished_at || null;
+          const resultsSource = scan?.results || scan;
+          const hasResultsValue = hasResults(resultsSource);
+          if (typeof console !== 'undefined' && console.debug) {
+            console.debug(
+              '[UI_SCAN_STATE]',
+              scanId,
+              status,
+              completedAt,
+              hasResultsValue
+            );
+          }
+          return { status, completedAt, hasResultsValue };
+        };
+
+        const isScanComplete = (scan, scanIdOverride = null) => {
+          const { status, completedAt, hasResultsValue } = logScanState(
+            scan,
+            scanIdOverride
+          );
+          return status === 'completed' && Boolean(completedAt) && hasResultsValue;
+        };
+
+        const logSwitchLatest = (scanId, reason) => {
+          if (typeof console !== 'undefined' && console.debug) {
+            console.debug('[UI_SWITCH_LATEST]', scanId || 'none', reason);
+          }
+        };
 
         const applyProgressSnapshot = (progress, messageOverride) => {
           if (!progress || typeof progress !== 'object') {
@@ -803,8 +839,12 @@
               if (data?.progress) {
                 applyProgressSnapshot(data.progress);
               }
-              if (isScanComplete(data)) {
-                await safeStop('completed', { scanId: pollActiveScanId });
+              activeScanStatus = data?.status || activeScanStatus;
+              if (isScanComplete(data, pollActiveScanId)) {
+                await safeStop('completed', {
+                  scanId: pollActiveScanId,
+                  switchReason: 'poll_completed',
+                });
                 stopPolling();
               } else if (data?.status === 'failed') {
                 appendLog('Scan failed.');
@@ -872,13 +912,20 @@
           const variant = reason === 'completed' ? 'status-success' : 'status-error';
 
           if (reason === 'completed') {
+            activeScanStatus = 'completed';
             setProgress(options.total || 1, options.total || 1, 'Scan completed.', { eta_ms: 0 });
             setStage(1, scanParameters || scanRoot);
-            setActiveSection('latest', { skipScroll: true, skipFetch: true });
+            logSwitchLatest(options.scanId || activeScanId, options.switchReason || 'completed');
+            setActiveSection('latest', {
+              skipScroll: true,
+              skipFetch: true,
+              allowRunningSwitch: true,
+            });
             if (typeof loadLatestScan === 'function') {
               await loadLatestScan();
             }
           } else {
+            activeScanStatus = 'failed';
             setProgress(0, 1, statusMessage);
             setStage(1, scanParameters || scanRoot);
           }
@@ -1126,6 +1173,7 @@
             return;
           }
           activeScanId = scanId;
+          activeScanStatus = activeScanStatus || 'running';
           if (eventSource) {
             eventSource.close();
           }
@@ -1143,28 +1191,18 @@
               } catch (error) {
                 payload = null;
               }
-              const statusValue = `${payload?.status ?? payload?.type ?? ''}`.toLowerCase();
-              const completionText = rawText.toLowerCase();
-              const completionSignals = ['completed', 'done', 'finished'];
-              if (
-                completionSignals.includes(statusValue) ||
-                completionSignals.some((signal) => completionText.includes(signal))
-              ) {
+              if (payload?.type === 'completed' || payload?.type === 'scan_completed') {
                 await safeStop('completed', {
                   scanId: activeScanId,
                   total: payload?.total,
+                  switchReason: 'terminal_event',
                 });
                 return;
               }
               if (payload?.type === 'progress') {
+                activeScanStatus = 'running';
                 setProgress(payload.step, payload.total, payload.message, payload);
                 appendLog(payload.message);
-              }
-              if (payload?.type === 'done') {
-                await safeStop('completed', {
-                  scanId: activeScanId,
-                  total: payload?.total,
-                });
               }
               if (payload?.type === 'error') {
                 appendLog(payload.message || 'Scan failed.');
@@ -1229,6 +1267,7 @@
             }
             activeScanId = data.scan_id;
             scanStarted = Boolean(activeScanId);
+            activeScanStatus = 'running';
             connectEventStream(activeScanId);
             setActiveSection('dedicated', { skipScroll: true, skipFetch: true });
           } catch (error) {
@@ -1317,6 +1356,7 @@
           try {
             const activeScan = await fetchActiveScan();
             if (activeScan?.scan_id) {
+              activeScanStatus = activeScan.status || 'running';
               setActiveSection('dedicated', { skipScroll: true, skipFetch: true });
               openBasicScanStage2();
               applyProgressSnapshot(activeScan.progress, 'Scan in progress...');
@@ -1326,6 +1366,7 @@
           } catch (error) {
             setStatus(normalizeErrorMessage(error, 'Failed to load scan status.'), 'status-error');
           }
+          logSwitchLatest('none', 'no_active_scan');
           setActiveSection('latest', { skipScroll: true });
         };
 
