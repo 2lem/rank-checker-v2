@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -6,9 +7,11 @@ import re
 import time
 import uuid
 from collections import deque
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from threading import Lock, Semaphore
+from threading import Event, Lock, Thread
 from urllib.parse import urlparse
 
 import requests
@@ -27,11 +30,53 @@ from app.core.config import (
 )
 
 logger = logging.getLogger(__name__)
-_spotify_semaphore = Semaphore(SPOTIFY_MAX_CONCURRENCY)
+_spotify_semaphore = asyncio.Semaphore(SPOTIFY_MAX_CONCURRENCY)
+_spotify_semaphore_loop: asyncio.AbstractEventLoop | None = None
+_spotify_semaphore_thread: Thread | None = None
+_spotify_semaphore_ready = Event()
+_spotify_semaphore_lock = Lock()
 _REDACT_KEYS = {"access_token", "refresh_token", "client_secret", "authorization", "token"}
 _METRICS_WINDOW_SECONDS = 15 * 60
 MAX_SPOTIFY_CALLS_PER_MINUTE = 120
 MAX_SPOTIFY_CALLS_PER_SCAN = 300
+
+
+def _ensure_spotify_semaphore_loop() -> asyncio.AbstractEventLoop:
+    global _spotify_semaphore_loop, _spotify_semaphore_thread
+    if _spotify_semaphore_loop and _spotify_semaphore_loop.is_running():
+        return _spotify_semaphore_loop
+    with _spotify_semaphore_lock:
+        if _spotify_semaphore_loop and _spotify_semaphore_loop.is_running():
+            return _spotify_semaphore_loop
+
+        loop = asyncio.new_event_loop()
+        _spotify_semaphore_loop = loop
+
+        def _run_loop() -> None:
+            asyncio.set_event_loop(loop)
+            _spotify_semaphore_ready.set()
+            loop.run_forever()
+
+        _spotify_semaphore_thread = Thread(
+            target=_run_loop,
+            name="spotify-semaphore-loop",
+            daemon=True,
+        )
+        _spotify_semaphore_thread.start()
+        _spotify_semaphore_ready.wait()
+        return loop
+
+
+@contextmanager
+def _spotify_concurrency_guard() -> Iterator[None]:
+    loop = _ensure_spotify_semaphore_loop()
+    acquire_future = asyncio.run_coroutine_threadsafe(_spotify_semaphore.acquire(), loop)
+    acquire_future.result()
+    try:
+        yield
+    finally:
+        if _spotify_semaphore_loop and _spotify_semaphore_loop.is_running():
+            _spotify_semaphore_loop.call_soon_threadsafe(_spotify_semaphore.release)
 
 
 class SpotifyMetrics:
@@ -233,6 +278,8 @@ def _spotify_request(
     attempt = 0
     max_429_retries = 5
     max_transient_retries = 3
+    retry_429_count = 0
+    retry_transient_count = 0
     path = _endpoint_path(url)
     base_headers = dict(headers or {})
     if token:
@@ -240,6 +287,7 @@ def _spotify_request(
 
     while True:
         attempt += 1
+        budget_enforced = False
         for warning in _spotify_budget.record(scan_id):
             _log_budget_warning(
                 scope=warning["scope"],
@@ -247,6 +295,16 @@ def _spotify_request(
                 current=warning["current"],
                 scan_id=warning["scan_id"],
             )
+            if warning["scope"] == "scan":
+                budget_enforced = True
+                _log_event(
+                    "spotify_budget_enforced",
+                    scan_id=warning["scan_id"],
+                    limit=warning["limit"],
+                    current=warning["current"],
+                )
+        if budget_enforced:
+            return {}
         started_at = datetime.now(timezone.utc).isoformat()
         start_monotonic = time.monotonic()
         _log_spotify_call(
@@ -272,7 +330,7 @@ def _spotify_request(
             attempt=attempt,
         )
         try:
-            with _spotify_semaphore:
+            with _spotify_concurrency_guard():
                 response = requests.request(
                     method,
                     url,
@@ -307,8 +365,9 @@ def _spotify_request(
                 duration_ms=duration_ms,
                 error=str(exc),
             )
-            if attempt <= max_transient_retries:
-                wait_seconds = _compute_backoff(attempt, 0.5, 8.0)
+            if retry_transient_count < max_transient_retries:
+                retry_transient_count += 1
+                wait_seconds = _compute_backoff(retry_transient_count, 0.5, 8.0)
                 _log_event(
                     "spotify_api_retry",
                     request_id=request_id,
@@ -366,7 +425,7 @@ def _spotify_request(
         )
 
         if response.status_code == 429:
-            if attempt >= max_429_retries:
+            if retry_429_count >= max_429_retries:
                 _log_event(
                     "spotify_api_error",
                     request_id=request_id,
@@ -379,15 +438,14 @@ def _spotify_request(
                     response_preview=body_preview,
                 )
                 response.raise_for_status()
-            retry_after_seconds = 2
+            retry_429_count += 1
+            retry_after_seconds = 1
             if retry_after_header:
                 try:
                     retry_after_seconds = int(retry_after_header)
                 except ValueError:
-                    retry_after_seconds = 2
-            retry_after_seconds = min(retry_after_seconds, SPOTIFY_MAX_RETRY_AFTER)
-            backoff_seconds = _compute_backoff(attempt, 0.5, 10.0)
-            wait_seconds = min(retry_after_seconds + backoff_seconds, SPOTIFY_MAX_RETRY_AFTER)
+                    retry_after_seconds = 1
+            wait_seconds = min(retry_after_seconds, SPOTIFY_MAX_RETRY_AFTER)
             _log_event(
                 "spotify_api_retry",
                 request_id=request_id,
@@ -403,9 +461,10 @@ def _spotify_request(
             time.sleep(wait_seconds)
             continue
 
-        if response.status_code >= 500:
-            if attempt <= max_transient_retries:
-                wait_seconds = _compute_backoff(attempt, 0.5, 8.0)
+        if response.status_code >= 500 or response.status_code == 408:
+            if retry_transient_count < max_transient_retries:
+                retry_transient_count += 1
+                wait_seconds = _compute_backoff(retry_transient_count, 0.5, 8.0)
                 _log_event(
                     "spotify_api_retry",
                     request_id=request_id,
