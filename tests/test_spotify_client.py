@@ -60,6 +60,7 @@ def test_spotify_retries_on_429(monkeypatch: pytest.MonkeyPatch, caplog: pytest.
     assert payload == {"ok": True}
     assert mock_request.call_count == 2
     assert sleep_mock.call_count == 1
+    assert sleep_mock.call_args_list[0].args[0] == 1
 
     events = _event_names(caplog)
     assert "spotify_api_retry" in events
@@ -68,7 +69,7 @@ def test_spotify_retries_on_429(monkeypatch: pytest.MonkeyPatch, caplog: pytest.
 def test_spotify_caps_429_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     responses = [
         _response(429, {"error": "rate limit"}, headers={"Retry-After": "120"})
-        for _ in range(5)
+        for _ in range(6)
     ]
     mock_request = Mock(side_effect=responses)
     sleep_mock = Mock()
@@ -79,8 +80,8 @@ def test_spotify_caps_429_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(requests.HTTPError):
         spotify.spotify_get("https://api.spotify.com/v1/playlists/test", token="token")
 
-    assert mock_request.call_count == 5
-    assert sleep_mock.call_count == 4
+    assert mock_request.call_count == 6
+    assert sleep_mock.call_count == 5
     assert all(call.args[0] <= SPOTIFY_MAX_RETRY_AFTER for call in sleep_mock.call_args_list)
 
 
@@ -96,3 +97,4 @@ def test_spotify_retries_on_5xx(monkeypatch: pytest.MonkeyPatch) -> None:
     assert payload == {"ok": True}
     assert mock_request.call_count == 2
     assert sleep_mock.call_count == 1
+    assert sleep_mock.call_args_list[0].args[0] == 0.5
