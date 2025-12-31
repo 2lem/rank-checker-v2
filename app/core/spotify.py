@@ -1,8 +1,15 @@
 import base64
+import json
+import logging
+import random
 import re
 import time
+import uuid
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from threading import Lock, Semaphore
+from urllib.parse import urlparse
 
 import requests
 
@@ -13,9 +20,280 @@ from app.core.config import (
     SEARCH_URL,
     SPOTIFY_CLIENT_ID,
     SPOTIFY_CLIENT_SECRET,
+    SPOTIFY_MAX_CONCURRENCY,
+    SPOTIFY_MAX_RETRY_AFTER,
     SPOTIFY_REQUEST_TIMEOUT,
     TOKEN_URL,
 )
+
+logger = logging.getLogger(__name__)
+_spotify_semaphore = Semaphore(SPOTIFY_MAX_CONCURRENCY)
+_REDACT_KEYS = {"access_token", "refresh_token", "client_secret", "authorization", "token"}
+_METRICS_WINDOW_SECONDS = 15 * 60
+
+
+class SpotifyMetrics:
+    def __init__(self, window_seconds: int) -> None:
+        self._window_seconds = window_seconds
+        self._entries: deque[tuple[float, int | None, float]] = deque()
+        self._lock = Lock()
+
+    def record(self, status_code: int | None, latency_ms: float) -> None:
+        now = time.time()
+        with self._lock:
+            self._entries.append((now, status_code, latency_ms))
+            self._prune_locked(now)
+
+    def snapshot(self) -> dict:
+        now = time.time()
+        with self._lock:
+            self._prune_locked(now)
+            entries = list(self._entries)
+
+        total_requests = len(entries)
+        success_count = sum(1 for _, status, _ in entries if status and 200 <= status < 300)
+        status_429_count = sum(1 for _, status, _ in entries if status == 429)
+        status_5xx_count = sum(1 for _, status, _ in entries if status and status >= 500)
+        latencies = [latency for _, _, latency in entries]
+        average_latency_ms = round(sum(latencies) / total_requests, 2) if total_requests else 0.0
+        max_latency_ms = round(max(latencies), 2) if latencies else 0.0
+
+        return {
+            "total_requests": total_requests,
+            "success_count": success_count,
+            "status_429_count": status_429_count,
+            "status_5xx_count": status_5xx_count,
+            "average_latency_ms": average_latency_ms,
+            "max_latency_ms": max_latency_ms,
+        }
+
+    def _prune_locked(self, now: float) -> None:
+        cutoff = now - self._window_seconds
+        while self._entries and self._entries[0][0] < cutoff:
+            self._entries.popleft()
+
+
+_spotify_metrics = SpotifyMetrics(_METRICS_WINDOW_SECONDS)
+
+
+def get_spotify_metrics_snapshot() -> dict:
+    return _spotify_metrics.snapshot()
+
+
+def _log_event(event: str, **fields: object) -> None:
+    payload = {"event": event, **fields}
+    logger.info(json.dumps(payload, sort_keys=True, default=str))
+
+
+def _redact_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: ("***" if key.lower() in _REDACT_KEYS else _redact_value(val)) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    return value
+
+
+def _redact_body_preview(body_text: str, limit: int = 400) -> str:
+    if not body_text:
+        return ""
+    preview = body_text[:limit]
+    try:
+        parsed = json.loads(preview)
+    except json.JSONDecodeError:
+        return preview
+    redacted = _redact_value(parsed)
+    return json.dumps(redacted, sort_keys=True)[:limit]
+
+
+def _endpoint_path(url: str) -> str:
+    parsed = urlparse(url)
+    return parsed.path or "/"
+
+
+def _compute_backoff(attempt: int, base_seconds: float, cap_seconds: float) -> float:
+    exponent = max(attempt - 1, 0)
+    backoff = base_seconds * (2**exponent)
+    jitter = random.uniform(0, base_seconds)
+    return min(backoff + jitter, cap_seconds)
+
+
+def _spotify_request(
+    method: str,
+    url: str,
+    *,
+    token: str | None = None,
+    params: dict | None = None,
+    data: dict | None = None,
+    headers: dict | None = None,
+    scan_id: str | None = None,
+    job_id: str | None = None,
+) -> dict:
+    request_id = str(uuid.uuid4())
+    attempt = 0
+    max_429_retries = 5
+    max_transient_retries = 3
+    path = _endpoint_path(url)
+    base_headers = dict(headers or {})
+    if token:
+        base_headers["Authorization"] = f"Bearer {token}"
+
+    while True:
+        attempt += 1
+        started_at = datetime.now(timezone.utc).isoformat()
+        start_monotonic = time.monotonic()
+        _log_event(
+            "spotify_api_request",
+            request_id=request_id,
+            scan_id=scan_id,
+            job_id=job_id,
+            method=method,
+            path=path,
+            started_at=started_at,
+            attempt=attempt,
+        )
+        try:
+            with _spotify_semaphore:
+                response = requests.request(
+                    method,
+                    url,
+                    headers=base_headers,
+                    params=params,
+                    data=data,
+                    timeout=SPOTIFY_REQUEST_TIMEOUT,
+                )
+        except requests.RequestException as exc:
+            duration_ms = round((time.monotonic() - start_monotonic) * 1000, 2)
+            _spotify_metrics.record(None, duration_ms)
+            _log_event(
+                "spotify_api_error",
+                request_id=request_id,
+                scan_id=scan_id,
+                job_id=job_id,
+                method=method,
+                path=path,
+                attempt=attempt,
+                duration_ms=duration_ms,
+                error=str(exc),
+            )
+            if attempt <= max_transient_retries:
+                wait_seconds = _compute_backoff(attempt, 0.5, 8.0)
+                _log_event(
+                    "spotify_api_retry",
+                    request_id=request_id,
+                    scan_id=scan_id,
+                    job_id=job_id,
+                    method=method,
+                    path=path,
+                    attempt=attempt,
+                    wait_seconds=wait_seconds,
+                    reason="exception",
+                )
+                time.sleep(wait_seconds)
+                continue
+            raise
+
+        duration_ms = round((time.monotonic() - start_monotonic) * 1000, 2)
+        retry_after_header = response.headers.get("Retry-After")
+        body_preview = _redact_body_preview(response.text)
+        response_size = len(response.content or b"")
+        _spotify_metrics.record(response.status_code, duration_ms)
+        _log_event(
+            "spotify_api_response",
+            request_id=request_id,
+            scan_id=scan_id,
+            job_id=job_id,
+            method=method,
+            path=path,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            retry_after=retry_after_header,
+            response_size_bytes=response_size,
+            response_preview=body_preview,
+            attempt=attempt,
+        )
+
+        if response.status_code == 429:
+            if attempt >= max_429_retries:
+                _log_event(
+                    "spotify_api_error",
+                    request_id=request_id,
+                    scan_id=scan_id,
+                    job_id=job_id,
+                    method=method,
+                    path=path,
+                    attempt=attempt,
+                    status_code=response.status_code,
+                    response_preview=body_preview,
+                )
+                response.raise_for_status()
+            retry_after_seconds = 2
+            if retry_after_header:
+                try:
+                    retry_after_seconds = int(retry_after_header)
+                except ValueError:
+                    retry_after_seconds = 2
+            retry_after_seconds = min(retry_after_seconds, SPOTIFY_MAX_RETRY_AFTER)
+            backoff_seconds = _compute_backoff(attempt, 0.5, 10.0)
+            wait_seconds = min(retry_after_seconds + backoff_seconds, SPOTIFY_MAX_RETRY_AFTER)
+            _log_event(
+                "spotify_api_retry",
+                request_id=request_id,
+                scan_id=scan_id,
+                job_id=job_id,
+                method=method,
+                path=path,
+                attempt=attempt,
+                wait_seconds=wait_seconds,
+                retry_after=retry_after_header,
+                reason="rate_limited",
+            )
+            time.sleep(wait_seconds)
+            continue
+
+        if response.status_code >= 500:
+            if attempt <= max_transient_retries:
+                wait_seconds = _compute_backoff(attempt, 0.5, 8.0)
+                _log_event(
+                    "spotify_api_retry",
+                    request_id=request_id,
+                    scan_id=scan_id,
+                    job_id=job_id,
+                    method=method,
+                    path=path,
+                    attempt=attempt,
+                    wait_seconds=wait_seconds,
+                    reason="server_error",
+                )
+                time.sleep(wait_seconds)
+                continue
+            _log_event(
+                "spotify_api_error",
+                request_id=request_id,
+                scan_id=scan_id,
+                job_id=job_id,
+                method=method,
+                path=path,
+                attempt=attempt,
+                status_code=response.status_code,
+                response_preview=body_preview,
+            )
+            response.raise_for_status()
+
+        if response.status_code >= 400:
+            _log_event(
+                "spotify_api_error",
+                request_id=request_id,
+                scan_id=scan_id,
+                job_id=job_id,
+                method=method,
+                path=path,
+                attempt=attempt,
+                status_code=response.status_code,
+                response_preview=body_preview,
+            )
+            response.raise_for_status()
+
+        return response.json() or {}
 
 
 def extract_playlist_id(text: str):
@@ -37,15 +315,7 @@ def get_access_token_payload() -> dict:
 
     headers = {"Authorization": f"Basic {b64_auth}"}
     data = {"grant_type": "client_credentials"}
-
-    response = requests.post(
-        TOKEN_URL,
-        headers=headers,
-        data=data,
-        timeout=SPOTIFY_REQUEST_TIMEOUT,
-    )
-    response.raise_for_status()
-    return response.json() or {}
+    return _spotify_request("POST", TOKEN_URL, headers=headers, data=data)
 
 
 def get_access_token() -> str:
@@ -56,26 +326,15 @@ def get_access_token() -> str:
     return access_token
 
 
-def spotify_get(url: str, token: str, params=None):
-    headers = {"Authorization": f"Bearer {token}"}
-
-    while True:
-        response = requests.get(
-            url,
-            headers=headers,
-            params=params,
-            timeout=SPOTIFY_REQUEST_TIMEOUT,
-        )
-        if response.status_code == 429:
-            retry_after = response.headers.get("Retry-After", "2")
-            try:
-                retry_after_seconds = int(retry_after)
-            except ValueError:
-                retry_after_seconds = 2
-            time.sleep(retry_after_seconds)
-            continue
-        response.raise_for_status()
-        return response.json() or {}
+def spotify_get(url: str, token: str, params=None, *, scan_id: str | None = None, job_id: str | None = None):
+    return _spotify_request(
+        "GET",
+        url,
+        token=token,
+        params=params,
+        scan_id=scan_id,
+        job_id=job_id,
+    )
 
 
 def get_spotify_markets():

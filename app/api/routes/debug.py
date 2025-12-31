@@ -7,7 +7,8 @@ from sqlalchemy import text
 
 from app.basic_rank_checker.events import scan_event_manager
 from app.core.db import SessionLocal, engine
-from app.core.debug_tools import require_debug_tools
+from app.core.debug_tools import require_debug_tools, require_debug_tools_enabled
+from app.core.spotify import get_spotify_metrics_snapshot
 
 router = APIRouter(
     prefix="/api/debug",
@@ -162,3 +163,8 @@ def schema_version(request: Request):
 def sse_state(request: Request):
     state = scan_event_manager.snapshot()
     return {"ok": True, **state, "ts": _now_iso()}
+
+
+@router.get("/spotify-metrics", dependencies=[Depends(require_debug_tools_enabled)])
+def spotify_metrics():
+    return {"ok": True, **get_spotify_metrics_snapshot(), "ts": _now_iso()}
