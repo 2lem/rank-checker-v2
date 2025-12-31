@@ -181,6 +181,35 @@ def _log_budget_warning(*, scope: str, limit: int, current: int, scan_id: str | 
     logger.warning(json.dumps(payload, sort_keys=True, default=str))
 
 
+def _log_spotify_token_fetch(
+    *,
+    phase: str,
+    reason: str | None,
+    status_code: int | None,
+    duration_ms: float | None,
+    retry_after_sec: int | str | None,
+    body_keys: list[str] | None,
+    body_length: int | None,
+    request_id: str,
+    attempt: int,
+) -> None:
+    payload = {
+        "type": "spotify_token_fetch",
+        "phase": phase,
+        "reason": reason,
+        "status_code": status_code,
+        "duration_ms": duration_ms,
+        "retry_after_sec": retry_after_sec,
+        "body_keys": body_keys,
+        "body_length": body_length,
+        "request_id": request_id,
+        "attempt": attempt,
+        "app_client_id_suffix": _spotify_client_id_suffix(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    logger.info(json.dumps(payload, sort_keys=True, default=str))
+
+
 def _redact_value(value: object) -> object:
     if isinstance(value, dict):
         return {key: ("***" if key.lower() in _REDACT_KEYS else _redact_value(val)) for key, val in value.items()}
@@ -213,6 +242,10 @@ def _compute_backoff(
     backoff = base_seconds * (2**exponent)
     jitter = random.uniform(0, jitter_seconds)
     return min(backoff + jitter, cap_seconds)
+
+
+class SpotifyTokenError(ValueError):
+    pass
 
 
 class SpotifyCallBudget:
@@ -276,6 +309,36 @@ def _spotify_request(
     country: str | None = None,
     keyword: str | None = None,
 ) -> dict:
+    payload, _meta = _spotify_request_with_meta(
+        method,
+        url,
+        token=token,
+        params=params,
+        data=data,
+        headers=headers,
+        scan_id=scan_id,
+        job_id=job_id,
+        playlist_id=playlist_id,
+        country=country,
+        keyword=keyword,
+    )
+    return payload
+
+
+def _spotify_request_with_meta(
+    method: str,
+    url: str,
+    *,
+    token: str | None = None,
+    params: dict | None = None,
+    data: dict | None = None,
+    headers: dict | None = None,
+    scan_id: str | None = None,
+    job_id: str | None = None,
+    playlist_id: str | None = None,
+    country: str | None = None,
+    keyword: str | None = None,
+) -> tuple[dict, dict]:
     request_id = str(uuid.uuid4())
     attempt = 0
     max_429_retries = 5
@@ -318,7 +381,7 @@ def _spotify_request(
                 limit=budget_limit,
                 current=budget_current,
             )
-            return {}
+            return {}, {"request_id": request_id, "budget_enforced": True}
         started_at = datetime.now(timezone.utc).isoformat()
         start_monotonic = time.monotonic()
         _log_spotify_call(
@@ -519,7 +582,14 @@ def _spotify_request(
             )
             response.raise_for_status()
 
-        return response.json() or {}
+        return response.json() or {}, {
+            "request_id": request_id,
+            "status_code": response.status_code,
+            "duration_ms": duration_ms,
+            "retry_after_sec": retry_after_sec,
+            "response_size_bytes": response_size,
+            "budget_enforced": False,
+        }
 
 
 def extract_playlist_id(text: str):
@@ -544,12 +614,135 @@ def get_access_token_payload() -> dict:
     return _spotify_request("POST", TOKEN_URL, headers=headers, data=data)
 
 
+def _token_body_keys(payload: dict | None) -> list[str] | None:
+    if not isinstance(payload, dict):
+        return None
+    return sorted([str(key) for key in payload.keys()])
+
+
 def get_access_token() -> str:
-    payload = get_access_token_payload()
-    access_token = payload.get("access_token")
-    if not access_token:
-        raise ValueError("Spotify token response missing access_token.")
-    return access_token
+    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
+        raise ValueError("SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET missing from environment.")
+
+    auth_str = f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}"
+    b64_auth = base64.b64encode(auth_str.encode()).decode()
+    headers = {"Authorization": f"Basic {b64_auth}"}
+    data = {"grant_type": "client_credentials"}
+
+    request_id = str(uuid.uuid4())
+    missing_token_retries = 0
+    max_missing_token_retries = 3
+    attempt = 0
+
+    while True:
+        attempt += 1
+        start_monotonic = time.monotonic()
+        _log_spotify_token_fetch(
+            phase="start",
+            reason=None,
+            status_code=None,
+            duration_ms=None,
+            retry_after_sec=None,
+            body_keys=None,
+            body_length=None,
+            request_id=request_id,
+            attempt=attempt,
+        )
+        try:
+            payload, meta = _spotify_request_with_meta("POST", TOKEN_URL, headers=headers, data=data)
+        except requests.HTTPError as exc:
+            duration_ms = round((time.monotonic() - start_monotonic) * 1000, 2)
+            response = exc.response
+            status_code = response.status_code if response is not None else None
+            retry_after_sec = response.headers.get("Retry-After") if response is not None else None
+            body_length = len(response.content or b"") if response is not None else None
+            body_keys = None
+            if response is not None:
+                try:
+                    body_keys = _token_body_keys(response.json())
+                except ValueError:
+                    body_keys = None
+            _log_spotify_token_fetch(
+                phase="error",
+                reason="http_error",
+                status_code=status_code,
+                duration_ms=duration_ms,
+                retry_after_sec=retry_after_sec,
+                body_keys=body_keys,
+                body_length=body_length,
+                request_id=request_id,
+                attempt=attempt,
+            )
+            raise
+        except ValueError:
+            duration_ms = round((time.monotonic() - start_monotonic) * 1000, 2)
+            _log_spotify_token_fetch(
+                phase="error",
+                reason="invalid_json",
+                status_code=None,
+                duration_ms=duration_ms,
+                retry_after_sec=None,
+                body_keys=None,
+                body_length=None,
+                request_id=request_id,
+                attempt=attempt,
+            )
+            if missing_token_retries >= max_missing_token_retries:
+                raise SpotifyTokenError("Spotify token response missing access_token.")
+            missing_token_retries += 1
+            wait_seconds = _compute_backoff(missing_token_retries, 0.5, 5.0, 0.25)
+            time.sleep(wait_seconds)
+            continue
+        except requests.RequestException:
+            duration_ms = round((time.monotonic() - start_monotonic) * 1000, 2)
+            _log_spotify_token_fetch(
+                phase="error",
+                reason="request_exception",
+                status_code=None,
+                duration_ms=duration_ms,
+                retry_after_sec=None,
+                body_keys=None,
+                body_length=None,
+                request_id=request_id,
+                attempt=attempt,
+            )
+            raise
+        duration_ms = meta.get("duration_ms")
+        status_code = meta.get("status_code")
+        retry_after_sec = meta.get("retry_after_sec")
+        body_length = meta.get("response_size_bytes")
+        body_keys = _token_body_keys(payload)
+        access_token = payload.get("access_token")
+        if access_token:
+            _log_spotify_token_fetch(
+                phase="success",
+                reason=None,
+                status_code=status_code,
+                duration_ms=duration_ms,
+                retry_after_sec=retry_after_sec,
+                body_keys=body_keys,
+                body_length=body_length,
+                request_id=request_id,
+                attempt=attempt,
+            )
+            return access_token
+
+        _log_spotify_token_fetch(
+            phase="error",
+            reason="missing_access_token",
+            status_code=status_code,
+            duration_ms=duration_ms,
+            retry_after_sec=retry_after_sec,
+            body_keys=body_keys,
+            body_length=body_length,
+            request_id=request_id,
+            attempt=attempt,
+        )
+        if missing_token_retries >= max_missing_token_retries:
+            raise SpotifyTokenError("Spotify token response missing access_token.")
+        missing_token_retries += 1
+        wait_seconds = _compute_backoff(missing_token_retries, 0.5, 5.0, 0.25)
+        time.sleep(wait_seconds)
 
 
 def spotify_get(
