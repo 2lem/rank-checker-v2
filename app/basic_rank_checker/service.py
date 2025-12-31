@@ -10,7 +10,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.basic_rank_checker.events import scan_event_manager
-from app.basic_rank_checker.scan_logging import log_scan_failure, log_scan_lifecycle
+from app.basic_rank_checker.scan_logging import (
+    log_scan_cancelled,
+    log_scan_end,
+    log_scan_failure,
+    log_scan_lifecycle,
+    log_scan_progress,
+    log_scan_start,
+)
 from app.core.basic_scan_visibility import log_basic_scan_end
 from app.core.config import BASIC_SCAN_KEYWORD_TIMEOUT_SECONDS, SEARCH_URL
 from app.core.db import SessionLocal
@@ -92,8 +99,15 @@ def _persist_scan_progress(
     scan.eta_ms = eta_ms
     scan.eta_human = eta_human
     scan.last_progress_at = now
+    scan.last_event_at = now
     db.add(scan)
     db.commit()
+    log_scan_progress(
+        scan_id=scan_id,
+        completed_units=completed_units,
+        total_units=total_units,
+        eta_ms=eta_ms,
+    )
     return {
         "completed_units": completed_units,
         "total_units": total_units,
@@ -153,6 +167,35 @@ def _classify_spotify_error(exc: Exception) -> str:
     return "transient"
 
 
+def _duration_ms(started_at: datetime | None, ended_at: datetime | None) -> int | None:
+    if not started_at or not ended_at:
+        return None
+    return int(max((ended_at - started_at).total_seconds() * 1000, 0))
+
+
+def _check_cancel_requested(db: Session, scan_id: str) -> bool:
+    db.expire_all()
+    scan = db.get(BasicScan, scan_id)
+    if scan is None:
+        return True
+    if scan.status == "cancelled":
+        return True
+    if scan.cancel_requested_at is None:
+        return False
+    now = _now_utc()
+    scan.status = "cancelled"
+    scan.cancelled_at = scan.cancelled_at or now
+    scan.finished_at = scan.finished_at or now
+    scan.error_message = scan.error_message or "Scan cancelled."
+    scan.error_reason = scan.error_reason or "cancelled"
+    scan.last_event_at = now
+    db.add(scan)
+    db.commit()
+    scan_event_manager.publish(scan_id, {"type": "cancelled", "message": "Scan cancelled."})
+    log_scan_cancelled(scan_id=scan_id)
+    return True
+
+
 def _log_iteration_event(
     event: str, *, scan_id: str, country: str, keyword: str, reason: str | None = None
 ) -> None:
@@ -187,14 +230,16 @@ def _enforce_keyword_timeout(
 
 def create_basic_scan(db: Session, tracked_playlist: TrackedPlaylist) -> BasicScan:
     is_tracked_playlist = tracked_playlist.id is not None
+    now = _now_utc()
     scan = BasicScan(
         account_id=tracked_playlist.account_id,
         tracked_playlist_id=tracked_playlist.id,
         is_tracked_playlist=is_tracked_playlist,
-        started_at=_now_utc(),
-        status="running",
+        started_at=now,
+        status="queued",
         scanned_countries=tracked_playlist.target_countries or [],
         scanned_keywords=tracked_playlist.target_keywords or [],
+        last_event_at=now,
     )
     db.add(scan)
     db.commit()
@@ -250,11 +295,21 @@ def run_basic_scan(scan_id: str) -> None:
     countries_count = 0
     keywords_count = 0
     ended_status = "error"
+    scan_started_at: datetime | None = None
     start_scan_spotify_usage(scan_id)
     try:
         log_scan_lifecycle("task_started", scan_id)
         scan = db.get(BasicScan, scan_id)
         if scan is None:
+            return
+        scan_started_at = scan.started_at
+        if scan.status != "running":
+            scan.status = "running"
+            scan.last_event_at = _now_utc()
+            db.add(scan)
+            db.commit()
+        if _check_cancel_requested(db, scan_id):
+            ended_status = "cancelled"
             return
         tracked_playlist_id = scan.tracked_playlist_id
         tracked_playlist = db.get(TrackedPlaylist, scan.tracked_playlist_id)
@@ -267,7 +322,9 @@ def run_basic_scan(scan_id: str) -> None:
             )
             scan.status = "failed"
             scan.error_message = "Tracked playlist not found."
+            scan.error_reason = "tracked_playlist_missing"
             scan.finished_at = _now_utc()
+            scan.last_event_at = scan.finished_at
             db.add(scan)
             db.commit()
             scan_event_manager.publish(scan_id, {"type": "error", "message": scan.error_message})
@@ -281,6 +338,12 @@ def run_basic_scan(scan_id: str) -> None:
         countries_count = len(countries)
         keywords_count = len(keywords)
         total_steps = max(len(countries) * len(keywords), 1)
+        log_scan_start(
+            scan_id=scan_id,
+            playlist_id=str(tracked_playlist_id) if tracked_playlist_id else None,
+            countries=countries,
+            keywords=keywords,
+        )
         _persist_scan_progress(
             db,
             scan_id,
@@ -288,6 +351,10 @@ def run_basic_scan(scan_id: str) -> None:
             total_units=total_steps,
             started_at=scan.started_at,
         )
+
+        if _check_cancel_requested(db, scan_id):
+            ended_status = "cancelled"
+            return
 
         # Release the initial SELECT transaction before long-running Spotify requests.
         db.rollback()
@@ -302,6 +369,7 @@ def run_basic_scan(scan_id: str) -> None:
         if scan is None:
             return
         scan.follower_snapshot = follower_snapshot
+        scan.last_event_at = _now_utc()
         db.add(scan)
         db.commit()
 
@@ -316,6 +384,9 @@ def run_basic_scan(scan_id: str) -> None:
         step = 0
         for country in countries:
             for keyword in keywords:
+                if _check_cancel_requested(db, scan_id):
+                    ended_status = "cancelled"
+                    return
                 step += 1
                 iteration_started = time.monotonic()
                 if not first_sse_event_logged:
@@ -360,6 +431,9 @@ def run_basic_scan(scan_id: str) -> None:
                         )
                         first_spotify_call_logged = True
                     items = search_playlists(keyword, country, token, limit=35, offset=0)[:20]
+                    if _check_cancel_requested(db, scan_id):
+                        ended_status = "cancelled"
+                        return
                     _enforce_keyword_timeout(
                         started_monotonic=iteration_started,
                         scan_id=scan_id,
@@ -376,6 +450,9 @@ def run_basic_scan(scan_id: str) -> None:
                     unique_playlists_fetched += _prefetch_playlist_metadata(
                         playlist_ids_to_fetch, token, playlist_meta_cache
                     )
+                    if _check_cancel_requested(db, scan_id):
+                        ended_status = "cancelled"
+                        return
                     _enforce_keyword_timeout(
                         started_monotonic=iteration_started,
                         scan_id=scan_id,
@@ -478,6 +555,7 @@ def run_basic_scan(scan_id: str) -> None:
 
         scan.status = "completed"
         scan.finished_at = _now_utc()
+        scan.last_event_at = scan.finished_at
         db.add(scan)
         db.commit()
         log_scan_lifecycle("completed", scan_id, results_count=total_results_count)
@@ -520,13 +598,16 @@ def run_basic_scan(scan_id: str) -> None:
             if scan:
                 scan.status = "failed"
                 scan.error_message = str(exc)
+                scan.error_reason = "exception"
                 scan.finished_at = _now_utc()
+                scan.last_event_at = scan.finished_at
                 db.add(scan)
                 db.commit()
         except Exception:
             db.rollback()
         scan_event_manager.publish(scan_id, {"type": "error", "message": str(exc)})
     finally:
+        ended_at = _now_utc()
         log_scan_spotify_usage(
             scan_id=scan_id,
             scan_kind=scan_kind,
@@ -534,6 +615,11 @@ def run_basic_scan(scan_id: str) -> None:
             countries_count=countries_count,
             keywords_count=keywords_count,
             ended_status=ended_status,
+        )
+        log_scan_end(
+            scan_id=scan_id,
+            status=ended_status,
+            duration_ms=_duration_ms(scan_started_at, ended_at),
         )
         log_basic_scan_end(scan_id=scan_id)
         db.close()

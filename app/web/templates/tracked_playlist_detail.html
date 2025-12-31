@@ -121,6 +121,16 @@
                   Your scan is still in progress. Estimating remaining time...
                 </div>
                 <div class="progress-log" data-basic-scan-progress-log></div>
+                <div class="progress-actions">
+                  <button
+                    class="btn btn-secondary"
+                    type="button"
+                    data-basic-scan-stop
+                    hidden
+                  >
+                    Stop Scan
+                  </button>
+                </div>
               </section>
             </div>
           </div>
@@ -621,6 +631,7 @@
         const progressEta = scanRoot.querySelector('[data-basic-scan-progress-eta]');
         const progressHelper = scanRoot.querySelector('[data-basic-scan-progress-helper]');
         const progressLog = scanRoot.querySelector('[data-basic-scan-progress-log]');
+        const stopButton = scanRoot.querySelector('[data-basic-scan-stop]');
         const buildScanElements = (prefix, root) => ({
           resultsWrap: root?.querySelector(`[data-${prefix}-results]`),
           summaryLead: root?.querySelector(`[data-${prefix}-summary-lead]`),
@@ -641,6 +652,7 @@
         let watchdogTimer = null;
         let lastMessageAt = null;
         let hasStopped = false;
+        let lastProgressSnapshot = null;
         let pollTimer = null;
         let pollActiveScanId = null;
         let pollInFlight = false;
@@ -776,6 +788,13 @@
           if (!progressWrap) {
             return;
           }
+          lastProgressSnapshot = {
+            completed_units: current,
+            total_units: total,
+            progress_pct: total ? Math.min((current / total) * 100, 100) : 0,
+            eta_ms: progress?.eta_ms,
+            eta_human: progress?.eta_human,
+          };
           const percent = total ? Math.min((current / total) * 100, 100) : 0;
           if (progressFill) {
             progressFill.style.width = `${percent}%`;
@@ -855,6 +874,14 @@
           setProgress(completed, total, message, progress);
         };
 
+        const setStopButtonVisible = (visible) => {
+          if (!stopButton) {
+            return;
+          }
+          stopButton.hidden = !visible;
+          stopButton.disabled = !visible;
+        };
+
         const stopPolling = () => {
           if (pollTimer) {
             clearInterval(pollTimer);
@@ -905,6 +932,10 @@
               } else if (data?.status === 'failed') {
                 appendLog('Scan failed.');
                 await safeStop('scan failed');
+                stopPolling();
+              } else if (data?.status === 'cancelled') {
+                appendLog('Scan cancelled.');
+                await safeStop('cancelled', { scanId: pollActiveScanId });
                 stopPolling();
               }
             } catch (error) {
@@ -957,6 +988,7 @@
           if (progressLog) {
             progressLog.innerHTML = '';
           }
+          setStopButtonVisible(false);
 
           const statusMessages = {
             completed: '✅ Dedicated scan completed.',
@@ -964,9 +996,11 @@
             'connection error': 'Dedicated scan connection lost. Please try again.',
             'handler error': 'Dedicated scan failed. Please try again.',
             'scan failed': 'Dedicated scan failed. Please try again.',
+            cancelled: 'Scan cancelled.',
           };
           const statusMessage = statusMessages[reason] || 'Basic Scan stopped.';
-          const variant = reason === 'completed' ? 'status-success' : 'status-error';
+          const variant =
+            reason === 'completed' || reason === 'cancelled' ? 'status-success' : 'status-error';
 
           if (reason === 'completed') {
             activeScanStatus = 'completed';
@@ -982,6 +1016,20 @@
             if (typeof loadLatestScan === 'function') {
               await loadLatestScan();
             }
+          } else if (reason === 'cancelled') {
+            activeScanStatus = 'cancelled';
+            syncEtaTicker();
+            if (lastProgressSnapshot) {
+              setProgress(
+                lastProgressSnapshot.completed_units || 0,
+                lastProgressSnapshot.total_units || 1,
+                statusMessage,
+                lastProgressSnapshot
+              );
+            } else {
+              setProgress(0, 1, statusMessage);
+            }
+            setStage(1, scanParameters || scanRoot);
           } else {
             activeScanStatus = 'failed';
             syncEtaTicker();
@@ -992,6 +1040,7 @@
           if (runButton) {
             runButton.disabled = false;
           }
+          activeScanId = null;
           setStatus(statusMessage, variant);
         };
 
@@ -1234,6 +1283,7 @@
           activeScanId = scanId;
           activeScanStatus = activeScanStatus || 'running';
           syncEtaTicker();
+          setStopButtonVisible(true);
           if (eventSource) {
             eventSource.close();
           }
@@ -1259,13 +1309,17 @@
                 });
                 return;
               }
+              if (payload?.type === 'cancelled') {
+                await safeStop('cancelled', { scanId: activeScanId });
+                return;
+              }
               if (payload?.type === 'progress') {
                 activeScanStatus = 'running';
                 syncEtaTicker();
                 setProgress(payload.step, payload.total, payload.message, payload);
                 appendLog(payload.message);
               }
-              if (payload?.type === 'error') {
+              if (payload?.type === 'error' || payload?.type === 'failed') {
                 appendLog(payload.message || 'Scan failed.');
                 await safeStop('scan failed');
               }
@@ -1300,6 +1354,19 @@
           return pathId || '';
         };
 
+        const cancelActiveScan = async () => {
+          if (!activeScanId) {
+            return;
+          }
+          const scanId = activeScanId;
+          const cancelPromise = fetch(
+            `/api/basic-rank-checker/scans/${scanId}/cancel`,
+            { method: 'POST' }
+          ).catch(() => null);
+          await safeStop('cancelled', { scanId });
+          await cancelPromise;
+        };
+
         const startScan = async () => {
           const trackedPlaylistId = resolveTrackedPlaylistId();
           if (!runButton) {
@@ -1310,7 +1377,9 @@
           if (progressLog) {
             progressLog.innerHTML = '';
           }
+          lastProgressSnapshot = null;
           setEtaMsFromServer(null);
+          setStopButtonVisible(true);
           setProgress(0, 0, 'Starting scan…');
           let scanStarted = false;
 
@@ -1339,6 +1408,7 @@
             }
             setStage(1);
             runButton.disabled = false;
+            setStopButtonVisible(false);
             setStatus(normalizeErrorMessage(error, 'Failed to start scan.'), 'status-error');
           } finally {
             if (!scanStarted && runButton.disabled) {
@@ -1424,6 +1494,7 @@
               setActiveSection('dedicated', { skipScroll: true, skipFetch: true });
               openBasicScanStage2();
               applyProgressSnapshot(activeScan.progress, 'Scan in progress...');
+              setStopButtonVisible(true);
               connectEventStream(activeScan.scan_id);
               return;
             }
@@ -1431,10 +1502,17 @@
             setStatus(normalizeErrorMessage(error, 'Failed to load scan status.'), 'status-error');
           }
           logSwitchLatest('none', 'no_active_scan');
+          setStopButtonVisible(false);
           setActiveSection('latest', { skipScroll: true });
         };
 
         initializeScanSections();
+
+        stopButton?.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          cancelActiveScan();
+        });
       };
 
       setupBasicScan();

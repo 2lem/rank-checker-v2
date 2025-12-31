@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
 from app.api import basic_rank_checker_router, debug_router, playlists_router, scans_router
+from app.basic_rank_checker.watchdog import start_scan_watchdog
 from app.core.db import request_path_var
 from app.core.version import get_git_sha
 from app.web.routes import pages_router
@@ -72,6 +73,11 @@ app.include_router(basic_rank_checker_router, prefix="/api/basic-rank-checker")
 app.include_router(playlists_router, prefix="/api/playlists")
 app.include_router(scans_router, prefix="/api/scans")
 app.include_router(pages_router)
+
+
+@app.on_event("startup")
+def start_basic_scan_watchdog() -> None:
+    start_scan_watchdog()
 
 
 @app.get("/health")

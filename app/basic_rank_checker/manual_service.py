@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 import requests
 from sqlalchemy import select
@@ -8,7 +9,12 @@ from sqlalchemy.orm import Session
 
 from app.basic_rank_checker import service as basic_service
 from app.basic_rank_checker.events import scan_event_manager
-from app.basic_rank_checker.scan_logging import log_scan_failure, log_scan_lifecycle
+from app.basic_rank_checker.scan_logging import (
+    log_scan_end,
+    log_scan_failure,
+    log_scan_lifecycle,
+    log_scan_start,
+)
 from app.core.config import SEARCH_URL
 from app.core.db import SessionLocal
 from app.core.spotify import (
@@ -31,17 +37,19 @@ def create_manual_scan(
     target_keywords: list[str],
     target_countries: list[str],
 ) -> BasicScan:
+    now = basic_service._now_utc()
     scan = BasicScan(
         account_id=None,
         tracked_playlist_id=None,
         is_tracked_playlist=False,
-        started_at=basic_service._now_utc(),
-        status="running",
+        started_at=now,
+        status="queued",
         scanned_countries=target_countries or [],
         scanned_keywords=target_keywords or [],
         manual_playlist_url=playlist_url,
         manual_target_keywords=target_keywords or [],
         manual_target_countries=target_countries or [],
+        last_event_at=now,
     )
     db.add(scan)
     db.commit()
@@ -59,7 +67,9 @@ def _fail_scan(db: Session, scan: BasicScan, message: str) -> None:
     )
     scan.status = "failed"
     scan.error_message = message
+    scan.error_reason = "validation"
     scan.finished_at = basic_service._now_utc()
+    scan.last_event_at = scan.finished_at
     db.add(scan)
     db.commit()
     scan_event_manager.publish(str(scan.id), {"type": "error", "message": message})
@@ -75,11 +85,21 @@ def run_manual_scan(scan_id: str) -> None:
     countries_count = 0
     keywords_count = 0
     ended_status = "error"
+    scan_started_at: datetime | None = None
     start_scan_spotify_usage(scan_id)
     try:
         log_scan_lifecycle("task_started", scan_id)
         scan = db.get(BasicScan, scan_id)
         if scan is None:
+            return
+        scan_started_at = scan.started_at
+        if scan.status != "running":
+            scan.status = "running"
+            scan.last_event_at = basic_service._now_utc()
+            db.add(scan)
+            db.commit()
+        if basic_service._check_cancel_requested(db, scan_id):
+            ended_status = "cancelled"
             return
         tracked_playlist_id = scan.tracked_playlist_id
 
@@ -104,6 +124,12 @@ def run_manual_scan(scan_id: str) -> None:
         countries_count = len(countries)
         keywords_count = len(keywords)
         total_steps = max(len(countries) * len(keywords), 1)
+        log_scan_start(
+            scan_id=scan_id,
+            playlist_id=playlist_id,
+            countries=countries,
+            keywords=keywords,
+        )
         basic_service._persist_scan_progress(
             db,
             scan_id,
@@ -111,6 +137,10 @@ def run_manual_scan(scan_id: str) -> None:
             total_units=total_steps,
             started_at=scan.started_at,
         )
+
+        if basic_service._check_cancel_requested(db, scan_id):
+            ended_status = "cancelled"
+            return
 
         # Release the initial SELECT transaction before long-running Spotify requests.
         db.rollback()
@@ -139,6 +169,7 @@ def run_manual_scan(scan_id: str) -> None:
             scan.manual_playlist_image_url = manual_meta.get("playlist_image_url") or manual_meta.get(
                 "playlist_image"
             )
+        scan.last_event_at = basic_service._now_utc()
         db.add(scan)
         db.commit()
 
@@ -153,6 +184,9 @@ def run_manual_scan(scan_id: str) -> None:
 
         for country in countries:
             for keyword in keywords:
+                if basic_service._check_cancel_requested(db, scan_id):
+                    ended_status = "cancelled"
+                    return
                 step += 1
                 if not first_sse_event_logged:
                     log_scan_lifecycle("first_sse_event", scan_id)
@@ -194,6 +228,9 @@ def run_manual_scan(scan_id: str) -> None:
                         )
                         first_spotify_call_logged = True
                     items = search_playlists(keyword, country, token, limit=35, offset=0)[:20]
+                    if basic_service._check_cancel_requested(db, scan_id):
+                        ended_status = "cancelled"
+                        return
 
                     playlist_ids_to_fetch = [
                         item.get("id")
@@ -204,6 +241,9 @@ def run_manual_scan(scan_id: str) -> None:
                     unique_playlists_fetched += basic_service._prefetch_playlist_metadata(
                         playlist_ids_to_fetch, token, playlist_meta_cache
                     )
+                    if basic_service._check_cancel_requested(db, scan_id):
+                        ended_status = "cancelled"
+                        return
 
                     tracked_rank = None
                     query = BasicScanQuery(
@@ -303,6 +343,7 @@ def run_manual_scan(scan_id: str) -> None:
 
         scan.status = "completed"
         scan.finished_at = basic_service._now_utc()
+        scan.last_event_at = scan.finished_at
         db.add(scan)
         db.commit()
         log_scan_lifecycle("completed", scan_id, results_count=total_results_count)
@@ -345,13 +386,16 @@ def run_manual_scan(scan_id: str) -> None:
             if scan:
                 scan.status = "failed"
                 scan.error_message = str(exc)
+                scan.error_reason = "exception"
                 scan.finished_at = basic_service._now_utc()
+                scan.last_event_at = scan.finished_at
                 db.add(scan)
                 db.commit()
         except Exception:
             db.rollback()
         scan_event_manager.publish(scan_id, {"type": "error", "message": str(exc)})
     finally:
+        ended_at = basic_service._now_utc()
         log_scan_spotify_usage(
             scan_id=scan_id,
             scan_kind=scan_kind,
@@ -359,6 +403,11 @@ def run_manual_scan(scan_id: str) -> None:
             countries_count=countries_count,
             keywords_count=keywords_count,
             ended_status=ended_status,
+        )
+        log_scan_end(
+            scan_id=scan_id,
+            status=ended_status,
+            duration_ms=basic_service._duration_ms(scan_started_at, ended_at),
         )
         db.close()
 
