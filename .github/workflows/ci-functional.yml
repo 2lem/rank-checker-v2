@@ -139,11 +139,12 @@ Deploy hook not used; Railway deploy happens after merge to main.
             });
 
   auto_merge:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && needs.smoke_and_e2e.result == 'success'
     needs: smoke_and_e2e
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+      contents: write
     steps:
       - name: Ensure GitHub CLI
         run: |
@@ -159,8 +160,8 @@ Deploy hook not used; Railway deploy happens after merge to main.
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           set +e
-          gh pr merge "$PR_URL" --merge --auto
-          status=$?
+          gh pr merge "$PR_URL" --merge --auto 2>&1 | tee merge.log
+          status=${PIPESTATUS[0]}
           echo "merge_status=$status" >> "$GITHUB_OUTPUT"
           exit 0
 
@@ -170,12 +171,18 @@ Deploy hook not used; Railway deploy happens after merge to main.
         with:
           github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
           script: |
+            const fs = require('fs');
+            const log = fs.existsSync('merge.log')
+              ? fs.readFileSync('merge.log', 'utf8').split('\n').slice(0, 30).join('\n')
+              : '(merge.log not found)';
             const body = `## Auto-merge skipped
 
 Unable to enable auto-merge for this PR. This may be due to branch protections or repository settings. Please merge manually once checks are green.`;
+            
+            const outputBlock = `\n\n**Auto-merge output (first 30 lines)**\n\`\`\`\n${log}\n\`\`\`\n`;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body,
+              body: body + outputBlock,
             });
