@@ -4,6 +4,7 @@ from fastapi import HTTPException, Request, status
 
 
 DEBUG_TOKEN_ENV = "DEBUG_TOKEN"
+DEBUG_TOOLS_ENV = "DEBUG_TOOLS"
 
 def get_debug_token() -> str | None:
     token = os.getenv(DEBUG_TOKEN_ENV)
@@ -12,6 +13,10 @@ def get_debug_token() -> str | None:
 
 def _debug_stability_enabled() -> bool:
     return os.getenv("DEBUG_STABILITY") == "1"
+
+
+def _debug_tools_enabled() -> bool:
+    return os.getenv(DEBUG_TOOLS_ENV) == "1"
 
 
 def require_debug_tools(request: Request) -> None:
@@ -40,3 +45,9 @@ def require_debug_tools(request: Request) -> None:
                 detail="Invalid debug token.",
             )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+
+def require_debug_tools_enabled(request: Request) -> None:
+    if not _debug_tools_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+    require_debug_tools(request)
