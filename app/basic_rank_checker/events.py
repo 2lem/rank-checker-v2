@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from queue import Empty, Queue
 from typing import Iterator
 
+from fastapi.encoders import jsonable_encoder
+
 from app.basic_rank_checker.scan_logging import log_scan_heartbeat
 
 logger = logging.getLogger(__name__)
@@ -68,6 +70,10 @@ class ScanEventManager:
             return iter(())
 
         def _generator() -> Iterator[str]:
+            def _serialize_event(payload: dict) -> str:
+                payload_safe = jsonable_encoder(payload)
+                return json.dumps(payload_safe, ensure_ascii=False)
+
             start_time = time.monotonic()
             last_heartbeat_at = start_time
             while True:
@@ -81,13 +87,38 @@ class ScanEventManager:
                             "status": "failed",
                             "message": "Scan timed out.",
                         }
-                        yield f"data: {json.dumps(timeout_event)}\n\n"
+                        try:
+                            yield f"data: {_serialize_event(timeout_event)}\n\n"
+                        except Exception as exc:  # pragma: no cover - defensive logging
+                            logger.exception(
+                                "basic_scan_sse_serialize_error",
+                                extra={
+                                    "type": "basic_scan_sse_serialize_error",
+                                    "scan_id": scan_id,
+                                    "exc_type": type(exc).__name__,
+                                    "exc_message": str(exc),
+                                },
+                            )
+                            yield "event: error\ndata: {\"message\":\"internal_sse_error\"}\n\n"
                         break
                     if time.monotonic() - last_heartbeat_at >= self._heartbeat_interval_seconds:
                         heartbeat_event = {"type": "heartbeat", "status": "running"}
                         self._last_event_ts[scan_id] = datetime.now(timezone.utc).isoformat()
                         log_scan_heartbeat(scan_id, int(elapsed))
-                        yield f"data: {json.dumps(heartbeat_event)}\n\n"
+                        try:
+                            yield f"data: {_serialize_event(heartbeat_event)}\n\n"
+                        except Exception as exc:  # pragma: no cover - defensive logging
+                            logger.exception(
+                                "basic_scan_sse_serialize_error",
+                                extra={
+                                    "type": "basic_scan_sse_serialize_error",
+                                    "scan_id": scan_id,
+                                    "exc_type": type(exc).__name__,
+                                    "exc_message": str(exc),
+                                },
+                            )
+                            yield "event: error\ndata: {\"message\":\"internal_sse_error\"}\n\n"
+                            break
                         last_heartbeat_at = time.monotonic()
                     continue
 
@@ -100,7 +131,20 @@ class ScanEventManager:
                 elif payload.get("type") == "error":
                     payload.setdefault("status", "error")
 
-                yield f"data: {json.dumps(payload)}\n\n"
+                try:
+                    yield f"data: {_serialize_event(payload)}\n\n"
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    logger.exception(
+                        "basic_scan_sse_serialize_error",
+                        extra={
+                            "type": "basic_scan_sse_serialize_error",
+                            "scan_id": scan_id,
+                            "exc_type": type(exc).__name__,
+                            "exc_message": str(exc),
+                        },
+                    )
+                    yield "event: error\ndata: {\"message\":\"internal_sse_error\"}\n\n"
+                    break
                 last_heartbeat_at = time.monotonic()
                 if payload.get("type") in {"completed", "completed_partial", "partial", "error"}:
                     break
