@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -37,8 +38,10 @@ _spotify_semaphore_ready = Event()
 _spotify_semaphore_lock = Lock()
 _REDACT_KEYS = {"access_token", "refresh_token", "client_secret", "authorization", "token"}
 _METRICS_WINDOW_SECONDS = 15 * 60
-MAX_SPOTIFY_CALLS_PER_MINUTE = 120
-MAX_SPOTIFY_CALLS_PER_SCAN = 300
+MAX_SPOTIFY_CALLS_PER_MINUTE = int(os.getenv("SPOTIFY_MAX_CALLS_PER_MINUTE", "600"))
+MAX_SPOTIFY_CALLS_PER_SCAN = int(os.getenv("SPOTIFY_MAX_CALLS_PER_SCAN", "2000"))
+SPOTIFY_BUDGET_PACING_THRESHOLD = float(os.getenv("SPOTIFY_BUDGET_PACING_THRESHOLD", "0.85"))
+SPOTIFY_BUDGET_PACING_SLEEP_MS = int(os.getenv("SPOTIFY_BUDGET_PACING_SLEEP_MS", "150"))
 
 
 def _ensure_spotify_semaphore_loop() -> asyncio.AbstractEventLoop:
@@ -181,6 +184,19 @@ def _log_budget_warning(*, scope: str, limit: int, current: int, scan_id: str | 
     logger.warning(json.dumps(payload, sort_keys=True, default=str))
 
 
+def _log_budget_pacing(*, scope: str, limit: int, current: int, sleep_ms: int, scan_id: str | None) -> None:
+    payload = {
+        "type": "spotify_budget_pacing",
+        "scope": scope,
+        "limit": limit,
+        "current": current,
+        "sleep_ms": sleep_ms,
+        "scan_id": scan_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    logger.info(json.dumps(payload, sort_keys=True, default=str))
+
+
 def _log_spotify_token_fetch(
     *,
     phase: str,
@@ -254,9 +270,10 @@ class SpotifyCallBudget:
         self._scan_counts: dict[str, int] = {}
         self._lock = Lock()
 
-    def record(self, scan_id: str | None) -> list[dict]:
+    def record(self, scan_id: str | None) -> tuple[list[dict], list[dict]]:
         now = time.time()
         warnings: list[dict] = []
+        pacings: list[dict] = []
         with self._lock:
             self._global_calls.append(now)
             self._prune_locked(now)
@@ -267,6 +284,17 @@ class SpotifyCallBudget:
                         "scope": "global",
                         "limit": MAX_SPOTIFY_CALLS_PER_MINUTE,
                         "current": global_count,
+                        "scan_id": None,
+                    }
+                )
+            global_threshold = MAX_SPOTIFY_CALLS_PER_MINUTE * SPOTIFY_BUDGET_PACING_THRESHOLD
+            if global_count >= global_threshold:
+                pacings.append(
+                    {
+                        "scope": "global",
+                        "limit": MAX_SPOTIFY_CALLS_PER_MINUTE,
+                        "current": global_count,
+                        "sleep_ms": SPOTIFY_BUDGET_PACING_SLEEP_MS,
                         "scan_id": None,
                     }
                 )
@@ -283,8 +311,22 @@ class SpotifyCallBudget:
                             "scan_id": scan_id,
                         }
                     )
+                scan_threshold = MAX_SPOTIFY_CALLS_PER_SCAN * SPOTIFY_BUDGET_PACING_THRESHOLD
+                if current >= scan_threshold:
+                    sleep_ms = SPOTIFY_BUDGET_PACING_SLEEP_MS
+                    if current > MAX_SPOTIFY_CALLS_PER_SCAN:
+                        sleep_ms *= 2
+                    pacings.append(
+                        {
+                            "scope": "scan",
+                            "limit": MAX_SPOTIFY_CALLS_PER_SCAN,
+                            "current": current,
+                            "sleep_ms": sleep_ms,
+                            "scan_id": scan_id,
+                        }
+                    )
 
-        return warnings
+        return warnings, pacings
 
     def _prune_locked(self, now: float) -> None:
         cutoff = now - 60
@@ -352,36 +394,24 @@ def _spotify_request_with_meta(
 
     while True:
         attempt += 1
-        budget_enforced = False
-        budget_enforced_scope: str | None = None
-        budget_limit: int | None = None
-        budget_current: int | None = None
-        for warning in _spotify_budget.record(scan_id):
+        warnings, pacings = _spotify_budget.record(scan_id)
+        for warning in warnings:
             _log_budget_warning(
                 scope=warning["scope"],
                 limit=warning["limit"],
                 current=warning["current"],
                 scan_id=warning["scan_id"],
             )
-            if warning["scope"] == "scan" and scan_id:
-                budget_enforced = True
-                budget_enforced_scope = "scan"
-                budget_limit = warning["limit"]
-                budget_current = warning["current"]
-            elif warning["scope"] == "global" and not scan_id:
-                budget_enforced = True
-                budget_enforced_scope = "global"
-                budget_limit = warning["limit"]
-                budget_current = warning["current"]
-        if budget_enforced:
-            _log_event(
-                "spotify_budget_enforced",
-                scope=budget_enforced_scope,
-                scan_id=scan_id,
-                limit=budget_limit,
-                current=budget_current,
+        sleep_ms = 0
+        for pacing in pacings:
+            _log_budget_pacing(
+                scope=pacing["scope"],
+                limit=pacing["limit"],
+                current=pacing["current"],
+                sleep_ms=pacing["sleep_ms"],
+                scan_id=pacing["scan_id"],
             )
-            return {}, {"request_id": request_id, "budget_enforced": True}
+            sleep_ms = max(sleep_ms, int(pacing["sleep_ms"]))
         started_at = datetime.now(timezone.utc).isoformat()
         start_monotonic = time.monotonic()
         _log_spotify_call(
@@ -408,6 +438,8 @@ def _spotify_request_with_meta(
         )
         try:
             with _spotify_concurrency_guard():
+                if sleep_ms:
+                    time.sleep(sleep_ms / 1000)
                 response = requests.request(
                     method,
                     url,
