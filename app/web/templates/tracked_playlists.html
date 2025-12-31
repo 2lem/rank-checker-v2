@@ -219,6 +219,14 @@
     </main>
 
     <script>
+      window.__UI_DEBUG__ = true;
+      const UI_DEBUG = window.__UI_DEBUG__ === true;
+      const uiDebug = (...args) => {
+        if (UI_DEBUG && typeof console !== 'undefined' && console.debug) {
+          console.debug('[ui]', ...args);
+        }
+      };
+
       const form = document.getElementById('add-playlist-form');
       const statusArea = document.getElementById('playlist-status');
       const addPanel = document.querySelector('[data-collapsible="add-playlist"]');
@@ -316,10 +324,48 @@
       };
 
       const setStatus = (message, variant) => {
+        if (!statusArea) {
+          return;
+        }
         statusArea.textContent = message;
         statusArea.classList.remove('status-success', 'status-error', 'status-loading');
         if (variant) {
           statusArea.classList.add(variant);
+        }
+      };
+
+      const readErrorPayload = async (response) => {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          try {
+            return await response.json();
+          } catch (error) {
+            return null;
+          }
+        }
+        try {
+          const text = await response.text();
+          return text || null;
+        } catch (error) {
+          return null;
+        }
+      };
+
+      const normalizeErrorMessage = (payload, fallback) => {
+        if (!payload) {
+          return fallback;
+        }
+        if (typeof payload === 'string') {
+          return payload;
+        }
+        const detail = payload.detail ?? payload.message ?? payload.error ?? payload;
+        if (typeof detail === 'string') {
+          return detail;
+        }
+        try {
+          return JSON.stringify(detail);
+        } catch (error) {
+          return fallback;
         }
       };
 
@@ -466,18 +512,19 @@
       };
 
       const setupAddPanel = () => {
-        if (!addPanel || !form) {
-          return;
-        }
-        const playlistInput = form.querySelector('[data-playlist-input]');
-        const countrySelect = form.querySelector('[data-country-select]');
-        const countryAdd = form.querySelector('[data-country-add]');
-        const countryPills = form.querySelector('[data-country-pills]');
-        const countryInfo = form.querySelector('[data-country-info]');
-        const keywordInput = form.querySelector('[data-keyword-input]');
-        const keywordAdd = form.querySelector('[data-keyword-add]');
-        const keywordPills = form.querySelector('[data-keyword-pills]');
-        const keywordInfo = form.querySelector('[data-keyword-info]');
+        try {
+          if (!addPanel || !form) {
+            return;
+          }
+          const playlistInput = form.querySelector('[data-playlist-input]');
+          const countrySelect = form.querySelector('[data-country-select]');
+          const countryAdd = form.querySelector('[data-country-add]');
+          const countryPills = form.querySelector('[data-country-pills]');
+          const countryInfo = form.querySelector('[data-country-info]');
+          const keywordInput = form.querySelector('[data-keyword-input]');
+          const keywordAdd = form.querySelector('[data-keyword-add]');
+          const keywordPills = form.querySelector('[data-keyword-pills]');
+          const keywordInfo = form.querySelector('[data-keyword-info]');
 
         const defaultOption = document.createElement('option');
         defaultOption.value = '';
@@ -518,18 +565,20 @@
           }
         });
 
-        keywordAdd?.addEventListener('click', () => {
-          if (addKeywordsFromInput(keywordInput.value, keywordManager)) {
-            keywordInput.value = '';
-          }
-        });
+          if (keywordInput && keywordAdd) {
+            keywordAdd.addEventListener('click', () => {
+              if (addKeywordsFromInput(keywordInput.value, keywordManager)) {
+                keywordInput.value = '';
+              }
+            });
 
-        keywordInput?.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            keywordAdd.click();
+            keywordInput.addEventListener('keydown', (event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                keywordAdd.click();
+              }
+            });
           }
-        });
 
         playlistInput?.addEventListener('input', (event) => {
           const input = event.target;
@@ -548,40 +597,58 @@
           addPanel.classList.remove('is-open');
         });
 
-        form.addEventListener('submit', async (event) => {
-          event.preventDefault();
-          const payload = {
-            playlist_url: playlistInput.value,
-            target_countries: countryManager.getValues(),
-            target_keywords: keywordManager.getValues(),
-          };
+          form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const payload = {
+              playlist_url: playlistInput?.value,
+              target_countries: countryManager.getValues(),
+              target_keywords: keywordManager.getValues(),
+            };
 
-          setStatus('Adding playlist...', 'status-loading');
+            setStatus('Adding playlist...', 'status-loading');
+            uiDebug('add-playlist:start', payload);
 
-          try {
-            const response = await fetch('/api/playlists', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(payload),
-            });
+            let didReload = false;
 
-            if (!response.ok) {
-              const data = await response.json().catch(() => ({}));
-              const detail = data.detail || 'Unable to add playlist.';
-              const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
+            try {
+              const response = await fetch('/api/playlists', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload),
+              });
+
+              uiDebug('add-playlist:response', response.status);
+
+              if (!response.ok) {
+                const data = await readErrorPayload(response);
+                const message = normalizeErrorMessage(data, 'Unable to add playlist.');
+                setStatus(message, 'status-error');
+                uiDebug('add-playlist:error', message);
+                return;
+              }
+
+              setStatus('Playlist added successfully. Reloading...', 'status-success');
+              uiDebug('add-playlist:completed');
+              addPanel.classList.remove('is-open');
+              didReload = true;
+              window.location.reload();
+            } catch (error) {
+              const message = normalizeErrorMessage(error, 'Network error while adding playlist.');
               setStatus(message, 'status-error');
-              return;
+              uiDebug('add-playlist:error', message);
+            } finally {
+              if (!didReload && statusArea?.classList.contains('status-loading')) {
+                setStatus('Unable to add playlist.', 'status-error');
+              }
             }
-
-            setStatus('Playlist added successfully. Reloading...', 'status-success');
-            addPanel.classList.remove('is-open');
-            window.location.reload();
-          } catch (error) {
-            setStatus('Network error while adding playlist.', 'status-error');
+          });
+        } catch (error) {
+          if (typeof console !== 'undefined' && console.error) {
+            console.error('[ui] add panel init failed', error);
           }
-        });
+        }
       };
 
       let currentlyOpenId = null;
@@ -636,8 +703,9 @@
       };
 
       const setupManagePanels = () => {
-        const cards = document.querySelectorAll('[data-tracked-card]');
-        cards.forEach((card) => {
+        try {
+          const cards = document.querySelectorAll('[data-tracked-card]');
+          cards.forEach((card) => {
           const manageToggle = card.querySelector('[data-manage-toggle]');
           const managePanel = card.querySelector('[data-manage-panel]');
           const manageClose = card.querySelector('[data-manage-close]');
@@ -751,18 +819,20 @@
             editCountryManager.addValue(editCountrySelect.value);
           });
 
-          editKeywordAdd?.addEventListener('click', () => {
-            if (addKeywordsFromInput(editKeywordInput.value, editKeywordManager)) {
-              editKeywordInput.value = '';
-            }
-          });
+            if (editKeywordInput && editKeywordAdd) {
+              editKeywordAdd.addEventListener('click', () => {
+                if (addKeywordsFromInput(editKeywordInput.value, editKeywordManager)) {
+                  editKeywordInput.value = '';
+                }
+              });
 
-          editKeywordInput?.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              editKeywordAdd.click();
+              editKeywordInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  editKeywordAdd.click();
+                }
+              });
             }
-          });
 
           editCancel?.addEventListener('click', () => {
             editCountryManager.setValues(existingCountries.map((value) => value.toUpperCase()));
@@ -805,7 +875,12 @@
             }
           });
 
-        });
+          });
+        } catch (error) {
+          if (typeof console !== 'undefined' && console.error) {
+            console.error('[ui] manage panel init failed', error);
+          }
+        }
       };
 
       addButton?.addEventListener('click', () => {
@@ -908,18 +983,20 @@
           countryManager.addValue(countrySelect.value);
         });
 
-        keywordAdd?.addEventListener('click', () => {
-          if (addKeywordsFromInput(keywordInput.value, keywordManager)) {
-            keywordInput.value = '';
-          }
-        });
+        if (keywordInput && keywordAdd) {
+          keywordAdd.addEventListener('click', () => {
+            if (addKeywordsFromInput(keywordInput.value, keywordManager)) {
+              keywordInput.value = '';
+            }
+          });
 
-        keywordInput?.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            keywordAdd.click();
-          }
-        });
+          keywordInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              keywordAdd.click();
+            }
+          });
+        }
 
         playlistInput?.addEventListener('input', (event) => {
           const input = event.target;
@@ -1421,8 +1498,11 @@
           runButton.disabled = true;
           resetProgress();
           setProgress(0, 0, 'Starting scan…');
+          uiDebug('manual-scan:start', { playlistUrl });
           stopPolling();
           stopEventSource();
+
+          let startedScan = false;
 
           try {
             const response = await fetch('/api/scans/manual', {
@@ -1434,11 +1514,13 @@
                 target_countries: countryManager.getValues(),
               }),
             });
-            const data = await response.json();
+            const data = await response.json().catch(() => ({}));
+            uiDebug('manual-scan:response', response.status);
             if (!response.ok) {
-              throw new Error(data.detail || 'Failed to start scan.');
+              throw new Error(normalizeErrorMessage(data, 'Failed to start scan.'));
             }
             activeScanId = data.scan_id;
+            startedScan = true;
             const eventsUrl = `/api/basic-rank-checker/scans/${activeScanId}/events`;
             startCompletionPoll(activeScanId);
             const handleMessage = async (event) => {
@@ -1461,6 +1543,7 @@
                 await loadResults(activeScanId);
                 setStage(3, summarySection);
                 runButton.disabled = false;
+                uiDebug('manual-scan:completed', activeScanId);
               }
               if (payload.type === 'error') {
                 isCompleted = true;
@@ -1470,6 +1553,7 @@
                 setProgress(0, 1, payload.message || 'Scan failed.');
                 setStage(1);
                 runButton.disabled = false;
+                uiDebug('manual-scan:error', payload.message || 'Scan failed.');
               }
             };
 
@@ -1491,7 +1575,16 @@
           } catch (error) {
             setStage(1);
             runButton.disabled = false;
-            setStatus(error.message || 'Failed to start scan.', 'status-error');
+            const message = normalizeErrorMessage(error, 'Failed to start scan.');
+            setStatus(message, 'status-error');
+            uiDebug('manual-scan:error', message);
+          } finally {
+            if (!startedScan && runButton.disabled) {
+              runButton.disabled = false;
+              if (currentStage === 2) {
+                setStage(1);
+              }
+            }
           }
         };
 

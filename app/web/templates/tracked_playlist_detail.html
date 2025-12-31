@@ -244,34 +244,80 @@
         }
       };
 
+      const readErrorPayload = async (response) => {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          try {
+            return await response.json();
+          } catch (error) {
+            return null;
+          }
+        }
+        try {
+          const text = await response.text();
+          return text || null;
+        } catch (error) {
+          return null;
+        }
+      };
+
+      const normalizeErrorMessage = (payload, fallback) => {
+        if (!payload) {
+          return fallback;
+        }
+        if (typeof payload === 'string') {
+          return payload;
+        }
+        const detail = payload.detail ?? payload.message ?? payload.error ?? payload;
+        if (typeof detail === 'string') {
+          return detail;
+        }
+        try {
+          return JSON.stringify(detail);
+        } catch (error) {
+          return fallback;
+        }
+      };
+
       refreshButton?.addEventListener('click', async () => {
         if (!refreshButton) {
           return;
         }
         refreshButton.disabled = true;
         setStatus('Fetching data from Spotify… please wait', 'status-loading');
+        let didReload = false;
 
         try {
           const response = await fetch(`/api/playlists/{{ playlist.id }}/refresh-stats`, {
             method: 'POST',
           });
-          const data = await response.json().catch(() => ({}));
+          const data = await readErrorPayload(response);
 
           if (!response.ok) {
-            const detail = data.detail || 'Unable to refresh playlist metadata.';
-            const message = typeof detail === 'string' ? detail : detail.message || JSON.stringify(detail);
+            const message = normalizeErrorMessage(data, 'Unable to refresh playlist metadata.');
             setStatus(message, 'status-error');
-            refreshButton.disabled = false;
             return;
           }
 
-          const refreshedAt = data.refreshed_at ? new Date(data.refreshed_at) : null;
+          const refreshedAt =
+            data && typeof data === 'object' && data.refreshed_at ? new Date(data.refreshed_at) : null;
           const timeLabel = refreshedAt ? refreshedAt.toLocaleString() : 'just now';
           setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
+          didReload = true;
           window.location.reload();
         } catch (error) {
-          setStatus('Network error while refreshing playlist.', 'status-error');
-          refreshButton.disabled = false;
+          const message = normalizeErrorMessage(
+            error,
+            'Network error while refreshing playlist.'
+          );
+          setStatus(message, 'status-error');
+        } finally {
+          if (!didReload) {
+            refreshButton.disabled = false;
+          }
+          if (!didReload && statusArea?.classList.contains('status-loading')) {
+            setStatus('Unable to refresh playlist metadata.', 'status-error');
+          }
         }
       });
 
@@ -662,8 +708,11 @@
         const startScan = async () => {
           const trackedPlaylistId = resolveTrackedPlaylistId();
           runButton.disabled = true;
-          progressLog.innerHTML = '';
+          if (progressLog) {
+            progressLog.innerHTML = '';
+          }
           setProgress(0, 0, 'Starting scan…');
+          let scanStarted = false;
 
           try {
             const response = await fetch('/api/basic-rank-checker/scans', {
@@ -671,11 +720,12 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ tracked_playlist_id: trackedPlaylistId }),
             });
-            const data = await response.json();
+            const data = await readErrorPayload(response);
             if (!response.ok) {
-              throw new Error(data.detail || 'Failed to start scan.');
+              throw new Error(normalizeErrorMessage(data, 'Failed to start scan.'));
             }
-            activeScanId = data.scan_id;
+            activeScanId = data?.scan_id;
+            scanStarted = Boolean(activeScanId);
             if (eventSource) {
               eventSource.close();
             }
@@ -706,7 +756,14 @@
           } catch (error) {
             setStage(1);
             runButton.disabled = false;
-            setStatus(error.message || 'Failed to start scan.', 'status-error');
+            setStatus(normalizeErrorMessage(error, 'Failed to start scan.'), 'status-error');
+          } finally {
+            if (!scanStarted && runButton.disabled) {
+              runButton.disabled = false;
+              if (basicScanStageController?.getStage?.() === 2) {
+                setStage(1);
+              }
+            }
           }
         };
 
