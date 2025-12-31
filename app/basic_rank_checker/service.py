@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.basic_rank_checker.events import scan_event_manager
 from app.basic_rank_checker.scan_logging import log_scan_failure, log_scan_lifecycle
 from app.core.basic_scan_visibility import log_basic_scan_end
-from app.core.config import SEARCH_URL
+from app.core.config import BASIC_SCAN_KEYWORD_TIMEOUT_SECONDS, SEARCH_URL
 from app.core.db import SessionLocal
 from app.core.spotify import (
     PLAYLIST_URL,
@@ -161,6 +162,29 @@ def _log_iteration_event(
     logger.info(event, extra=payload)
 
 
+def _enforce_keyword_timeout(
+    *,
+    started_monotonic: float,
+    scan_id: str,
+    country: str,
+    keyword: str,
+) -> None:
+    if BASIC_SCAN_KEYWORD_TIMEOUT_SECONDS <= 0:
+        return
+    elapsed = time.monotonic() - started_monotonic
+    if elapsed <= BASIC_SCAN_KEYWORD_TIMEOUT_SECONDS:
+        return
+    message = (
+        "Basic scan exceeded per-keyword time limit "
+        f"({BASIC_SCAN_KEYWORD_TIMEOUT_SECONDS}s) for '{keyword}' in {country}."
+    )
+    logger.warning(
+        "basic_scan_keyword_timeout",
+        extra={"scan_id": scan_id, "country": country, "keyword": keyword, "elapsed": elapsed},
+    )
+    raise TimeoutError(message)
+
+
 def create_basic_scan(db: Session, tracked_playlist: TrackedPlaylist) -> BasicScan:
     is_tracked_playlist = tracked_playlist.id is not None
     scan = BasicScan(
@@ -293,6 +317,7 @@ def run_basic_scan(scan_id: str) -> None:
         for country in countries:
             for keyword in keywords:
                 step += 1
+                iteration_started = time.monotonic()
                 if not first_sse_event_logged:
                     log_scan_lifecycle("first_sse_event", scan_id)
                     first_sse_event_logged = True
@@ -312,6 +337,8 @@ def run_basic_scan(scan_id: str) -> None:
                         "message": f"Scanning {_market_label(country)} for '{keyword}'...",
                         "step": step,
                         "total": total_steps,
+                        "completed_units": step,
+                        "total_units": total_steps,
                         "progress_pct": progress_payload.get("progress_pct"),
                         "eta_ms": progress_payload.get("eta_ms"),
                         "eta_human": progress_payload.get("eta_human"),
@@ -333,6 +360,12 @@ def run_basic_scan(scan_id: str) -> None:
                         )
                         first_spotify_call_logged = True
                     items = search_playlists(keyword, country, token, limit=35, offset=0)[:20]
+                    _enforce_keyword_timeout(
+                        started_monotonic=iteration_started,
+                        scan_id=scan_id,
+                        country=country,
+                        keyword=keyword,
+                    )
 
                     playlist_ids_to_fetch = [
                         item.get("id")
@@ -342,6 +375,12 @@ def run_basic_scan(scan_id: str) -> None:
                     total_playlist_occurrences += len(playlist_ids_to_fetch)
                     unique_playlists_fetched += _prefetch_playlist_metadata(
                         playlist_ids_to_fetch, token, playlist_meta_cache
+                    )
+                    _enforce_keyword_timeout(
+                        started_monotonic=iteration_started,
+                        scan_id=scan_id,
+                        country=country,
+                        keyword=keyword,
                     )
 
                     tracked_rank = None
@@ -411,6 +450,12 @@ def run_basic_scan(scan_id: str) -> None:
                     db.add_all(results)
                     db.add(query)
                     db.commit()
+                    _enforce_keyword_timeout(
+                        started_monotonic=iteration_started,
+                        scan_id=scan_id,
+                        country=country,
+                        keyword=keyword,
+                    )
                     total_results_count += len(results)
                     _log_iteration_event(
                         "spotify_iteration_success",
