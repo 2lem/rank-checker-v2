@@ -121,3 +121,59 @@ def test_spotify_enforces_scan_budget(monkeypatch: pytest.MonkeyPatch, caplog: p
 
     events = _event_names(caplog)
     assert "spotify_budget_enforced" in events
+
+
+def test_spotify_token_retries_missing_access_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = [_response(200, {}) for _ in range(4)]
+    mock_request = Mock(side_effect=responses)
+    sleep_mock = Mock()
+    monkeypatch.setattr(spotify.requests, "request", mock_request)
+    monkeypatch.setattr(spotify.time, "sleep", sleep_mock)
+    monkeypatch.setattr(spotify.random, "uniform", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(spotify, "SPOTIFY_CLIENT_ID", "client-id")
+    monkeypatch.setattr(spotify, "SPOTIFY_CLIENT_SECRET", "client-secret")
+
+    with pytest.raises(spotify.SpotifyTokenError):
+        spotify.get_access_token()
+
+    assert mock_request.call_count == 4
+    assert sleep_mock.call_count == 3
+    assert [call.args[0] for call in sleep_mock.call_args_list] == [0.5, 1.0, 2.0]
+
+
+def test_spotify_token_recovers_after_missing_access_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = [_response(200, {}), _response(200, {"access_token": "token"})]
+    mock_request = Mock(side_effect=responses)
+    sleep_mock = Mock()
+    monkeypatch.setattr(spotify.requests, "request", mock_request)
+    monkeypatch.setattr(spotify.time, "sleep", sleep_mock)
+    monkeypatch.setattr(spotify.random, "uniform", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(spotify, "SPOTIFY_CLIENT_ID", "client-id")
+    monkeypatch.setattr(spotify, "SPOTIFY_CLIENT_SECRET", "client-secret")
+
+    token = spotify.get_access_token()
+
+    assert token == "token"
+    assert mock_request.call_count == 2
+    assert sleep_mock.call_count == 1
+    assert sleep_mock.call_args_list[0].args[0] == 0.5
+
+
+def test_spotify_token_retries_on_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = [
+        _response(429, {"error": "rate limit"}, headers={"Retry-After": "2"}),
+        _response(200, {"access_token": "token"}),
+    ]
+    mock_request = Mock(side_effect=responses)
+    sleep_mock = Mock()
+    monkeypatch.setattr(spotify.requests, "request", mock_request)
+    monkeypatch.setattr(spotify.time, "sleep", sleep_mock)
+    monkeypatch.setattr(spotify, "SPOTIFY_CLIENT_ID", "client-id")
+    monkeypatch.setattr(spotify, "SPOTIFY_CLIENT_SECRET", "client-secret")
+
+    token = spotify.get_access_token()
+
+    assert token == "token"
+    assert mock_request.call_count == 2
+    assert sleep_mock.call_count == 1
+    assert sleep_mock.call_args_list[0].args[0] == 2
