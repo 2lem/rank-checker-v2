@@ -446,6 +446,10 @@
         let activeScanId = null;
         let eventSource = null;
         let currentStage = 1;
+        let watchdogTimer = null;
+        let lastMessageAt = null;
+        const WATCHDOG_MS = 40000;
+        const WATCHDOG_CHECK_MS = 5000;
 
         const setStage = (stage, scrollTarget) => {
           currentStage = stage;
@@ -514,6 +518,69 @@
           entry.textContent = message;
           progressLog.appendChild(entry);
           progressLog.scrollTop = progressLog.scrollHeight;
+        };
+
+        const clearWatchdog = () => {
+          if (watchdogTimer) {
+            clearInterval(watchdogTimer);
+            watchdogTimer = null;
+          }
+          lastMessageAt = null;
+        };
+
+        const startWatchdog = () => {
+          clearWatchdog();
+          lastMessageAt = Date.now();
+          watchdogTimer = setInterval(() => {
+            if (!lastMessageAt) {
+              return;
+            }
+            if (Date.now() - lastMessageAt > WATCHDOG_MS) {
+              safeStop('timeout');
+            }
+          }, WATCHDOG_CHECK_MS);
+        };
+
+        const updateLastMessageAt = () => {
+          lastMessageAt = Date.now();
+        };
+
+        const safeStop = async (reason, options = {}) => {
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          clearWatchdog();
+
+          const statusMessages = {
+            completed: '✅ Basic Scan completed.',
+            timeout: 'Basic Scan timed out. Please try again.',
+            'connection error': 'Basic Scan connection lost. Please try again.',
+            'handler error': 'Basic Scan failed. Please try again.',
+            'scan failed': 'Basic Scan failed. Please try again.',
+          };
+          const statusMessage = statusMessages[reason] || 'Basic Scan stopped.';
+          const variant = reason === 'completed' ? 'status-success' : 'status-error';
+
+          if (reason === 'completed') {
+            setProgress(options.total || 1, options.total || 1, 'Scan completed.');
+            if (options.scanId) {
+              try {
+                await loadResults(options.scanId);
+              } catch (error) {
+                setStatus('Failed to load scan results.', 'status-error');
+              }
+            }
+            setStage(3, summarySection);
+          } else {
+            setProgress(0, 1, statusMessage);
+            setStage(1, scanParameters || scanRoot);
+          }
+
+          if (runButton) {
+            runButton.disabled = false;
+          }
+          setStatus(statusMessage, variant);
         };
 
         const renderSummary = (scan) => {
@@ -723,6 +790,9 @@
 
         const startScan = async () => {
           const trackedPlaylistId = resolveTrackedPlaylistId();
+          if (!runButton) {
+            return;
+          }
           runButton.disabled = true;
           if (progressLog) {
             progressLog.innerHTML = '';
@@ -748,50 +818,58 @@
             if (eventSource) {
               eventSource.close();
             }
-            eventSource = new EventSource(
-              `/api/basic-rank-checker/scans/${activeScanId}/events`
-            );
+            const eventsUrl = `/api/basic-rank-checker/scans/${activeScanId}/events`;
+            eventSource = new EventSource(eventsUrl);
+            startWatchdog();
             eventSource.onmessage = async (event) => {
               try {
-                const payload = JSON.parse(event.data);
+                updateLastMessageAt();
+                const rawText = event?.data ?? '';
+                let payload = null;
+                try {
+                  payload = JSON.parse(rawText);
+                } catch (error) {
+                  payload = null;
+                }
+                const statusValue = `${payload?.status ?? payload?.type ?? ''}`.toLowerCase();
+                const completionText = rawText.toLowerCase();
+                const completionSignals = ['completed', 'done', 'finished'];
+                if (
+                  completionSignals.includes(statusValue) ||
+                  completionSignals.some((signal) => completionText.includes(signal))
+                ) {
+                  await safeStop('completed', {
+                    scanId: activeScanId,
+                    total: payload?.total,
+                  });
+                  return;
+                }
                 if (payload.type === 'progress') {
                   setProgress(payload.step, payload.total, payload.message);
                   appendLog(payload.message);
                 }
                 if (payload.type === 'done') {
-                  eventSource.close();
-                  setProgress(payload.total || 1, payload.total || 1, 'Scan completed.');
-                  await loadResults(activeScanId);
-                  setStage(3, summarySection);
-                  runButton.disabled = false;
+                  await safeStop('completed', {
+                    scanId: activeScanId,
+                    total: payload?.total,
+                  });
                 }
                 if (payload.type === 'error') {
-                  eventSource.close();
                   appendLog(payload.message || 'Scan failed.');
-                  setProgress(0, 1, payload.message || 'Scan failed.');
-                  setStage(1);
-                  runButton.disabled = false;
+                  await safeStop('scan failed');
                 }
               } catch (error) {
                 if (typeof console !== 'undefined' && console.error) {
                   console.error('[basic-scan] event handling failed', error);
                 }
-                eventSource?.close();
-                setStage(1);
-                if (runButton) {
-                  runButton.disabled = false;
-                }
+                await safeStop('handler error');
               }
             };
             eventSource.onerror = (error) => {
               if (typeof console !== 'undefined' && console.error) {
                 console.error('[basic-scan] connection error', error);
               }
-              eventSource?.close();
-              setStage(1);
-              if (runButton) {
-                runButton.disabled = false;
-              }
+              safeStop('connection error');
             };
           } catch (error) {
             if (typeof console !== 'undefined' && console.error) {
