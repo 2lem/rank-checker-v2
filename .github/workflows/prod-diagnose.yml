@@ -1,0 +1,169 @@
+name: Prod Diagnose
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: ${{ secrets.BASE_URL }}
+      TEST_TRACKED_PLAYLIST_ID: ${{ secrets.TEST_TRACKED_PLAYLIST_ID }}
+      TEST_PLAYLIST_URL_OR_ID: ${{ secrets.TEST_PLAYLIST_URL_OR_ID }}
+      DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
+    steps:
+      - name: Run production diagnostics
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "BASE_URL is required"
+            exit 1
+          fi
+
+          LOG_DIR="artifacts/prod-diagnose"
+          mkdir -p "$LOG_DIR"
+
+          run_request() {
+            local name="$1"
+            local method="$2"
+            local url="$3"
+            local data="${4-}"
+            local header="${5-}"
+            local body_file="${LOG_DIR}/${name}.body.txt"
+            local headers_file="${LOG_DIR}/${name}.headers.txt"
+            local metrics_file="${LOG_DIR}/${name}.metrics.txt"
+            local stderr_file="${LOG_DIR}/${name}.stderr.txt"
+            local tmp_file
+            tmp_file="$(mktemp)"
+
+            local curl_args=(
+              --http1.1
+              --max-time 30
+              -D "$headers_file"
+              -o "$tmp_file"
+              -w "CURL_HTTP_CODE=%{http_code}\nCURL_TIME_TOTAL=%{time_total}\nCURL_TIME_STARTTRANSFER=%{time_starttransfer}\nCURL_TIME_CONNECT=%{time_connect}\n"
+            )
+
+            if [ -n "$data" ]; then
+              curl_args+=( -H "Content-Type: application/json" --data "$data" )
+            fi
+            if [ -n "$header" ]; then
+              curl_args+=( -H "$header" )
+            fi
+
+            set +e
+            curl -sS -X "$method" "${curl_args[@]}" "$url" 2> "$stderr_file" > "$metrics_file"
+            local exit_code=$?
+            set -e
+
+            echo "CURL_EXIT_CODE=$exit_code" >> "$metrics_file"
+            head -c 5120 "$tmp_file" > "$body_file"
+            rm -f "$tmp_file"
+          }
+
+          BASE="${BASE_URL%/}"
+          run_request "health" "GET" "${BASE}/health"
+
+          if [ -n "${TEST_TRACKED_PLAYLIST_ID:-}" ]; then
+            run_request \
+              "refresh-stats" \
+              "POST" \
+              "${BASE}/api/playlists/refresh/${TEST_TRACKED_PLAYLIST_ID}"
+          else
+            echo "TEST_TRACKED_PLAYLIST_ID missing; skipping refresh stats" > "${LOG_DIR}/refresh-stats.metrics.txt"
+          fi
+
+          if [ -n "${TEST_TRACKED_PLAYLIST_ID:-}" ]; then
+            run_request \
+              "basic-scan" \
+              "POST" \
+              "${BASE}/api/basic-rank-checker/scans" \
+              "{\"tracked_playlist_id\":\"${TEST_TRACKED_PLAYLIST_ID}\"}"
+          else
+            echo "TEST_TRACKED_PLAYLIST_ID missing; skipping basic scan" > "${LOG_DIR}/basic-scan.metrics.txt"
+          fi
+
+          if [ -n "${TEST_PLAYLIST_URL_OR_ID:-}" ]; then
+            run_request \
+              "manual-scan" \
+              "POST" \
+              "${BASE}/api/scans/manual" \
+              "{\"playlist_url\":\"${TEST_PLAYLIST_URL_OR_ID}\",\"target_keywords\":[\"test\"],\"target_countries\":[\"US\"]}"
+          else
+            echo "TEST_PLAYLIST_URL_OR_ID missing; skipping manual scan" > "${LOG_DIR}/manual-scan.metrics.txt"
+          fi
+
+          DEBUG_HEADER=""
+          if [ -n "${DEBUG_TOKEN:-}" ]; then
+            DEBUG_HEADER="X-Debug-Token: ${DEBUG_TOKEN}"
+          fi
+
+          run_request "debug-db-activity" "GET" "${BASE}/api/debug/db-activity" "" "$DEBUG_HEADER" || true
+          run_request "debug-db-pool" "GET" "${BASE}/api/debug/db-pool" "" "$DEBUG_HEADER" || true
+          run_request "debug-sse-state" "GET" "${BASE}/api/debug/sse-state" "" "$DEBUG_HEADER" || true
+          run_request "debug-threads" "GET" "${BASE}/api/debug/threads" "" "$DEBUG_HEADER" || true
+
+          summarize_request() {
+            local name="$1"
+            local label="$2"
+            local metrics_file="${LOG_DIR}/${name}.metrics.txt"
+            if [ ! -f "$metrics_file" ]; then
+              echo "- ${label}: no metrics file found" >> "$GITHUB_STEP_SUMMARY"
+              return
+            fi
+            local http_code
+            http_code="$(grep -E '^CURL_HTTP_CODE=' "$metrics_file" | cut -d= -f2 || true)"
+            local total
+            total="$(grep -E '^CURL_TIME_TOTAL=' "$metrics_file" | cut -d= -f2 || true)"
+            local ttfb
+            ttfb="$(grep -E '^CURL_TIME_STARTTRANSFER=' "$metrics_file" | cut -d= -f2 || true)"
+            local connect
+            connect="$(grep -E '^CURL_TIME_CONNECT=' "$metrics_file" | cut -d= -f2 || true)"
+            local exit_code
+            exit_code="$(grep -E '^CURL_EXIT_CODE=' "$metrics_file" | cut -d= -f2 || true)"
+            local timeout_note=""
+            if [ "$exit_code" = "28" ]; then
+              timeout_note="(timeout)"
+            fi
+            echo "- ${label}: HTTP ${http_code:-n/a} ${timeout_note} total=${total:-n/a}s ttfb=${ttfb:-n/a}s connect=${connect:-n/a}s" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          {
+            echo "## Production diagnostics summary"
+            echo ""
+            echo "**Base URL**: ${BASE}"
+            echo ""
+            echo "### Request timings"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          summarize_request "health" "GET /health"
+          summarize_request "refresh-stats" "POST /api/playlists/refresh/{id}"
+          summarize_request "basic-scan" "POST /api/basic-rank-checker/scans"
+          summarize_request "manual-scan" "POST /api/scans/manual"
+
+          {
+            echo ""
+            echo "### Debug endpoints"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          summarize_request "debug-db-activity" "GET /api/debug/db-activity"
+          summarize_request "debug-db-pool" "GET /api/debug/db-pool"
+          summarize_request "debug-sse-state" "GET /api/debug/sse-state"
+          summarize_request "debug-threads" "GET /api/debug/threads"
+
+          DB_POOL_BODY="${LOG_DIR}/debug-db-pool.body.txt"
+          if [ -f "$DB_POOL_BODY" ]; then
+            pool_status="$(grep -Eo '"pool_status"[^,]+' "$DB_POOL_BODY" || true)"
+            if [ -n "$pool_status" ]; then
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "**DB pool status**: ${pool_status}" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
+      - name: Upload diagnostics artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-diagnose
+          path: artifacts/prod-diagnose

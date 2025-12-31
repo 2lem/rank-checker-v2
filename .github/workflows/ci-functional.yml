@@ -37,6 +37,8 @@ jobs:
         continue-on-error: true
         env:
           BASE_URL: ${{ secrets.BASE_URL }}
+          TEST_TRACKED_PLAYLIST_ID: ${{ secrets.TEST_TRACKED_PLAYLIST_ID }}
+          TEST_PLAYLIST_URL_OR_ID: ${{ secrets.TEST_PLAYLIST_URL_OR_ID }}
         run: node scripts/smoke.mjs
 
       - name: Run Playwright tests

@@ -1,9 +1,13 @@
 import { expect, test } from '@playwright/test';
+import { attachSseStateOnFailure, installSseObserver, waitForSseCompletion } from './sse-helpers';
 
 test('Basic scan completes without hanging', async ({ page }) => {
+  test.setTimeout(90_000);
   const playlistId = process.env.TEST_TRACKED_PLAYLIST_ID;
   const scanPath = process.env.BASIC_SCAN_PATH || (playlistId ? `/playlists/${playlistId}` : null);
   test.skip(!scanPath, 'BASIC_SCAN_PATH or TEST_TRACKED_PLAYLIST_ID is not set');
+
+  await installSseObserver(page);
 
   await page.goto(scanPath);
 
@@ -19,6 +23,8 @@ test('Basic scan completes without hanging', async ({ page }) => {
   const progress = page.locator('[data-basic-scan-progress]');
   await expect(progress).toBeVisible({ timeout: 10000 });
 
+  await waitForSseCompletion(page, 45_000);
+
   await page.waitForFunction(
     () => {
       const progressEl = document.querySelector('[data-basic-scan-progress]');
@@ -31,4 +37,8 @@ test('Basic scan completes without hanging', async ({ page }) => {
     },
     { timeout: 30000 }
   );
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  await attachSseStateOnFailure(page, testInfo);
 });
