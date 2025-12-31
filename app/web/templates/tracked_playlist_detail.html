@@ -42,15 +42,28 @@
 
         <section class="toolbar-panel">
           <div class="toolbar-actions">
-            <button class="btn btn-secondary" type="button" data-basic-scan-toggle aria-expanded="false">
-              Basic Scan (Manual)
+            <button
+              class="btn btn-secondary"
+              type="button"
+              data-scan-tab="dedicated"
+              aria-pressed="true"
+            >
+              Dedicated Scan
+            </button>
+            <button
+              class="btn btn-secondary"
+              type="button"
+              data-scan-tab="latest"
+              aria-pressed="false"
+            >
+              Latest Scan Results
             </button>
           </div>
         </section>
 
-        <section class="panel basic-scan-panel is-hidden" id="basic-scan-section">
+        <section class="panel basic-scan-panel is-active" id="basic-scan-section">
           <div class="panel-header">
-            <h2>Basic Scan Panel</h2>
+            <h2>Dedicated Scan</h2>
             <p>Run a manual scan using stored targets.</p>
           </div>
           <div class="panel-body">
@@ -87,7 +100,6 @@
                 </div>
                 <div class="run-scan-controls" id="run-scan-controls" data-basic-scan-run-controls>
                   <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
-                  <button class="btn btn-secondary" type="button" data-basic-scan-latest>Latest Scan</button>
                 </div>
               </section>
               <section
@@ -112,7 +124,17 @@
               {% set summary_id = 'basic-scan-summary' %}
               {% set detailed_id = 'basic-scan-detailed' %}
               {% include "_components/scan_results.html" %}
+            </div>
+          </div>
+        </section>
 
+        <section class="panel latest-scan-panel is-hidden" id="latest-scan-section">
+          <div class="panel-header">
+            <h2>Latest Scan Results</h2>
+            <p>Most recent completed scan, refreshed on every visit.</p>
+          </div>
+          <div class="panel-body">
+            <div class="latest-scan" data-latest-scan data-tracked-playlist-id="{{ playlist.id }}">
               {% set results_id = 'latest-scan-results' %}
               {% set results_title = 'Latest Scan Results' %}
               {% set data_prefix = 'latest-scan' %}
@@ -140,10 +162,13 @@
       const panels = document.querySelectorAll('.panel[data-panel]');
       const toolbar = document.querySelector('.toolbar-panel');
       let lastAnchor = toolbar;
-      const basicScanToggle = document.querySelector('[data-basic-scan-toggle]');
       const basicScanSection = document.getElementById('basic-scan-section');
+      const latestScanSection = document.getElementById('latest-scan-section');
+      const scanTabButtons = document.querySelectorAll('[data-scan-tab]');
       let basicScanStageController = null;
-      let preOpenScrollY = null;
+      let activeScanTab = null;
+      let loadLatestScan = null;
+      let lastTabScrollY = null;
 
       const togglePanel = (targetId) => {
         let activePanel = null;
@@ -209,33 +234,50 @@
         window.scrollTo({ top: Math.max(target, 0), behavior: 'smooth' });
       };
 
-      const toggleBasicScan = () => {
-        if (!basicScanSection || !basicScanToggle) {
+      const setActiveScanTab = (nextTab, options = {}) => {
+        if (!nextTab || nextTab === activeScanTab) {
           return;
         }
-        const isHidden = basicScanSection.classList.contains('is-hidden');
-        if (isHidden) {
-          preOpenScrollY = window.scrollY;
-          basicScanSection.classList.remove('is-hidden');
-          basicScanSection.classList.add('is-active');
-          basicScanToggle.setAttribute('aria-expanded', 'true');
+        lastTabScrollY = window.scrollY;
+        activeScanTab = nextTab;
+
+        if (nextTab === 'dedicated') {
+          basicScanSection?.classList.add('is-active');
+          latestScanSection?.classList.remove('is-active');
+          basicScanSection?.classList.remove('is-hidden');
+          latestScanSection?.classList.add('is-hidden');
           if (basicScanStageController) {
-            basicScanStageController.setStage(1);
-            return;
+            basicScanStageController.setStage(basicScanStageController.getStage());
           }
-          const fallbackTarget = document.getElementById('scan-parameters') || basicScanSection;
-          scrollSectionToCenter(fallbackTarget);
-          return;
+        } else {
+          latestScanSection?.classList.add('is-active');
+          basicScanSection?.classList.remove('is-active');
+          latestScanSection?.classList.remove('is-hidden');
+          basicScanSection?.classList.add('is-hidden');
         }
-        basicScanSection.classList.add('is-hidden');
-        basicScanSection.classList.remove('is-active');
-        basicScanToggle.setAttribute('aria-expanded', 'false');
-        if (preOpenScrollY !== null) {
-          window.scrollTo({ top: preOpenScrollY, behavior: 'smooth' });
+
+        scanTabButtons.forEach((button) => {
+          const isActive = button.dataset.scanTab === activeScanTab;
+          button.setAttribute('aria-pressed', String(isActive));
+          button.classList.toggle('is-active', isActive);
+        });
+
+        if (nextTab === 'latest' && !options.skipFetch && typeof loadLatestScan === 'function') {
+          loadLatestScan();
+        }
+
+        if (!options.skipScroll && lastTabScrollY !== null) {
+          window.scrollTo({ top: lastTabScrollY, behavior: 'smooth' });
         }
       };
 
-      basicScanToggle?.addEventListener('click', toggleBasicScan);
+      scanTabButtons.forEach((button) => {
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          const nextTab = button.dataset.scanTab;
+          setActiveScanTab(nextTab);
+        });
+      });
 
       const setStatus = (message, variant) => {
         if (!statusArea) {
@@ -560,31 +602,31 @@
 
       const setupBasicScan = () => {
         const scanRoot = document.querySelector('[data-basic-scan]');
+        const latestRoot = document.querySelector('[data-latest-scan]');
         if (!scanRoot) {
           return;
         }
         const scanParameters = scanRoot.querySelector('[data-basic-scan-parameters]');
         const runControls = scanRoot.querySelector('[data-basic-scan-run-controls]');
         const runButton = scanRoot.querySelector('[data-basic-scan-run]');
-        const latestButton = scanRoot.querySelector('[data-basic-scan-latest]');
         const progressWrap = scanRoot.querySelector('[data-basic-scan-progress]');
         const progressFill = scanRoot.querySelector('[data-basic-scan-progress-fill]');
         const progressStatus = scanRoot.querySelector('[data-basic-scan-progress-status]');
         const progressEta = scanRoot.querySelector('[data-basic-scan-progress-eta]');
         const progressLog = scanRoot.querySelector('[data-basic-scan-progress-log]');
-        const buildScanElements = (prefix) => ({
-          resultsWrap: scanRoot.querySelector(`[data-${prefix}-results]`),
-          summaryLead: scanRoot.querySelector(`[data-${prefix}-summary-lead]`),
-          summaryList: scanRoot.querySelector(`[data-${prefix}-summary-list]`),
-          detailedWrap: scanRoot.querySelector(`[data-${prefix}-detailed]`),
-          exportSummary: scanRoot.querySelector(`[data-${prefix}-export-summary]`),
-          exportDetailed: scanRoot.querySelector(`[data-${prefix}-export-detailed]`),
-          summarySection: scanRoot.querySelector(`[data-${prefix}-summary-section]`),
-          detailedSection: scanRoot.querySelector(`[data-${prefix}-detailed-section]`),
-          csvControls: scanRoot.querySelector(`[data-${prefix}-csv-controls]`),
+        const buildScanElements = (prefix, root) => ({
+          resultsWrap: root?.querySelector(`[data-${prefix}-results]`),
+          summaryLead: root?.querySelector(`[data-${prefix}-summary-lead]`),
+          summaryList: root?.querySelector(`[data-${prefix}-summary-list]`),
+          detailedWrap: root?.querySelector(`[data-${prefix}-detailed]`),
+          exportSummary: root?.querySelector(`[data-${prefix}-export-summary]`),
+          exportDetailed: root?.querySelector(`[data-${prefix}-export-detailed]`),
+          summarySection: root?.querySelector(`[data-${prefix}-summary-section]`),
+          detailedSection: root?.querySelector(`[data-${prefix}-detailed-section]`),
+          csvControls: root?.querySelector(`[data-${prefix}-csv-controls]`),
         });
-        const basicResults = buildScanElements('basic-scan');
-        const latestResults = buildScanElements('latest-scan');
+        const basicResults = buildScanElements('basic-scan', scanRoot);
+        const latestResults = buildScanElements('latest-scan', latestRoot);
         const resultsWrap = basicResults.resultsWrap;
         const summaryLead = basicResults.summaryLead;
         const summaryList = basicResults.summaryList;
@@ -606,8 +648,6 @@
         let pollActiveScanId = null;
         let pollInFlight = false;
         let pollStartAt = null;
-        let latestCompletedScan = null;
-        let showLatestPanel = false;
         const WATCHDOG_MS = 45000;
         const WATCHDOG_CHECK_MS = 5000;
 
@@ -1177,8 +1217,12 @@
 
         const resolveTrackedPlaylistId = () => {
           const datasetId = scanRoot?.dataset?.trackedPlaylistId;
+          const latestDatasetId = latestRoot?.dataset?.trackedPlaylistId;
           if (datasetId) {
             return datasetId;
+          }
+          if (latestDatasetId) {
+            return latestDatasetId;
           }
           const pathId = window.location.pathname.split('/').filter(Boolean).pop();
           if (!pathId && typeof console !== 'undefined' && console.debug) {
@@ -1233,24 +1277,11 @@
           }
         };
 
-        const setLatestPanelVisibility = (shouldShow) => {
-          showLatestPanel = shouldShow;
-          if (!latestResults?.resultsWrap) {
-            return;
-          }
-          if (showLatestPanel) {
-            showSection(latestResults.resultsWrap);
-          } else {
-            hideSection(latestResults.resultsWrap);
-          }
-        };
-
-        const loadLatestScan = async () => {
-          if (!latestButton) {
+        loadLatestScan = async () => {
+          if (!latestRoot) {
             return;
           }
           const trackedPlaylistId = resolveTrackedPlaylistId();
-          latestButton.disabled = true;
 
           try {
             const url = new URL(
@@ -1263,8 +1294,6 @@
             const response = await fetch(`${url.pathname}${url.search}`);
             const data = await readErrorPayload(response);
             if (response.status === 404) {
-              latestCompletedScan = null;
-              setLatestPanelVisibility(true);
               showEmptyState(latestResults, 'No completed scans yet.');
               return;
             }
@@ -1274,9 +1303,6 @@
             if (!data || typeof data !== 'object' || !data.scan_id) {
               throw new Error('Failed to load latest scan.');
             }
-
-            latestCompletedScan = data;
-            setLatestPanelVisibility(true);
             const resultsPayload = data.results || {};
             if (!hasResults(resultsPayload)) {
               showEmptyState(latestResults, 'No completed scans yet.');
@@ -1284,10 +1310,7 @@
             }
             renderScanResults(resultsPayload, latestResults, data.scan_id);
           } catch (error) {
-            setLatestPanelVisibility(false);
             setStatus(normalizeErrorMessage(error, 'Failed to load latest scan.'), 'status-error');
-          } finally {
-            latestButton.disabled = false;
           }
         };
 
@@ -1298,17 +1321,12 @@
           startScan();
         });
 
-        latestButton?.addEventListener('click', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          loadLatestScan();
-        });
-
         basicScanStageController.openBasicScanStage1 = openBasicScanStage1;
         basicScanStageController.openBasicScanStage2 = openBasicScanStage2;
       };
 
       setupBasicScan();
+      setActiveScanTab('dedicated', { skipScroll: true, skipFetch: true });
     </script>
   </body>
 </html>
