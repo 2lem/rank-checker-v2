@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from app.core.basic_scan_visibility import log_spotify_call
 from app.core.config import (
     MARKETS_URL,
     PLAYLIST_URL,
@@ -523,6 +524,7 @@ def _spotify_request_with_meta(
             sleep_ms = max(sleep_ms, int(pacing["sleep_ms"]))
         started_at = datetime.now(timezone.utc).isoformat()
         start_monotonic = time.monotonic()
+        log_spotify_call(path)
         _log_spotify_call(
             phase="start",
             endpoint=path,

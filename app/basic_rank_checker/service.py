@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.basic_rank_checker.events import scan_event_manager
 from app.basic_rank_checker.scan_logging import log_scan_failure, log_scan_lifecycle
+from app.core.basic_scan_visibility import log_basic_scan_end
 from app.core.config import SEARCH_URL
 from app.core.db import SessionLocal
 from app.core.spotify import (
@@ -385,6 +386,7 @@ def run_basic_scan(scan_id: str) -> None:
             keywords_count=keywords_count,
             ended_status=ended_status,
         )
+        log_basic_scan_end(scan_id=scan_id)
         db.close()
 
 

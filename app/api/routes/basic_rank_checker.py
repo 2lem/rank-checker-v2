@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.basic_rank_checker.events import scan_event_manager
 from app.basic_rank_checker.service import create_basic_scan, fetch_scan_details, run_basic_scan
 from app.core.db import get_db
+from app.core.basic_scan_visibility import log_basic_scan_start
 from app.core.sse_guard import db_preflight_check
 from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
 from app.repositories.tracked_playlists import get_tracked_playlist_by_id
@@ -91,6 +92,9 @@ def start_basic_scan(payload: dict, db: Session = Depends(get_db)):
         )
 
     scan = create_basic_scan(db, tracked)
+    country = (tracked.target_countries or [None])[0]
+    keyword = (tracked.target_keywords or [None])[0]
+    log_basic_scan_start(scan_id=str(scan.id), country=country, keyword=keyword)
     scan_event_manager.create_queue(str(scan.id))
     thread = threading.Thread(target=run_basic_scan, args=(str(scan.id),), daemon=True)
     thread.start()
