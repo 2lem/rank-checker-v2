@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/static/tracked.css" />
   </head>
   <body class="app-body">
-    <main class="page">
+    <main class="page" data-tracked-playlists-page>
       <header class="page-header" id="playlist-controls">
         <div>
           <h1>Tracked Playlists</h1>
@@ -219,6 +219,11 @@
     </main>
 
     <script>
+      const initTrackedPlaylistsPage = () => {
+        const pageRoot = document.querySelector('[data-tracked-playlists-page]');
+        if (!pageRoot) {
+          return;
+        }
       window.__UI_DEBUG__ = true;
       const UI_DEBUG = window.__UI_DEBUG__ === true;
       const uiDebug = (...args) => {
@@ -513,7 +518,7 @@
 
       const setupAddPanel = () => {
         try {
-          if (!addPanel || !form) {
+          if (!addPanel || !form || !statusArea) {
             return;
           }
           const playlistInput = form.querySelector('[data-playlist-input]');
@@ -525,6 +530,9 @@
           const keywordAdd = form.querySelector('[data-keyword-add]');
           const keywordPills = form.querySelector('[data-keyword-pills]');
           const keywordInfo = form.querySelector('[data-keyword-info]');
+          if (!playlistInput || !countrySelect || !countryPills || !countryInfo || !keywordPills || !keywordInfo) {
+            return;
+          }
 
         const defaultOption = document.createElement('option');
         defaultOption.value = '';
@@ -721,6 +729,9 @@
           const editKeywordAdd = card.querySelector('[data-edit-keyword-add]');
           const editKeywordPills = card.querySelector('[data-edit-keyword-pills]');
           const editKeywordInfo = card.querySelector('[data-edit-keyword-info]');
+          if (!managePanel || !editPanel || !editCountrySelect || !editCountryPills || !editCountryInfo || !editKeywordPills || !editKeywordInfo) {
+            return;
+          }
           const playlistId = card.dataset.playlistId;
 
           const existingCountries = JSON.parse(card.dataset.targetCountries || '[]');
@@ -1524,36 +1535,48 @@
             const eventsUrl = `/api/basic-rank-checker/scans/${activeScanId}/events`;
             startCompletionPoll(activeScanId);
             const handleMessage = async (event) => {
-              const payload = JSON.parse(event.data);
-              if (payload.type === 'progress') {
-                const signature = `${payload.step}|${payload.total}|${payload.message}`;
-                if (signature === lastProgressSignature) {
-                  return;
+              try {
+                const payload = JSON.parse(event.data);
+                if (payload.type === 'progress') {
+                  const signature = `${payload.step}|${payload.total}|${payload.message}`;
+                  if (signature === lastProgressSignature) {
+                    return;
+                  }
+                  lastProgressSignature = signature;
+                  setProgress(payload.step, payload.total, payload.message);
+                  appendLog(payload.message);
                 }
-                lastProgressSignature = signature;
-                setProgress(payload.step, payload.total, payload.message);
-                appendLog(payload.message);
-              }
-              if (payload.type === 'done') {
-                // Guard against reconnect/status updates after a terminal completion.
-                isCompleted = true;
+                if (payload.type === 'done') {
+                  // Guard against reconnect/status updates after a terminal completion.
+                  isCompleted = true;
+                  stopEventSource();
+                  stopPolling();
+                  setProgress(payload.total || 1, payload.total || 1, 'Scan completed.');
+                  await loadResults(activeScanId);
+                  setStage(3, summarySection);
+                  runButton.disabled = false;
+                  uiDebug('manual-scan:completed', activeScanId);
+                }
+                if (payload.type === 'error') {
+                  isCompleted = true;
+                  stopEventSource();
+                  stopPolling();
+                  appendLog(payload.message || 'Scan failed.');
+                  setProgress(0, 1, payload.message || 'Scan failed.');
+                  setStage(1);
+                  runButton.disabled = false;
+                  uiDebug('manual-scan:error', payload.message || 'Scan failed.');
+                }
+              } catch (error) {
+                if (typeof console !== 'undefined' && console.error) {
+                  console.error('[ui] manual scan event failed', error);
+                }
                 stopEventSource();
                 stopPolling();
-                setProgress(payload.total || 1, payload.total || 1, 'Scan completed.');
-                await loadResults(activeScanId);
-                setStage(3, summarySection);
-                runButton.disabled = false;
-                uiDebug('manual-scan:completed', activeScanId);
-              }
-              if (payload.type === 'error') {
-                isCompleted = true;
-                stopEventSource();
-                stopPolling();
-                appendLog(payload.message || 'Scan failed.');
-                setProgress(0, 1, payload.message || 'Scan failed.');
                 setStage(1);
-                runButton.disabled = false;
-                uiDebug('manual-scan:error', payload.message || 'Scan failed.');
+                if (runButton) {
+                  runButton.disabled = false;
+                }
               }
             };
 
@@ -1571,6 +1594,19 @@
             } else {
               eventSource = new EventSource(eventsUrl);
               eventSource.onmessage = handleMessage;
+              eventSource.onerror = (error) => {
+                if (!isCompleted) {
+                  if (typeof console !== 'undefined' && console.error) {
+                    console.error('[ui] manual scan connection error', error);
+                  }
+                  stopEventSource();
+                  stopPolling();
+                  setStage(1);
+                  if (runButton) {
+                    runButton.disabled = false;
+                  }
+                }
+              };
             }
           } catch (error) {
             setStage(1);
@@ -1584,6 +1620,10 @@
               if (currentStage === 2) {
                 setStage(1);
               }
+            }
+            if (!startedScan) {
+              stopEventSource();
+              stopPolling();
             }
           }
         };
@@ -1649,6 +1689,9 @@
       setupAddPanel();
       setupManagePanels();
       setupManualScanSection();
+      };
+
+      initTrackedPlaylistsPage();
     </script>
   </body>
 </html>
