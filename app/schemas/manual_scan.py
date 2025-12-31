@@ -21,16 +21,16 @@ def _normalize_list(values: Iterable[str] | None, *, upper: bool = False) -> lis
 
 
 class ManualScanCreate(BaseModel):
-    playlist_url: str
+    playlist_url: str | None = None
     target_keywords: list[str] = Field(default_factory=list)
     target_countries: list[str] = Field(default_factory=list)
 
     @validator("playlist_url")
-    def _strip_playlist_url(cls, value: str) -> str:
-        cleaned = (value or "").strip()
-        if not cleaned:
-            raise ValueError("playlist_url is required")
-        return cleaned
+    def _strip_playlist_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
     @validator("target_keywords", pre=True)
     def _normalize_keywords(cls, value: Iterable[str] | None) -> list[str]:

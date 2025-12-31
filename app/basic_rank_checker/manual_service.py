@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def create_manual_scan(
     db: Session,
-    playlist_url: str,
+    playlist_url: str | None,
     target_keywords: list[str],
     target_countries: list[str],
 ) -> BasicScan:
@@ -63,16 +63,20 @@ def run_manual_scan(scan_id: str) -> None:
         if scan is None:
             return
 
-        playlist_url = normalize_spotify_playlist_url(scan.manual_playlist_url or "")
-        playlist_id = extract_playlist_id(playlist_url)
-        if not playlist_id:
-            _fail_scan(db, scan, "Invalid Spotify playlist URL.")
-            return
+        playlist_url = (scan.manual_playlist_url or "").strip()
+        playlist_id = None
+        normalized_playlist_url = None
+        if playlist_url:
+            normalized_playlist_url = normalize_spotify_playlist_url(playlist_url)
+            playlist_id = extract_playlist_id(normalized_playlist_url)
+            if not playlist_id:
+                _fail_scan(db, scan, "Invalid Spotify playlist URL.")
+                return
 
-        scan.manual_playlist_url = playlist_url
-        scan.manual_playlist_id = playlist_id
-        db.add(scan)
-        db.commit()
+            scan.manual_playlist_url = normalized_playlist_url
+            scan.manual_playlist_id = playlist_id
+            db.add(scan)
+            db.commit()
 
         scan_id_value = scan.id
         countries = list(scan.scanned_countries or [])
@@ -83,25 +87,29 @@ def run_manual_scan(scan_id: str) -> None:
         db.rollback()
 
         token = get_access_token()
-        manual_meta = fetch_spotify_playlist_metadata(playlist_id, token)
-        follower_snapshot = basic_service._resolve_follower_snapshot(
-            playlist_id,
-            manual_meta.get("playlist_followers"),
-            token,
-        )
+        manual_meta: dict = {}
+        follower_snapshot = None
+        if playlist_id:
+            manual_meta = fetch_spotify_playlist_metadata(playlist_id, token)
+            follower_snapshot = basic_service._resolve_follower_snapshot(
+                playlist_id,
+                manual_meta.get("playlist_followers"),
+                token,
+            )
 
         scan = db.get(BasicScan, scan_id_value)
         if scan is None:
             return
 
         scan.follower_snapshot = follower_snapshot
-        scan.manual_playlist_id = playlist_id
-        scan.manual_playlist_url = manual_meta.get("playlist_url") or playlist_url
-        scan.manual_playlist_name = manual_meta.get("playlist_name")
-        scan.manual_playlist_owner = manual_meta.get("playlist_owner")
-        scan.manual_playlist_image_url = manual_meta.get("playlist_image_url") or manual_meta.get(
-            "playlist_image"
-        )
+        if playlist_id:
+            scan.manual_playlist_id = playlist_id
+            scan.manual_playlist_url = manual_meta.get("playlist_url") or normalized_playlist_url
+            scan.manual_playlist_name = manual_meta.get("playlist_name")
+            scan.manual_playlist_owner = manual_meta.get("playlist_owner")
+            scan.manual_playlist_image_url = manual_meta.get("playlist_image_url") or manual_meta.get(
+                "playlist_image"
+            )
         db.add(scan)
         db.commit()
 
@@ -178,7 +186,7 @@ def run_manual_scan(scan_id: str) -> None:
                         (item.get("external_urls") or {}).get("spotify")
                     )
 
-                    is_manual_playlist = result_playlist_id == playlist_id
+                    is_manual_playlist = playlist_id is not None and result_playlist_id == playlist_id
                     if is_manual_playlist and tracked_rank is None:
                         tracked_rank = index
 
