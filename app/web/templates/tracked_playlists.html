@@ -123,9 +123,6 @@
                 <div class="summary" id="manual-scan-summary">
                   <h3>Summary</h3>
                   <div class="summary-lead" data-manual-scan-summary-lead></div>
-                  <div class="summary-note" data-manual-scan-summary-note hidden>
-                    No playlist was provided for this scan.
-                  </div>
                   <div class="summary-list" data-manual-scan-summary-list></div>
                 </div>
                 <div class="detailed-scan-insights" id="manual-scan-detailed">
@@ -957,11 +954,11 @@
           const progressLog = scanRoot.querySelector('[data-manual-scan-progress-log]');
           const resultsWrap = scanRoot.querySelector('[data-manual-scan-results]');
           const summaryLead = scanRoot.querySelector('[data-manual-scan-summary-lead]');
-          const summaryNote = scanRoot.querySelector('[data-manual-scan-summary-note]');
           const summaryList = scanRoot.querySelector('[data-manual-scan-summary-list]');
           const detailedWrap = scanRoot.querySelector('[data-manual-scan-detailed]');
           const csvControls = scanRoot.querySelector('[data-manual-scan-csv-controls]');
           const summarySection = document.getElementById('manual-scan-summary');
+          const detailedSection = document.getElementById('manual-scan-detailed');
           const exportSummary = scanRoot.querySelector('[data-manual-scan-export-summary]');
           const exportDetailed = scanRoot.querySelector('[data-manual-scan-export-detailed]');
           const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -987,6 +984,7 @@
             !detailedWrap ||
             !csvControls ||
             !summarySection ||
+            !detailedSection ||
             !exportSummary ||
             !exportDetailed
           ) {
@@ -1154,11 +1152,11 @@
             summaryLead.textContent = '';
             summaryLead.hidden = false;
           }
-          if (summaryNote) {
-            summaryNote.hidden = true;
-          }
           if (summaryList) {
             summaryList.hidden = false;
+          }
+          if (detailedSection) {
+            detailedSection.hidden = false;
           }
         };
 
@@ -1192,35 +1190,31 @@
             return;
           }
           const hasPlaylist = Boolean(
-            scan.manual_playlist?.playlist_url || scan.manual_playlist?.playlist_name
+            scan.manual_playlist?.playlist_url ||
+              scan.manual_playlist?.playlist_name ||
+              scan.tracked_playlist_name
           );
-          if (summaryNote) {
-            summaryNote.hidden = hasPlaylist;
-          }
+          summaryList.innerHTML = '';
           if (!hasPlaylist) {
-            summaryLead.textContent = '';
-            summaryLead.hidden = true;
-            summaryList.innerHTML = '';
+            summaryLead.hidden = false;
+            summaryLead.textContent = 'Manual scan completed without a playlist.';
             summaryList.hidden = true;
             return;
           }
           summaryLead.hidden = false;
           summaryList.hidden = false;
           const follower = scan.follower_snapshot ?? '—';
-          const manualName = scan.manual_playlist?.playlist_name || scan.tracked_playlist_name;
-          const playlistLabel = manualName ? `“${manualName}”` : 'the playlist';
           summaryLead.textContent = `At ${formatTimestamp(
             scan.started_at
-          )}, ${playlistLabel} had ${follower} followers.`;
-          summaryList.innerHTML = '';
+          )}, your playlist follower count was ${follower}.`;
           (scan.summary || []).forEach((item) => {
             const row = document.createElement('div');
             row.className = `summary-row ${item.tracked_found_in_top20 ? '' : 'summary-row-missing'}`;
             const countryLabel = resolveMarketLabel(item.country);
             const { dateLabel, timeLabel } = formatSummaryDateParts(item.searched_at);
             const rankText = item.tracked_found_in_top20
-              ? `the playlist rank was #${item.tracked_rank}.`
-              : 'the playlist was not found in the top 20.';
+              ? `your playlist rank was #${item.tracked_rank}.`
+              : 'your playlist was not found in the top 20.';
             row.textContent = `On ${dateLabel} at ${timeLabel} in ${countryLabel} for ‘${item.keyword}’, ${rankText}`;
             summaryList.appendChild(row);
           });
@@ -1344,6 +1338,20 @@
           }
           renderSummary(data);
           renderDetailed(data);
+          if (!hasResults(data)) {
+            if (summaryLead) {
+              summaryLead.hidden = false;
+              summaryLead.textContent = 'No results found.';
+            }
+            if (summaryList) {
+              summaryList.hidden = true;
+            }
+            if (detailedSection) {
+              detailedSection.hidden = true;
+            }
+          } else if (detailedSection) {
+            detailedSection.hidden = false;
+          }
           const startedAt =
             data.started_at || data.searched_at || data.summary?.[0]?.searched_at;
           const timestamp = formatFileTimestamp(startedAt);
@@ -1631,12 +1639,25 @@
             return;
           }
           const playlistUrl = (playlistInput.value || '').trim();
+          const manualCountries = countryManager.getValues();
+          const manualKeywords = keywordManager.getValues();
+          if (manualCountries.length === 0) {
+            setStatus('Please add at least one target country.', 'status-error');
+            setStage(1, scanParameters || scanRoot);
+            return;
+          }
+          if (manualKeywords.length === 0) {
+            setStatus('Please add at least one target keyword.', 'status-error');
+            setStage(1, scanParameters || scanRoot);
+            return;
+          }
 
           isCompleted = false;
           hasStopped = false;
           runButton.disabled = true;
           resetProgress();
           setProgress(0, 0, 'Starting scan…');
+          setStage(2, progressWrap || scanRoot);
           uiDebug('manual-scan:start', { playlistUrl });
           stopPolling();
           stopEventSource();
@@ -1650,14 +1671,17 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 playlist_url: playlistUrl || null,
-                target_keywords: keywordManager.getValues(),
-                target_countries: countryManager.getValues(),
+                target_keywords: manualKeywords,
+                target_countries: manualCountries,
               }),
             });
             const data = await parseJsonSafely(response);
             uiDebug('manual-scan:response', response.status);
             if (!response.ok) {
-              throw new Error(normalizeErrorMessage(data, 'Failed to start scan.'));
+              const message = Array.isArray(data?.detail)
+                ? 'Please check your manual scan inputs and try again.'
+                : normalizeErrorMessage(data, 'Failed to start scan.');
+              throw new Error(message);
             }
             if (!data || typeof data !== 'object' || !data.scan_id) {
               throw new Error('Failed to start scan.');
@@ -1836,7 +1860,6 @@
         runButton?.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
-          setStage(2, progressWrap || scanRoot);
           startManualScan();
         });
       };
