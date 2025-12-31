@@ -41,7 +41,7 @@ _METRICS_WINDOW_SECONDS = 15 * 60
 MAX_SPOTIFY_CALLS_PER_MINUTE = int(os.getenv("SPOTIFY_MAX_CALLS_PER_MINUTE", "600"))
 MAX_SPOTIFY_CALLS_PER_SCAN = int(os.getenv("SPOTIFY_MAX_CALLS_PER_SCAN", "2000"))
 SPOTIFY_BUDGET_PACING_THRESHOLD = float(os.getenv("SPOTIFY_BUDGET_PACING_THRESHOLD", "0.85"))
-SPOTIFY_BUDGET_PACING_SLEEP_MS = int(os.getenv("SPOTIFY_BUDGET_PACING_SLEEP_MS", "150"))
+SPOTIFY_BUDGET_PACING_SLEEP_MS = int(os.getenv("SPOTIFY_BUDGET_PACING_SLEEP_MS", "250"))
 
 
 def _ensure_spotify_semaphore_loop() -> asyncio.AbstractEventLoop:
@@ -314,8 +314,6 @@ class SpotifyCallBudget:
                 scan_threshold = MAX_SPOTIFY_CALLS_PER_SCAN * SPOTIFY_BUDGET_PACING_THRESHOLD
                 if current >= scan_threshold:
                     sleep_ms = SPOTIFY_BUDGET_PACING_SLEEP_MS
-                    if current > MAX_SPOTIFY_CALLS_PER_SCAN:
-                        sleep_ms *= 2
                     pacings.append(
                         {
                             "scope": "scan",
