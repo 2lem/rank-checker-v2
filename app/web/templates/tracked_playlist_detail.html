@@ -645,6 +645,9 @@
         let pollActiveScanId = null;
         let pollInFlight = false;
         let pollStartAt = null;
+        let etaMsFromServer = null;
+        let etaMsLive = null;
+        let etaTickInterval = null;
         const WATCHDOG_MS = 45000;
         const WATCHDOG_CHECK_MS = 5000;
 
@@ -679,26 +682,78 @@
           setStage(2, progressWrap || scanRoot);
         };
 
-        const formatEta = (progress) => {
-          const etaMs = progress?.eta_ms;
-          if (Number.isFinite(etaMs) && etaMs !== null) {
-            const totalSeconds = Math.max(Math.round(etaMs / 1000), 0);
-            const minutes = Math.floor(totalSeconds / 60);
-            const seconds = totalSeconds % 60;
-            return `${minutes}:${String(seconds).padStart(2, '0')}`;
+        const formatEtaMs = (etaMs) => {
+          if (!Number.isFinite(etaMs)) {
+            return null;
           }
-          if (progress?.eta_human) {
-            return progress.eta_human;
+          const totalSeconds = Math.max(Math.floor(etaMs / 1000), 0);
+          const hours = Math.floor(totalSeconds / 3600);
+          const minutes = Math.floor((totalSeconds % 3600) / 60);
+          const seconds = totalSeconds % 60;
+          if (hours > 0) {
+            return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
           }
-          return null;
+          return `${minutes}:${String(seconds).padStart(2, '0')}`;
         };
 
-        const updateEta = (progress) => {
+        const updateEtaDisplay = () => {
           if (!progressEta) {
             return;
           }
-          const formatted = formatEta(progress);
+          const formatted = formatEtaMs(etaMsLive);
           progressEta.textContent = `Estimated remaining time: ${formatted || 'Estimating…'}`;
+        };
+
+        const setEtaMsFromServer = (etaMs) => {
+          if (Number.isFinite(etaMs)) {
+            etaMsFromServer = Math.max(etaMs, 0);
+            etaMsLive = etaMsFromServer;
+          } else {
+            etaMsFromServer = null;
+            etaMsLive = null;
+          }
+          updateEtaDisplay();
+        };
+
+        const stopEtaTick = () => {
+          if (etaTickInterval) {
+            clearInterval(etaTickInterval);
+            etaTickInterval = null;
+          }
+        };
+
+        const startEtaTick = () => {
+          if (etaTickInterval) {
+            return;
+          }
+          etaTickInterval = setInterval(() => {
+            if (!['queued', 'running'].includes(activeScanStatus)) {
+              stopEtaTick();
+              return;
+            }
+            if (!Number.isFinite(etaMsLive)) {
+              return;
+            }
+            etaMsLive = Math.max(0, etaMsLive - 1000);
+            updateEtaDisplay();
+          }, 1000);
+        };
+
+        const syncEtaTicker = () => {
+          if (['queued', 'running'].includes(activeScanStatus)) {
+            startEtaTick();
+          } else {
+            stopEtaTick();
+          }
+        };
+
+        const updateEta = (progress) => {
+          const etaMs = progress?.eta_ms;
+          if (Number.isFinite(etaMs)) {
+            setEtaMsFromServer(etaMs);
+            return;
+          }
+          updateEtaDisplay();
         };
 
         const updateProgressHelper = (progress) => {
@@ -840,6 +895,7 @@
                 applyProgressSnapshot(data.progress);
               }
               activeScanStatus = data?.status || activeScanStatus;
+              syncEtaTicker();
               if (isScanComplete(data, pollActiveScanId)) {
                 await safeStop('completed', {
                   scanId: pollActiveScanId,
@@ -897,6 +953,7 @@
           }
           clearWatchdog();
           stopPolling();
+          stopEtaTick();
           if (progressLog) {
             progressLog.innerHTML = '';
           }
@@ -913,6 +970,7 @@
 
           if (reason === 'completed') {
             activeScanStatus = 'completed';
+            syncEtaTicker();
             setProgress(options.total || 1, options.total || 1, 'Scan completed.', { eta_ms: 0 });
             setStage(1, scanParameters || scanRoot);
             logSwitchLatest(options.scanId || activeScanId, options.switchReason || 'completed');
@@ -926,6 +984,7 @@
             }
           } else {
             activeScanStatus = 'failed';
+            syncEtaTicker();
             setProgress(0, 1, statusMessage);
             setStage(1, scanParameters || scanRoot);
           }
@@ -1174,6 +1233,7 @@
           }
           activeScanId = scanId;
           activeScanStatus = activeScanStatus || 'running';
+          syncEtaTicker();
           if (eventSource) {
             eventSource.close();
           }
@@ -1201,6 +1261,7 @@
               }
               if (payload?.type === 'progress') {
                 activeScanStatus = 'running';
+                syncEtaTicker();
                 setProgress(payload.step, payload.total, payload.message, payload);
                 appendLog(payload.message);
               }
@@ -1249,6 +1310,7 @@
           if (progressLog) {
             progressLog.innerHTML = '';
           }
+          setEtaMsFromServer(null);
           setProgress(0, 0, 'Starting scan…');
           let scanStarted = false;
 
@@ -1268,6 +1330,7 @@
             activeScanId = data.scan_id;
             scanStarted = Boolean(activeScanId);
             activeScanStatus = 'running';
+            syncEtaTicker();
             connectEventStream(activeScanId);
             setActiveSection('dedicated', { skipScroll: true, skipFetch: true });
           } catch (error) {
@@ -1357,6 +1420,7 @@
             const activeScan = await fetchActiveScan();
             if (activeScan?.scan_id) {
               activeScanStatus = activeScan.status || 'running';
+              syncEtaTicker();
               setActiveSection('dedicated', { skipScroll: true, skipFetch: true });
               openBasicScanStage2();
               applyProgressSnapshot(activeScan.progress, 'Scan in progress...');
