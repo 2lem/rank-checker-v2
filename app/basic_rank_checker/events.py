@@ -1,16 +1,29 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from queue import Empty, Queue
 from typing import Iterator
+
+logger = logging.getLogger(__name__)
 
 
 class ScanEventManager:
     def __init__(self) -> None:
         self._queues: dict[str, Queue] = {}
         self._stream_timeout_seconds = self._resolve_timeout()
+        self._heartbeat_interval_seconds = self._resolve_heartbeat_interval()
+
+    @staticmethod
+    def _resolve_heartbeat_interval() -> int:
+        raw_value = os.getenv("SCAN_SSE_HEARTBEAT_SECONDS", "5")
+        try:
+            parsed = int(raw_value)
+        except (TypeError, ValueError):
+            parsed = 5
+        return min(max(parsed, 5), 10)
 
     @staticmethod
     def _resolve_timeout() -> int:
@@ -42,6 +55,7 @@ class ScanEventManager:
 
         def _generator() -> Iterator[str]:
             start_time = time.monotonic()
+            last_heartbeat_at = start_time
             while True:
                 try:
                     event = queue.get(timeout=1)
@@ -55,10 +69,30 @@ class ScanEventManager:
                         }
                         yield f"data: {json.dumps(timeout_event)}\n\n"
                         break
+                    if time.monotonic() - last_heartbeat_at >= self._heartbeat_interval_seconds:
+                        heartbeat_event = {"type": "heartbeat", "status": "running"}
+                        logger.info(
+                            "scan heartbeat",
+                            extra={
+                                "type": "scan_heartbeat",
+                                "scan_id": scan_id,
+                                "elapsed_sec": int(elapsed),
+                            },
+                        )
+                        yield f"data: {json.dumps(heartbeat_event)}\n\n"
+                        last_heartbeat_at = time.monotonic()
                     continue
 
-                yield f"data: {json.dumps(event)}\n\n"
-                if event.get("type") in {"done", "error"}:
+                payload = dict(event)
+                if payload.get("type") == "done":
+                    payload["type"] = "completed"
+                    payload.setdefault("status", "completed")
+                elif payload.get("type") == "error":
+                    payload.setdefault("status", "error")
+
+                yield f"data: {json.dumps(payload)}\n\n"
+                last_heartbeat_at = time.monotonic()
+                if payload.get("type") in {"completed", "partial", "error"}:
                     break
 
         return _generator()
