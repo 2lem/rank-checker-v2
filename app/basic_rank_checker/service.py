@@ -9,6 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.basic_rank_checker.events import scan_event_manager
+from app.basic_rank_checker.scan_logging import log_scan_failure, log_scan_lifecycle
+from app.core.config import SEARCH_URL
 from app.core.db import SessionLocal
 from app.core.spotify import (
     PLAYLIST_URL,
@@ -83,6 +85,7 @@ def create_basic_scan(db: Session, tracked_playlist: TrackedPlaylist) -> BasicSc
     db.add(scan)
     db.commit()
     db.refresh(scan)
+    log_scan_lifecycle("created", str(scan.id), kind="basic")
     return scan
 
 
@@ -129,11 +132,18 @@ def run_basic_scan(scan_id: str) -> None:
 
     db = SessionLocal()
     try:
+        log_scan_lifecycle("task_started", scan_id)
         scan = db.get(BasicScan, scan_id)
         if scan is None:
             return
         tracked_playlist = db.get(TrackedPlaylist, scan.tracked_playlist_id)
         if tracked_playlist is None:
+            log_scan_lifecycle(
+                "failed",
+                scan_id,
+                exc_type="tracked_playlist_missing",
+                exc_message_trunc="Tracked playlist not found.",
+            )
             scan.status = "failed"
             scan.error_message = "Tracked playlist not found."
             scan.finished_at = _now_utc()
@@ -170,11 +180,16 @@ def run_basic_scan(scan_id: str) -> None:
         unique_playlists_fetched = 0
         total_results_count = 0
         skipped_iterations = 0
+        first_spotify_call_logged = False
+        first_sse_event_logged = False
 
         step = 0
         for country in countries:
             for keyword in keywords:
                 step += 1
+                if not first_sse_event_logged:
+                    log_scan_lifecycle("first_sse_event", scan_id)
+                    first_sse_event_logged = True
                 scan_event_manager.publish(
                     scan_id,
                     {
@@ -194,6 +209,13 @@ def run_basic_scan(scan_id: str) -> None:
                 )
                 try:
                     searched_at = _now_utc()
+                    if not first_spotify_call_logged:
+                        log_scan_lifecycle(
+                            "first_spotify_call",
+                            scan_id,
+                            endpoint=SEARCH_URL,
+                        )
+                        first_spotify_call_logged = True
                     items = search_playlists(keyword, country, token, limit=35, offset=0)[:20]
 
                     playlist_ids_to_fetch = [
@@ -297,6 +319,7 @@ def run_basic_scan(scan_id: str) -> None:
         scan.finished_at = _now_utc()
         db.add(scan)
         db.commit()
+        log_scan_lifecycle("completed", scan_id, results_count=total_results_count)
         if skipped_iterations and total_results_count:
             logger.info(
                 "scan_completed_partial",
@@ -325,6 +348,7 @@ def run_basic_scan(scan_id: str) -> None:
             },
         )
     except Exception as exc:
+        log_scan_failure(scan_id, exc)
         logger.exception("Basic scan failed")
         try:
             scan = db.get(BasicScan, scan_id)
