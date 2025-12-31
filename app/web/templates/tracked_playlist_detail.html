@@ -1367,11 +1367,65 @@
           await cancelPromise;
         };
 
-        const startScan = async () => {
+        const fetchActiveScan = async ({ trackedPlaylistId } = {}) => {
+          const playlistId = trackedPlaylistId ?? resolveTrackedPlaylistId();
+          const url = new URL('/api/basic-rank-checker/scans/active', window.location.origin);
+          if (playlistId) {
+            url.searchParams.set('tracked_playlist_id', playlistId);
+          }
+          const response = await fetch(`${url.pathname}${url.search}`);
+          const data = await readErrorPayload(response);
+          if (response.status === 404) {
+            return null;
+          }
+          if (!response.ok) {
+            throw new Error(normalizeErrorMessage(data, 'Failed to load active scan.'));
+          }
+          return data;
+        };
+
+        const resumeActiveScan = (activeScan) => {
+          if (!activeScan?.scan_id) {
+            return;
+          }
+          activeScanId = activeScan.scan_id;
+          activeScanStatus = activeScan.status || 'running';
+          syncEtaTicker();
+          setActiveSection('dedicated', { skipScroll: true, skipFetch: true });
+          openBasicScanStage2();
+          applyProgressSnapshot(activeScan.progress, 'Scan in progress...');
+          setStopButtonVisible(true);
+          connectEventStream(activeScan.scan_id);
+        };
+
+        const startScan = async ({ source } = {}) => {
           const trackedPlaylistId = resolveTrackedPlaylistId();
+          if (source !== 'button_click') {
+            if (typeof console !== 'undefined' && console.warn) {
+              console.warn('[START_SCAN_BLOCKED]', { source });
+            }
+            return;
+          }
+          if (typeof console !== 'undefined' && console.debug) {
+            console.debug('[START_SCAN_CALLED] source=button_click', { trackedPlaylistId });
+          }
           if (!runButton) {
             return;
           }
+
+          const activeScan = await fetchActiveScan({ trackedPlaylistId }).catch(() => null);
+          if (activeScan?.scan_id) {
+            if (typeof console !== 'undefined' && console.debug) {
+              console.debug('[START_SCAN_SKIPPED] active scan already running', {
+                scanId: activeScan.scan_id,
+                trackedPlaylistId,
+              });
+            }
+            resumeActiveScan(activeScan);
+            setStatus('A scan is already running for this playlist. Resuming…', 'status-loading');
+            return;
+          }
+
           hasStopped = false;
           runButton.disabled = true;
           if (progressLog) {
@@ -1460,42 +1514,24 @@
         runButton?.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
+          if (typeof console !== 'undefined' && console.debug) {
+            console.debug('[UI_START_SCAN_CLICK] Run Dedicated Scan clicked', {
+              trackedPlaylistId: resolveTrackedPlaylistId(),
+            });
+          }
           setActiveSection('dedicated', { skipScroll: true, skipFetch: true });
           openBasicScanStage2();
-          startScan();
+          startScan({ source: 'button_click' });
         });
 
         basicScanStageController.openBasicScanStage1 = openBasicScanStage1;
         basicScanStageController.openBasicScanStage2 = openBasicScanStage2;
 
-        const fetchActiveScan = async () => {
-          const trackedPlaylistId = resolveTrackedPlaylistId();
-          const url = new URL('/api/basic-rank-checker/scans/active', window.location.origin);
-          if (trackedPlaylistId) {
-            url.searchParams.set('tracked_playlist_id', trackedPlaylistId);
-          }
-          const response = await fetch(`${url.pathname}${url.search}`);
-          const data = await readErrorPayload(response);
-          if (response.status === 404) {
-            return null;
-          }
-          if (!response.ok) {
-            throw new Error(normalizeErrorMessage(data, 'Failed to load active scan.'));
-          }
-          return data;
-        };
-
         const initializeScanSections = async () => {
           try {
             const activeScan = await fetchActiveScan();
             if (activeScan?.scan_id) {
-              activeScanStatus = activeScan.status || 'running';
-              syncEtaTicker();
-              setActiveSection('dedicated', { skipScroll: true, skipFetch: true });
-              openBasicScanStage2();
-              applyProgressSnapshot(activeScan.progress, 'Scan in progress...');
-              setStopButtonVisible(true);
-              connectEventStream(activeScan.scan_id);
+              resumeActiveScan(activeScan);
               return;
             }
           } catch (error) {
