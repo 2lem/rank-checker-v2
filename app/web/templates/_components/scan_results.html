@@ -1,0 +1,26 @@
+<section class="results" id="{{ results_id }}" data-{{ data_prefix }}-results hidden>
+  <div class="results-header">
+    <h3>{{ results_title }}</h3>
+    <div
+      class="download-csv-controls {{ data_prefix }}-download-actions"
+      id="{{ csv_controls_id }}"
+      data-{{ data_prefix }}-csv-controls
+    >
+      <a class="btn btn-csv" data-{{ data_prefix }}-export-summary>Download Summary CSV</a>
+      <a class="btn btn-csv" data-{{ data_prefix }}-export-detailed>Download Detailed CSV</a>
+    </div>
+  </div>
+  <div class="summary" id="{{ summary_id }}" data-{{ data_prefix }}-summary-section>
+    <h3>Summary</h3>
+    <div class="summary-lead" data-{{ data_prefix }}-summary-lead></div>
+    <div class="summary-list" data-{{ data_prefix }}-summary-list></div>
+  </div>
+  <div
+    class="detailed-scan-insights"
+    id="{{ detailed_id }}"
+    data-{{ data_prefix }}-detailed-section
+  >
+    <h3>Detailed Scan Insights</h3>
+    <div class="detailed-insights" data-{{ data_prefix }}-detailed></div>
+  </div>
+</section>

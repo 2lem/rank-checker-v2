@@ -193,6 +193,39 @@ def get_latest_scan(
     return response
 
 
+@router.get("/scans/latest-completed")
+def get_latest_completed_scan(
+    tracked_playlist_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    if tracked_playlist_id:
+        try:
+            UUID(str(tracked_playlist_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid tracked_playlist_id.") from exc
+
+    query = select(BasicScan).where(BasicScan.status == "completed")
+    if tracked_playlist_id:
+        query = query.where(BasicScan.tracked_playlist_id == tracked_playlist_id)
+    ordering = func.coalesce(BasicScan.finished_at, BasicScan.created_at).desc()
+    scan = db.execute(query.order_by(ordering).limit(1)).scalar_one_or_none()
+    if scan is None:
+        raise HTTPException(status_code=404, detail="No completed scans yet.")
+
+    results_payload = fetch_scan_details(db, str(scan.id))
+    if results_payload is None:
+        raise HTTPException(status_code=404, detail="No completed scans yet.")
+
+    return {
+        "scan_id": str(scan.id),
+        "created_at": _format_dt(scan.created_at),
+        "country": scan.scanned_countries or [],
+        "keywords": scan.scanned_keywords or [],
+        "status": "completed",
+        "results": _serialize_scan_payload(results_payload),
+    }
+
+
 @router.get("/scans/{scan_id}")
 def get_scan(scan_id: str, db: Session = Depends(get_db)):
     try:
