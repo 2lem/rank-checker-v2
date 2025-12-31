@@ -121,6 +121,35 @@ const waitForSseCompletion = async (eventsUrl, label, timeoutMs = SCAN_TIMEOUT_M
   }
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const fetchPlaylists = async () => {
+  const response = await request('/api/playlists');
+  const { parsed, text } = await parseJsonSafely(response);
+  assert(response.status === 200, `Expected 200 for /api/playlists, got ${response.status} ${text}`);
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Expected array payload for /api/playlists, got ${text}`);
+  }
+  return parsed;
+};
+
+const findTrackedPlaylist = (playlists, trackedId) =>
+  playlists.find((playlist) => String(playlist.id) === String(trackedId)) || null;
+
+const waitForPlaylistRefresh = async (trackedId, previousTimestamp, timeoutMs = 60_000) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const playlists = await fetchPlaylists();
+    const tracked = findTrackedPlaylist(playlists, trackedId);
+    const current = tracked?.last_meta_refresh_at;
+    if (current && current !== previousTimestamp) {
+      return current;
+    }
+    await sleep(5000);
+  }
+  throw new Error('Refresh job did not update last_meta_refresh_at within timeout.');
+};
+
 const run = async () => {
   const results = [];
 
@@ -157,17 +186,37 @@ const run = async () => {
   }
 
   if (trackedPlaylistId) {
+    const playlistsBefore = await fetchPlaylists();
+    const trackedBefore = findTrackedPlaylist(playlistsBefore, trackedPlaylistId);
+    const previousRefreshAt = trackedBefore?.last_meta_refresh_at || null;
+    const refreshStart = Date.now();
     const refreshResponse = await request(
-      `/api/playlists/refresh/${trackedPlaylistId}`,
+      `/api/playlists/${trackedPlaylistId}/refresh-stats`,
       { method: 'POST' },
-      30_000
+      10_000
     );
-    const { text: refreshText } = await parseJsonSafely(refreshResponse);
+    const refreshElapsed = Date.now() - refreshStart;
+    const { parsed: refreshParsed, text: refreshText } = await parseJsonSafely(refreshResponse);
     assert(
       refreshResponse.status === 200,
       `Expected 200 for refresh stats, got ${refreshResponse.status} ${refreshText}`
     );
-    results.push('PASS: POST /api/playlists/refresh/{id}');
+    assert(
+      refreshElapsed <= 2000,
+      `Expected refresh stats to respond in <=2s, got ${refreshElapsed}ms`
+    );
+    assert(
+      refreshParsed?.ok,
+      `Expected ok=true for refresh stats, got ${refreshText}`
+    );
+    assert(
+      refreshParsed?.job_id,
+      `Expected job_id for refresh stats, got ${refreshText}`
+    );
+    if (refreshParsed?.status !== 'already_running') {
+      await waitForPlaylistRefresh(trackedPlaylistId, previousRefreshAt);
+    }
+    results.push('PASS: POST /api/playlists/{id}/refresh-stats');
   } else {
     console.warn(`${DEBUG_LOG_PREFIX} skipping refresh stats: TEST_TRACKED_PLAYLIST_ID not set`);
   }
