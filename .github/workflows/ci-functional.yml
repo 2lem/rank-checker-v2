@@ -12,9 +12,11 @@ jobs:
     environment: production
     runs-on: ubuntu-latest
     outputs:
-      smoke_status: ${{ steps.smoke.outcome }}
-      e2e_status: ${{ steps.e2e_summary.outputs.e2e_status }}
-      e2e_summary: ${{ steps.e2e_summary.outputs.e2e_summary }}
+      readiness: ${{ steps.readiness.outputs.ready }}
+      readiness_reason: ${{ steps.readiness.outputs.message }}
+      smoke_status: ${{ steps.smoke_status.outputs.status }}
+      e2e_status: ${{ steps.e2e_status.outputs.status }}
+      e2e_summary: ${{ steps.e2e_status.outputs.summary }}
     env:
       BASE_URL: ${{ vars.BASE_URL }}
     steps:
@@ -29,22 +31,36 @@ jobs:
           node-version: 18
           cache: npm
 
+      - name: Check test environment readiness
+        id: readiness
+        run: |
+          if [ -z "${BASE_URL:-}" ]; then
+            message="E2E/Smoke tests skipped: BASE_URL not set or backend not available"
+            echo "$message"
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              echo "## Functional test gating" >> "$GITHUB_STEP_SUMMARY"
+              echo "$message" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "message=$message" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "message=E2E/Smoke tests ready: BASE_URL is set" >> "$GITHUB_OUTPUT"
+          echo "E2E/Smoke tests ready: BASE_URL is set"
+
       - name: Install dependencies
+        if: steps.readiness.outputs.ready == 'true'
         run: npm install
 
       - name: Install Playwright browsers
+        if: steps.readiness.outputs.ready == 'true'
         run: npx playwright install --with-deps chromium
-
-      - name: Verify BASE_URL is provided
-        run: |
-          if [ -z "${BASE_URL:-}" ]; then
-            echo "BASE_URL environment variable is required for smoke tests. Configure vars.BASE_URL in the production environment."
-            exit 1
-          fi
-          echo "BASE_URL is set; proceeding with smoke tests."
 
       - name: Run smoke tests
         id: smoke
+        if: steps.readiness.outputs.ready == 'true'
         continue-on-error: true
         env:
           TEST_TRACKED_PLAYLIST_ID: ${{ secrets.TEST_TRACKED_PLAYLIST_ID }}
@@ -53,6 +69,7 @@ jobs:
 
       - name: Run Playwright tests
         id: e2e
+        if: steps.readiness.outputs.ready == 'true'
         continue-on-error: true
         env:
           TEST_TRACKED_PLAYLIST_ID: ${{ secrets.TEST_TRACKED_PLAYLIST_ID }}
@@ -63,18 +80,48 @@ jobs:
 
       - name: Summarize Playwright results
         id: e2e_summary
-        if: always()
+        if: always() && steps.readiness.outputs.ready == 'true'
         run: node scripts/summarize-playwright.mjs
 
-      - name: Upload Playwright report
+      - name: Record smoke status
+        id: smoke_status
         if: always()
+        env:
+          READY: ${{ steps.readiness.outputs.ready }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          if [ "$READY" != "true" ]; then
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+            echo "reason=E2E/Smoke tests skipped: BASE_URL not set or backend not available" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=$SMOKE_OUTCOME" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Record e2e status
+        id: e2e_status
+        if: always()
+        env:
+          READY: ${{ steps.readiness.outputs.ready }}
+          E2E_STATUS_RAW: ${{ steps.e2e_summary.outputs.e2e_status }}
+          E2E_SUMMARY_RAW: ${{ steps.e2e_summary.outputs.e2e_summary }}
+        run: |
+          if [ "$READY" != "true" ]; then
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+            echo "summary=E2E/Smoke tests skipped: BASE_URL not set or backend not available" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=${E2E_STATUS_RAW:-failure}" >> "$GITHUB_OUTPUT"
+            echo "summary=${E2E_SUMMARY_RAW:-'- ⚠️ Playwright results not found'}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Playwright report
+        if: always() && steps.readiness.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
           path: playwright-report
 
       - name: Fail if tests failed
-        if: ${{ steps.smoke.outcome != 'success' || steps.e2e.outcome != 'success' }}
+        if: ${{ steps.readiness.outputs.ready == 'true' && (steps.smoke.outcome != 'success' || steps.e2e.outcome != 'success') }}
         run: exit 1
 
   pr_comment:
@@ -108,6 +155,8 @@ jobs:
         uses: actions/github-script@v7
         env:
           CHANGED_FILES: ${{ steps.changed_files.outputs.files }}
+          READINESS: ${{ needs.smoke_and_e2e.outputs.readiness }}
+          READINESS_REASON: ${{ needs.smoke_and_e2e.outputs.readiness_reason }}
           SMOKE_STATUS: ${{ needs.smoke_and_e2e.outputs.smoke_status }}
           E2E_STATUS: ${{ needs.smoke_and_e2e.outputs.e2e_status }}
           E2E_SUMMARY: ${{ needs.smoke_and_e2e.outputs.e2e_summary }}
@@ -122,14 +171,30 @@ jobs:
               .map((file) => `- ${file}`)
               .join('\n');
 
-            const smokeStatus = process.env.SMOKE_STATUS === 'success' ? '✅ Passed' : '❌ Failed';
-            const e2eStatus = process.env.E2E_STATUS === 'success' ? '✅ Passed' : '❌ Failed';
+            const formatStatus = (status) => {
+              if (status === 'success') return '✅ Passed';
+              if (status === 'skipped') return '⚠️ Skipped';
+              return '❌ Failed';
+            };
+
+            const smokeStatus = formatStatus(process.env.SMOKE_STATUS);
+            const e2eStatus = formatStatus(process.env.E2E_STATUS);
             const e2eSummary = process.env.E2E_SUMMARY || '- ⚠️ Playwright results not found';
+            const readiness = process.env.READINESS === 'true';
+            const readinessReason =
+              process.env.READINESS_REASON ||
+              'E2E/Smoke tests skipped: BASE_URL not set or backend not available';
+            const readinessLine = readiness
+              ? 'E2E/Smoke tests executed (BASE_URL present).'
+              : readinessReason;
 
             const body = `## Automated Functional Test Report
 
 **Changed files**
 ${files}
+
+**Environment readiness**
+${readinessLine}
 
 **Smoke tests**: ${smokeStatus}
 
