@@ -100,13 +100,16 @@ def test_spotify_retries_on_5xx(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sleep_mock.call_args_list[0].args[0] == 0.5
 
 
-def test_spotify_enforces_scan_budget(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_spotify_paces_scan_budget(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     spotify_budget = spotify.SpotifyCallBudget()
     mock_request = Mock(return_value=_response(200, {"ok": True}))
+    sleep_mock = Mock()
 
     monkeypatch.setattr(spotify, "_spotify_budget", spotify_budget)
     monkeypatch.setattr(spotify, "MAX_SPOTIFY_CALLS_PER_SCAN", 0)
+    monkeypatch.setattr(spotify, "SPOTIFY_BUDGET_PACING_SLEEP_MS", 100)
     monkeypatch.setattr(spotify.requests, "request", mock_request)
+    monkeypatch.setattr(spotify.time, "sleep", sleep_mock)
 
     caplog.set_level(logging.INFO, logger="app.core.spotify")
 
@@ -116,11 +119,20 @@ def test_spotify_enforces_scan_budget(monkeypatch: pytest.MonkeyPatch, caplog: p
         scan_id="scan-1",
     )
 
-    assert payload == {}
-    assert mock_request.call_count == 0
+    assert payload == {"ok": True}
+    assert mock_request.call_count == 1
+    assert sleep_mock.call_count == 1
+    assert sleep_mock.call_args_list[0].args[0] == 0.2
 
-    events = _event_names(caplog)
-    assert "spotify_budget_enforced" in events
+    pacing_logs = []
+    for record in caplog.records:
+        if record.name != "app.core.spotify":
+            continue
+        try:
+            pacing_logs.append(json.loads(record.message).get("type"))
+        except json.JSONDecodeError:
+            continue
+    assert "spotify_budget_pacing" in pacing_logs
 
 
 def test_spotify_token_retries_missing_access_token(monkeypatch: pytest.MonkeyPatch) -> None:
