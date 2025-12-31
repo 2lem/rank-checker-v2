@@ -25,6 +25,10 @@ test('Basic scan completes without hanging', async ({ page }) => {
 
   await waitForSseCompletion(page, 45_000);
 
+  const statusArea = page.locator('#playlist-status');
+  await expect(statusArea).toContainText('Basic Scan completed', { timeout: 30000 });
+  await expect(statusArea).not.toContainText('connection lost');
+
   await page.waitForFunction(
     () => {
       const progressEl = document.querySelector('[data-basic-scan-progress]');
@@ -37,6 +41,9 @@ test('Basic scan completes without hanging', async ({ page }) => {
     },
     { timeout: 30000 }
   );
+
+  const results = page.locator('[data-basic-scan-results]');
+  await expect(results).toBeVisible({ timeout: 10000 });
 });
 
 test.afterEach(async ({ page }, testInfo) => {
