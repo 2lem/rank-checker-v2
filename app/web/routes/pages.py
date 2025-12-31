@@ -11,6 +11,7 @@ import pycountry
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.version import get_build_time, get_git_sha
 from app.repositories.tracked_playlists import (
     get_tracked_playlist_by_id,
     list_tracked_playlists,
@@ -22,6 +23,9 @@ WEB_DIR = Path(__file__).resolve().parents[1]
 TEMPLATES_DIR = WEB_DIR / "templates"
 
 _templates = Jinja2Templates(directory=str(TEMPLATES_DIR)) if TEMPLATES_DIR.exists() else None
+_build_id = get_git_sha() or get_build_time() or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+if _templates is not None:
+    _templates.env.globals["build_id"] = _build_id
 DASHBOARD_HEADER_PREFIX = "Dashboard "
 DASHBOARD_HEADER_MAX_LENGTH = 30
 DASHBOARD_HEADER_PREFIX = "Dashboard "
