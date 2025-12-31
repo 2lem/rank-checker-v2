@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 import requests
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.spotify import (
@@ -22,8 +22,8 @@ from app.repositories.tracked_playlists import (
     list_tracked_playlists,
     update_tracked_playlist_targets,
 )
-from app.schemas.playlist import RefreshPlaylistResponse
 from app.schemas.playlist import (
+    RefreshPlaylistResponse,
     TrackedPlaylistCreate,
     TrackedPlaylistOut,
     TrackedPlaylistTargetsUpdate,
@@ -32,11 +32,10 @@ from app.services.playlist_metadata import (
     build_spotify_url,
     parse_spotify_timestamp,
     raise_spotify_request_error,
-    refresh_playlist_metadata,
     select_largest_image_url,
     select_smallest_image_url,
-    _extract_spotify_error_details,
 )
+from app.services.playlist_refresh_jobs import enqueue_refresh
 
 router = APIRouter(tags=["playlists"])
 logger = logging.getLogger(__name__)
@@ -64,24 +63,6 @@ def _ensure_no_removals(existing: list[str], incoming: list[str], label: str) ->
             status_code=400,
             detail=f"Existing {label} cannot be removed. Please contact support.",
         )
-
-
-def _extract_spotify_error_info(exc: Exception) -> tuple[int | None, str]:
-    status_code, body_snippet = _extract_spotify_error_details(exc)
-    if status_code is not None or body_snippet:
-        return status_code, body_snippet
-    cause = getattr(exc, "__cause__", None)
-    if cause:
-        return _extract_spotify_error_details(cause)
-    return None, ""
-
-
-def _derive_refresh_error_code(exc: Exception, status_code: int | None) -> str:
-    if isinstance(exc, requests.Timeout):
-        return "timeout"
-    if status_code is not None:
-        return f"spotify_{status_code}"
-    return "unknown"
 
 
 @router.get("", response_model=list[TrackedPlaylistOut])
@@ -200,51 +181,21 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
 )
 def refresh_playlist_stats(
     tracked_playlist_id: UUID,
-    response: Response,
-    db: Session = Depends(get_db),
 ):
-    logger.info("TEMP DEBUG ENTER refresh-stats %s", tracked_playlist_id)
-    response.headers["X-Debug-Entered"] = "1"
-    spotify_playlist_id = None
-    try:
-        tracked_for_logging = get_tracked_playlist_by_id(db, tracked_playlist_id)
-        if tracked_for_logging:
-            spotify_playlist_id = tracked_for_logging.playlist_id
-    except Exception:
-        spotify_playlist_id = None
-
-    try:
-        refreshed = refresh_playlist_metadata(db, str(tracked_playlist_id))
-    except Exception as exc:
-        status_code, body_snippet = _extract_spotify_error_info(exc)
-        error_code = _derive_refresh_error_code(exc, status_code)
-        headers = {
-            "X-Debug-Entered": "1",
-            "X-Debug-Refresh-Error": error_code,
-        }
-        logger.exception(
-            "TEMP DEBUG refresh-stats failed tracked_playlist_id=%s playlist_id=%s spotify_status=%s spotify_body=%s",
-            tracked_playlist_id,
-            spotify_playlist_id,
-            status_code if status_code is not None else "unknown",
-            body_snippet or "<empty>",
-        )
-        if isinstance(exc, HTTPException):
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail="Unable to refresh playlist metadata.",
-                headers={**(exc.headers or {}), **headers},
-            ) from exc
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Unable to refresh playlist metadata.",
-            headers=headers,
-        ) from exc
-    refreshed_at = refreshed.last_meta_refresh_at or datetime.now(timezone.utc)
+    queued_at = datetime.now(timezone.utc)
+    job_id, started = enqueue_refresh(str(tracked_playlist_id))
+    status_label = "queued" if started else "already_running"
+    logger.info(
+        "Refresh stats request queued tracked_playlist_id=%s job_id=%s status=%s",
+        tracked_playlist_id,
+        job_id,
+        status_label,
+    )
     return {
         "ok": True,
-        "refreshed_at": refreshed_at,
-        "playlist": refreshed,
+        "job_id": job_id,
+        "queued_at": queued_at,
+        "status": status_label,
     }
 
 

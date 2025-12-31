@@ -69,7 +69,7 @@ jobs:
             run_request \
               "refresh-stats" \
               "POST" \
-              "${BASE}/api/playlists/refresh/${TEST_TRACKED_PLAYLIST_ID}"
+              "${BASE}/api/playlists/${TEST_TRACKED_PLAYLIST_ID}/refresh-stats"
           else
             echo "TEST_TRACKED_PLAYLIST_ID missing; skipping refresh stats" > "${LOG_DIR}/refresh-stats.metrics.txt"
           fi
@@ -99,10 +99,30 @@ jobs:
             DEBUG_HEADER="X-Debug-Token: ${DEBUG_TOKEN}"
           fi
 
+          run_request "debug-routes" "GET" "${BASE}/api/debug/routes" "" "$DEBUG_HEADER" || true
           run_request "debug-db-activity" "GET" "${BASE}/api/debug/db-activity" "" "$DEBUG_HEADER" || true
           run_request "debug-db-pool" "GET" "${BASE}/api/debug/db-pool" "" "$DEBUG_HEADER" || true
           run_request "debug-sse-state" "GET" "${BASE}/api/debug/sse-state" "" "$DEBUG_HEADER" || true
-          run_request "debug-threads" "GET" "${BASE}/api/debug/threads" "" "$DEBUG_HEADER" || true
+
+          assert_not_404() {
+            local name="$1"
+            local label="$2"
+            local metrics_file="${LOG_DIR}/${name}.metrics.txt"
+            if [ ! -f "$metrics_file" ]; then
+              echo "Missing metrics for ${label}" >&2
+              exit 1
+            fi
+            local http_code
+            http_code="$(grep -E '^CURL_HTTP_CODE=' "$metrics_file" | cut -d= -f2 || true)"
+            if [ "$http_code" = "404" ]; then
+              echo "${label} returned 404" >&2
+              exit 1
+            fi
+          }
+
+          assert_not_404 "debug-routes" "GET /api/debug/routes"
+          assert_not_404 "debug-sse-state" "GET /api/debug/sse-state"
+          assert_not_404 "debug-db-activity" "GET /api/debug/db-activity"
 
           summarize_request() {
             local name="$1"
@@ -150,7 +170,7 @@ jobs:
           summarize_request "debug-db-activity" "GET /api/debug/db-activity"
           summarize_request "debug-db-pool" "GET /api/debug/db-pool"
           summarize_request "debug-sse-state" "GET /api/debug/sse-state"
-          summarize_request "debug-threads" "GET /api/debug/threads"
+          summarize_request "debug-routes" "GET /api/debug/routes"
 
           DB_POOL_BODY="${LOG_DIR}/debug-db-pool.body.txt"
           if [ -f "$DB_POOL_BODY" ]; then

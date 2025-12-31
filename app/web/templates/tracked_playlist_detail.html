@@ -313,10 +313,22 @@
           data = await parseJsonSafely(response);
           const refreshedAt =
             data && typeof data === 'object' && data.refreshed_at ? new Date(data.refreshed_at) : null;
-          const timeLabel = refreshedAt ? refreshedAt.toLocaleString() : 'just now';
-          setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
-          didReload = true;
-          window.location.reload();
+          const queuedAt =
+            data && typeof data === 'object' && data.queued_at ? new Date(data.queued_at) : null;
+          if (refreshedAt) {
+            const timeLabel = refreshedAt.toLocaleString();
+            setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
+            didReload = true;
+            window.location.reload();
+            return;
+          }
+
+          const queuedLabel = queuedAt ? queuedAt.toLocaleString() : 'just now';
+          const statusLabel =
+            data && typeof data === 'object' && data.status === 'already_running'
+              ? 'Already running'
+              : 'Queued';
+          setStatus(`⏳ ${statusLabel}: refresh scheduled at ${queuedLabel}.`, 'status-success');
         } catch (error) {
           if (typeof console !== 'undefined' && console.error) {
             console.error('[ui] refresh stats failed', error);

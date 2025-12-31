@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
@@ -9,7 +9,11 @@ from app.basic_rank_checker.events import scan_event_manager
 from app.core.db import SessionLocal, engine
 from app.core.debug_tools import require_debug_tools
 
-router = APIRouter(prefix="/api/debug", tags=["debug"])
+router = APIRouter(
+    prefix="/api/debug",
+    tags=["debug"],
+    dependencies=[Depends(require_debug_tools)],
+)
 
 
 def _now_iso() -> str:
@@ -63,12 +67,54 @@ def db_pool():
             content={"ok": False, "error": str(exc)},
         )
 
-    return {"ok": True, "pool_status": pool_status, "ts": _now_iso()}
+    checked_out = None
+    if hasattr(engine.pool, "checkedout"):
+        checked_out = engine.pool.checkedout()
+    elif hasattr(engine.pool, "checked_out"):
+        checked_out = engine.pool.checked_out
+
+    return {"ok": True, "pool_status": pool_status, "checked_out": checked_out, "ts": _now_iso()}
+
+
+@router.get("/db-activity")
+def db_activity():
+    if engine is None:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"ok": False, "error": "Database engine not configured"},
+        )
+
+    try:
+        pool_status = engine.pool.status()
+    except Exception as exc:  # pragma: no cover - best effort defensive response
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"ok": False, "error": str(exc)},
+        )
+
+    checked_out = None
+    if hasattr(engine.pool, "checkedout"):
+        checked_out = engine.pool.checkedout()
+    elif hasattr(engine.pool, "checked_out"):
+        checked_out = engine.pool.checked_out
+
+    return {"ok": True, "pool_status": pool_status, "checked_out": checked_out, "ts": _now_iso()}
+
+
+@router.get("/routes")
+def routes(request: Request):
+    route_entries = []
+    for route in request.app.router.routes:
+        methods = getattr(route, "methods", None)
+        path = getattr(route, "path", None)
+        if not methods or path is None:
+            continue
+        route_entries.append({"path": path, "methods": sorted(methods)})
+    return {"ok": True, "routes": route_entries, "ts": _now_iso()}
 
 
 @router.get("/schema-version")
 def schema_version(request: Request):
-    require_debug_tools(request)
     if SessionLocal is None:
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -114,6 +160,5 @@ def schema_version(request: Request):
 
 @router.get("/sse-state")
 def sse_state(request: Request):
-    require_debug_tools(request)
     state = scan_event_manager.snapshot()
     return {"ok": True, **state, "ts": _now_iso()}
