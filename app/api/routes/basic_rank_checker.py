@@ -195,6 +195,34 @@ def get_latest_scan(
     return response
 
 
+@router.get("/scans/active")
+def get_active_scan(
+    tracked_playlist_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    if tracked_playlist_id:
+        try:
+            UUID(str(tracked_playlist_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid tracked_playlist_id.") from exc
+
+    query = select(BasicScan).where(BasicScan.status.in_(["queued", "running"]))
+    if tracked_playlist_id:
+        query = query.where(BasicScan.tracked_playlist_id == tracked_playlist_id)
+    scan = db.execute(query.order_by(BasicScan.created_at.desc()).limit(1)).scalar_one_or_none()
+    if scan is None:
+        raise HTTPException(status_code=404, detail="No active scans.")
+
+    return {
+        "scan_id": str(scan.id),
+        "status": scan.status,
+        "created_at": _format_dt(scan.created_at),
+        "country": scan.scanned_countries or [],
+        "keywords": scan.scanned_keywords or [],
+        "progress": _resolve_scan_progress(db, scan),
+    }
+
+
 @router.get("/scans/latest-completed")
 def get_latest_completed_scan(
     tracked_playlist_id: str | None = Query(default=None),

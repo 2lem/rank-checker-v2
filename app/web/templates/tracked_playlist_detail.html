@@ -46,7 +46,7 @@
               class="btn btn-secondary"
               type="button"
               data-scan-tab="dedicated"
-              aria-pressed="true"
+              aria-pressed="false"
             >
               Dedicated Scan
             </button>
@@ -54,14 +54,14 @@
               class="btn btn-secondary"
               type="button"
               data-scan-tab="latest"
-              aria-pressed="false"
+              aria-pressed="true"
             >
               Latest Scan Results
             </button>
           </div>
         </section>
 
-        <section class="panel basic-scan-panel is-active" id="basic-scan-section">
+        <section class="panel basic-scan-panel is-hidden" id="basic-scan-section">
           <div class="panel-header">
             <h2>Dedicated Scan</h2>
             <p>Run a manual scan using stored targets.</p>
@@ -99,7 +99,9 @@
                   </div>
                 </div>
                 <div class="run-scan-controls" id="run-scan-controls" data-basic-scan-run-controls>
-                  <button class="btn btn-primary" type="button" data-basic-scan-run>Run Basic Scan</button>
+                  <button class="btn btn-primary" type="button" data-basic-scan-run>
+                    Run Dedicated Scan
+                  </button>
                 </div>
               </section>
               <section
@@ -115,20 +117,16 @@
                 <div class="progress-eta" data-basic-scan-progress-eta>
                   Estimated remaining time: Estimating…
                 </div>
+                <div class="progress-helper" data-basic-scan-progress-helper>
+                  Your scan is still in progress. Estimating remaining time...
+                </div>
                 <div class="progress-log" data-basic-scan-progress-log></div>
               </section>
-              {% set results_id = 'basic-scan-results' %}
-              {% set results_title = 'Basic Scan Results' %}
-              {% set data_prefix = 'basic-scan' %}
-              {% set csv_controls_id = 'basic-scan-csv-controls' %}
-              {% set summary_id = 'basic-scan-summary' %}
-              {% set detailed_id = 'basic-scan-detailed' %}
-              {% include "_components/scan_results.html" %}
             </div>
           </div>
         </section>
 
-        <section class="panel latest-scan-panel is-hidden" id="latest-scan-section">
+        <section class="panel latest-scan-panel is-active" id="latest-scan-section">
           <div class="panel-header">
             <h2>Latest Scan Results</h2>
             <p>Most recent completed scan, refreshed on every visit.</p>
@@ -166,7 +164,7 @@
       const latestScanSection = document.getElementById('latest-scan-section');
       const scanTabButtons = document.querySelectorAll('[data-scan-tab]');
       let basicScanStageController = null;
-      let activeScanTab = null;
+      let activeSection = null;
       let loadLatestScan = null;
       let lastTabScrollY = null;
 
@@ -234,12 +232,12 @@
         window.scrollTo({ top: Math.max(target, 0), behavior: 'smooth' });
       };
 
-      const setActiveScanTab = (nextTab, options = {}) => {
-        if (!nextTab || nextTab === activeScanTab) {
+      const setActiveSection = (nextTab, options = {}) => {
+        if (!nextTab || nextTab === activeSection) {
           return;
         }
         lastTabScrollY = window.scrollY;
-        activeScanTab = nextTab;
+        activeSection = nextTab;
 
         if (nextTab === 'dedicated') {
           basicScanSection?.classList.add('is-active');
@@ -257,7 +255,7 @@
         }
 
         scanTabButtons.forEach((button) => {
-          const isActive = button.dataset.scanTab === activeScanTab;
+          const isActive = button.dataset.scanTab === activeSection;
           button.setAttribute('aria-pressed', String(isActive));
           button.classList.toggle('is-active', isActive);
         });
@@ -275,7 +273,7 @@
         button.addEventListener('click', (event) => {
           event.preventDefault();
           const nextTab = button.dataset.scanTab;
-          setActiveScanTab(nextTab);
+          setActiveSection(nextTab);
         });
       });
 
@@ -613,6 +611,7 @@
         const progressFill = scanRoot.querySelector('[data-basic-scan-progress-fill]');
         const progressStatus = scanRoot.querySelector('[data-basic-scan-progress-status]');
         const progressEta = scanRoot.querySelector('[data-basic-scan-progress-eta]');
+        const progressHelper = scanRoot.querySelector('[data-basic-scan-progress-helper]');
         const progressLog = scanRoot.querySelector('[data-basic-scan-progress-log]');
         const buildScanElements = (prefix, root) => ({
           resultsWrap: root?.querySelector(`[data-${prefix}-results]`),
@@ -625,17 +624,7 @@
           detailedSection: root?.querySelector(`[data-${prefix}-detailed-section]`),
           csvControls: root?.querySelector(`[data-${prefix}-csv-controls]`),
         });
-        const basicResults = buildScanElements('basic-scan', scanRoot);
         const latestResults = buildScanElements('latest-scan', latestRoot);
-        const resultsWrap = basicResults.resultsWrap;
-        const summaryLead = basicResults.summaryLead;
-        const summaryList = basicResults.summaryList;
-        const detailedWrap = basicResults.detailedWrap;
-        const exportSummary = basicResults.exportSummary;
-        const exportDetailed = basicResults.exportDetailed;
-        const summarySection = basicResults.summarySection;
-        const detailedSection = basicResults.detailedSection;
-        const csvControls = basicResults.csvControls;
         const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
         let activeScanId = null;
@@ -655,35 +644,21 @@
           currentStage = stage;
           const showStage1 = stage === 1;
           const showStage2 = stage === 2;
-          const showStage3 = stage === 3;
 
           if (showStage1) {
             showSection(scanParameters);
             showSection(runControls);
             hideSection(progressWrap);
-            hideSection(resultsWrap);
-            hideSection(csvControls);
           }
 
           if (showStage2) {
             hideSection(scanParameters);
             hideSection(runControls);
             showSection(progressWrap);
-            hideSection(resultsWrap);
-            hideSection(csvControls);
-          }
-
-          if (showStage3) {
-            hideSection(scanParameters);
-            hideSection(runControls);
-            hideSection(progressWrap);
-            showSection(resultsWrap);
-            showSection(csvControls);
           }
 
           const target =
-            scrollTarget ||
-            (showStage1 ? scanParameters || scanRoot : showStage2 ? progressWrap : summarySection);
+            scrollTarget || (showStage1 ? scanParameters || scanRoot : progressWrap || scanRoot);
           scrollSectionToCenter(target);
         };
         basicScanStageController = { setStage, getStage: () => currentStage };
@@ -718,6 +693,20 @@
           progressEta.textContent = `Estimated remaining time: ${formatted || 'Estimating…'}`;
         };
 
+        const updateProgressHelper = (progress) => {
+          if (!progressHelper) {
+            return;
+          }
+          const etaMs = progress?.eta_ms;
+          if (Number.isFinite(etaMs)) {
+            const minutes = Math.max(Math.ceil(etaMs / 60000), 0);
+            progressHelper.textContent = `Your scan is still in progress. Estimated time remaining: ${minutes} minutes. Refresh this page in ${minutes} minutes to see your scan results.`;
+          } else {
+            progressHelper.textContent =
+              'Your scan is still in progress. Estimating remaining time...';
+          }
+        };
+
         const buildProgressMessage = (message) => message || 'Scanning...';
 
         const setProgress = (current, total, message, progress = null) => {
@@ -732,6 +721,7 @@
             progressStatus.textContent = buildProgressMessage(message);
           }
           updateEta(progress);
+          updateProgressHelper(progress);
         };
 
         const appendLog = (message) => {
@@ -872,25 +862,22 @@
           }
 
           const statusMessages = {
-            completed: '✅ Basic Scan completed.',
-            timeout: 'Basic Scan timed out. Please try again.',
-            'connection error': 'Basic Scan connection lost. Please try again.',
-            'handler error': 'Basic Scan failed. Please try again.',
-            'scan failed': 'Basic Scan failed. Please try again.',
+            completed: '✅ Dedicated scan completed.',
+            timeout: 'Dedicated scan timed out. Please try again.',
+            'connection error': 'Dedicated scan connection lost. Please try again.',
+            'handler error': 'Dedicated scan failed. Please try again.',
+            'scan failed': 'Dedicated scan failed. Please try again.',
           };
           const statusMessage = statusMessages[reason] || 'Basic Scan stopped.';
           const variant = reason === 'completed' ? 'status-success' : 'status-error';
 
           if (reason === 'completed') {
             setProgress(options.total || 1, options.total || 1, 'Scan completed.', { eta_ms: 0 });
-            if (options.scanId) {
-              try {
-                await loadResults(options.scanId);
-              } catch (error) {
-                setStatus('Failed to load scan results.', 'status-error');
-              }
+            setStage(1, scanParameters || scanRoot);
+            setActiveSection('latest', { skipScroll: true, skipFetch: true });
+            if (typeof loadLatestScan === 'function') {
+              await loadLatestScan();
             }
-            setStage(3, summarySection);
           } else {
             setProgress(0, 1, statusMessage);
             setStage(1, scanParameters || scanRoot);
@@ -1088,18 +1075,6 @@
           }
         };
 
-        const fetchScanResults = async (scanId) => {
-          const response = await fetch(`/api/basic-rank-checker/scans/${scanId}`);
-          const data = await parseJsonSafely(response);
-          if (!response.ok) {
-            throw new Error(normalizeErrorMessage(data, 'Failed to load scan results.'));
-          }
-          if (!data || typeof data !== 'object') {
-            throw new Error('Failed to load scan results.');
-          }
-          return data;
-        };
-
         const renderScanResults = (scan, elements, scanId) => {
           if (!scan || typeof scan !== 'object') {
             return;
@@ -1144,11 +1119,6 @@
           if (elements?.resultsWrap) {
             showSection(elements.resultsWrap);
           }
-        };
-
-        const loadResults = async (scanId, elements = basicResults) => {
-          const data = await fetchScanResults(scanId);
-          renderScanResults(data, elements, data.scan_id || scanId);
         };
 
         const connectEventStream = (scanId) => {
@@ -1260,6 +1230,7 @@
             activeScanId = data.scan_id;
             scanStarted = Boolean(activeScanId);
             connectEventStream(activeScanId);
+            setActiveSection('dedicated', { skipScroll: true, skipFetch: true });
           } catch (error) {
             if (typeof console !== 'undefined' && console.error) {
               console.error('[basic-scan] start failed', error);
@@ -1317,16 +1288,51 @@
         runButton?.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
+          setActiveSection('dedicated', { skipScroll: true, skipFetch: true });
           openBasicScanStage2();
           startScan();
         });
 
         basicScanStageController.openBasicScanStage1 = openBasicScanStage1;
         basicScanStageController.openBasicScanStage2 = openBasicScanStage2;
+
+        const fetchActiveScan = async () => {
+          const trackedPlaylistId = resolveTrackedPlaylistId();
+          const url = new URL('/api/basic-rank-checker/scans/active', window.location.origin);
+          if (trackedPlaylistId) {
+            url.searchParams.set('tracked_playlist_id', trackedPlaylistId);
+          }
+          const response = await fetch(`${url.pathname}${url.search}`);
+          const data = await readErrorPayload(response);
+          if (response.status === 404) {
+            return null;
+          }
+          if (!response.ok) {
+            throw new Error(normalizeErrorMessage(data, 'Failed to load active scan.'));
+          }
+          return data;
+        };
+
+        const initializeScanSections = async () => {
+          try {
+            const activeScan = await fetchActiveScan();
+            if (activeScan?.scan_id) {
+              setActiveSection('dedicated', { skipScroll: true, skipFetch: true });
+              openBasicScanStage2();
+              applyProgressSnapshot(activeScan.progress, 'Scan in progress...');
+              connectEventStream(activeScan.scan_id);
+              return;
+            }
+          } catch (error) {
+            setStatus(normalizeErrorMessage(error, 'Failed to load scan status.'), 'status-error');
+          }
+          setActiveSection('latest', { skipScroll: true });
+        };
+
+        initializeScanSections();
       };
 
       setupBasicScan();
-      setActiveScanTab('dedicated', { skipScroll: true, skipFetch: true });
     </script>
   </body>
 </html>
