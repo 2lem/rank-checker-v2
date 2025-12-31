@@ -29,6 +29,20 @@ def _event_names(caplog: pytest.LogCaptureFixture) -> list[str]:
     return events
 
 
+def _scan_usage_payloads(caplog: pytest.LogCaptureFixture) -> list[dict]:
+    payloads: list[dict] = []
+    for record in caplog.records:
+        if record.name != "app.core.spotify":
+            continue
+        try:
+            data = json.loads(record.message)
+        except json.JSONDecodeError:
+            continue
+        if data.get("type") == "scan_spotify_usage":
+            payloads.append(data)
+    return payloads
+
+
 def test_spotify_logs_successful_request(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     mock_request = Mock(return_value=_response(200, {"ok": True}))
     monkeypatch.setattr(spotify.requests, "request", mock_request)
@@ -189,3 +203,34 @@ def test_spotify_token_retries_on_429(monkeypatch: pytest.MonkeyPatch) -> None:
     assert mock_request.call_count == 2
     assert sleep_mock.call_count == 1
     assert sleep_mock.call_args_list[0].args[0] == 2
+
+
+def test_scan_spotify_usage_summary_counts_calls(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_request = Mock(return_value=_response(200, {"ok": True}))
+    monkeypatch.setattr(spotify.requests, "request", mock_request)
+
+    caplog.set_level(logging.INFO, logger="app.core.spotify")
+
+    scan_id = "scan-usage-1"
+    spotify.start_scan_spotify_usage(scan_id)
+    for _ in range(3):
+        spotify.spotify_get(
+            "https://api.spotify.com/v1/playlists/test",
+            token="token",
+            scan_id=scan_id,
+        )
+
+    spotify.log_scan_spotify_usage(
+        scan_id=scan_id,
+        scan_kind="basic",
+        tracked_playlist_id="playlist-1",
+        countries_count=1,
+        keywords_count=1,
+        ended_status="completed",
+    )
+
+    payloads = _scan_usage_payloads(caplog)
+    assert len(payloads) == 1
+    assert payloads[0]["spotify_calls_total"] == 3

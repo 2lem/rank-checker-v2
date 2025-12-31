@@ -7,7 +7,7 @@ import random
 import re
 import time
 import uuid
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
@@ -124,6 +124,75 @@ class SpotifyMetrics:
 
 
 _spotify_metrics = SpotifyMetrics(_METRICS_WINDOW_SECONDS)
+_SCAN_USAGE_TTL_SECONDS = 60 * 60
+
+
+class SpotifyScanUsageTracker:
+    def __init__(self, ttl_seconds: int) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._entries: dict[str, dict] = {}
+        self._lock = Lock()
+
+    def start(self, scan_id: str) -> None:
+        now_wall = time.time()
+        now_monotonic = time.monotonic()
+        with self._lock:
+            self._prune_locked(now_wall)
+            entry = self._entries.get(scan_id)
+            if entry is None:
+                self._entries[scan_id] = {
+                    "start_monotonic": now_monotonic,
+                    "last_seen": now_wall,
+                    "count": 0,
+                    "endpoints": Counter(),
+                }
+            else:
+                entry["last_seen"] = now_wall
+
+    def record(self, scan_id: str | None, endpoint: str | None) -> None:
+        if not scan_id:
+            return
+        now_wall = time.time()
+        now_monotonic = time.monotonic()
+        with self._lock:
+            self._prune_locked(now_wall)
+            entry = self._entries.get(scan_id)
+            if entry is None:
+                entry = {
+                    "start_monotonic": now_monotonic,
+                    "last_seen": now_wall,
+                    "count": 0,
+                    "endpoints": Counter(),
+                }
+                self._entries[scan_id] = entry
+            entry["last_seen"] = now_wall
+            entry["count"] += 1
+            if endpoint:
+                entry["endpoints"][endpoint] += 1
+
+    def finalize(self, scan_id: str) -> dict | None:
+        now_wall = time.time()
+        now_monotonic = time.monotonic()
+        with self._lock:
+            self._prune_locked(now_wall)
+            entry = self._entries.pop(scan_id, None)
+        if entry is None:
+            return None
+        duration_ms = round((now_monotonic - entry["start_monotonic"]) * 1000, 2)
+        return {
+            "total": entry["count"],
+            "duration_ms": duration_ms,
+            "endpoints": entry["endpoints"],
+        }
+
+    def _prune_locked(self, now: float) -> None:
+        cutoff = now - self._ttl_seconds
+        stale_ids = [scan_id for scan_id, entry in self._entries.items() if entry["last_seen"] < cutoff]
+        for scan_id in stale_ids:
+            self._entries.pop(scan_id, None)
+
+
+_spotify_scan_usage = SpotifyScanUsageTracker(_SCAN_USAGE_TTL_SECONDS)
 
 
 def get_spotify_metrics_snapshot() -> dict:
@@ -132,6 +201,47 @@ def get_spotify_metrics_snapshot() -> dict:
 
 def _log_event(event: str, **fields: object) -> None:
     payload = {"event": event, **fields}
+    logger.info(json.dumps(payload, sort_keys=True, default=str))
+
+
+def start_scan_spotify_usage(scan_id: str) -> None:
+    _spotify_scan_usage.start(scan_id)
+
+
+def log_scan_spotify_usage(
+    *,
+    scan_id: str,
+    scan_kind: str,
+    tracked_playlist_id: str | None,
+    countries_count: int,
+    keywords_count: int,
+    ended_status: str,
+) -> None:
+    usage = _spotify_scan_usage.finalize(scan_id)
+    total_calls = usage["total"] if usage else 0
+    duration_ms = usage["duration_ms"] if usage else 0.0
+    endpoints: Counter = usage["endpoints"] if usage else Counter()
+    endpoints_summary = [
+        {"endpoint": endpoint, "count": count} for endpoint, count in endpoints.most_common(5)
+    ]
+    requests_per_minute = None
+    if duration_ms > 0:
+        requests_per_minute = round(total_calls / (duration_ms / 60000), 2)
+    payload = {
+        "type": "scan_spotify_usage",
+        "scan_id": scan_id,
+        "scan_kind": scan_kind,
+        "tracked_playlist_id": tracked_playlist_id,
+        "countries_count": countries_count,
+        "keywords_count": keywords_count,
+        "spotify_calls_total": total_calls,
+        "duration_ms": duration_ms,
+        "requests_per_minute_est": requests_per_minute,
+        "ended_status": ended_status,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if endpoints_summary:
+        payload["spotify_calls_by_endpoint"] = endpoints_summary
     logger.info(json.dumps(payload, sort_keys=True, default=str))
 
 
@@ -392,6 +502,7 @@ def _spotify_request_with_meta(
 
     while True:
         attempt += 1
+        _spotify_scan_usage.record(scan_id, path)
         warnings, pacings = _spotify_budget.record(scan_id)
         for warning in warnings:
             _log_budget_warning(
@@ -650,7 +761,7 @@ def _token_body_keys(payload: dict | None) -> list[str] | None:
     return sorted([str(key) for key in payload.keys()])
 
 
-def get_access_token() -> str:
+def get_access_token(*, scan_id: str | None = None) -> str:
     if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
         raise ValueError("SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET missing from environment.")
 
@@ -679,7 +790,13 @@ def get_access_token() -> str:
             attempt=attempt,
         )
         try:
-            payload, meta = _spotify_request_with_meta("POST", TOKEN_URL, headers=headers, data=data)
+            payload, meta = _spotify_request_with_meta(
+                "POST",
+                TOKEN_URL,
+                headers=headers,
+                data=data,
+                scan_id=scan_id,
+            )
         except requests.HTTPError as exc:
             duration_ms = round((time.monotonic() - start_monotonic) * 1000, 2)
             response = exc.response
