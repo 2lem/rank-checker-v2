@@ -102,28 +102,21 @@
                 <div class="progress-status" data-basic-scan-progress-status>Starting scan…</div>
                 <div class="progress-log" data-basic-scan-progress-log></div>
               </section>
-              <section class="results" id="basic-scan-results" data-basic-scan-results hidden>
-                <div class="results-header">
-                  <h3>Basic Scan Results</h3>
-                  <div
-                    class="download-csv-controls basic-scan-download-actions"
-                    id="basic-scan-csv-controls"
-                    data-basic-scan-csv-controls
-                  >
-                    <a class="btn btn-csv" data-basic-scan-export-summary>Download Summary CSV</a>
-                    <a class="btn btn-csv" data-basic-scan-export-detailed>Download Detailed CSV</a>
-                  </div>
-                </div>
-                <div class="summary" id="basic-scan-summary">
-                  <h3>Summary</h3>
-                  <div class="summary-lead" data-basic-scan-summary-lead></div>
-                  <div class="summary-list" data-basic-scan-summary-list></div>
-                </div>
-                <div class="detailed-scan-insights" id="basic-scan-detailed">
-                  <h3>Detailed Scan Insights</h3>
-                  <div class="detailed-insights" data-basic-scan-detailed></div>
-                </div>
-              </section>
+              {% set results_id = 'basic-scan-results' %}
+              {% set results_title = 'Basic Scan Results' %}
+              {% set data_prefix = 'basic-scan' %}
+              {% set csv_controls_id = 'basic-scan-csv-controls' %}
+              {% set summary_id = 'basic-scan-summary' %}
+              {% set detailed_id = 'basic-scan-detailed' %}
+              {% include "_components/scan_results.html" %}
+
+              {% set results_id = 'latest-scan-results' %}
+              {% set results_title = 'Latest Scan Results' %}
+              {% set data_prefix = 'latest-scan' %}
+              {% set csv_controls_id = 'latest-scan-csv-controls' %}
+              {% set summary_id = 'latest-scan-summary' %}
+              {% set detailed_id = 'latest-scan-detailed' %}
+              {% include "_components/scan_results.html" %}
             </div>
           </div>
         </section>
@@ -575,15 +568,28 @@
         const progressFill = scanRoot.querySelector('[data-basic-scan-progress-fill]');
         const progressStatus = scanRoot.querySelector('[data-basic-scan-progress-status]');
         const progressLog = scanRoot.querySelector('[data-basic-scan-progress-log]');
-        const resultsWrap = scanRoot.querySelector('[data-basic-scan-results]');
-        const summaryLead = scanRoot.querySelector('[data-basic-scan-summary-lead]');
-        const summaryList = scanRoot.querySelector('[data-basic-scan-summary-list]');
-        const detailedWrap = scanRoot.querySelector('[data-basic-scan-detailed]');
-        const exportSummary = scanRoot.querySelector('[data-basic-scan-export-summary]');
-        const exportDetailed = scanRoot.querySelector('[data-basic-scan-export-detailed]');
-        const summarySection = document.getElementById('basic-scan-summary');
-        const detailedSection = document.getElementById('basic-scan-detailed');
-        const csvControls = scanRoot.querySelector('[data-basic-scan-csv-controls]');
+        const buildScanElements = (prefix) => ({
+          resultsWrap: scanRoot.querySelector(`[data-${prefix}-results]`),
+          summaryLead: scanRoot.querySelector(`[data-${prefix}-summary-lead]`),
+          summaryList: scanRoot.querySelector(`[data-${prefix}-summary-list]`),
+          detailedWrap: scanRoot.querySelector(`[data-${prefix}-detailed]`),
+          exportSummary: scanRoot.querySelector(`[data-${prefix}-export-summary]`),
+          exportDetailed: scanRoot.querySelector(`[data-${prefix}-export-detailed]`),
+          summarySection: scanRoot.querySelector(`[data-${prefix}-summary-section]`),
+          detailedSection: scanRoot.querySelector(`[data-${prefix}-detailed-section]`),
+          csvControls: scanRoot.querySelector(`[data-${prefix}-csv-controls]`),
+        });
+        const basicResults = buildScanElements('basic-scan');
+        const latestResults = buildScanElements('latest-scan');
+        const resultsWrap = basicResults.resultsWrap;
+        const summaryLead = basicResults.summaryLead;
+        const summaryList = basicResults.summaryList;
+        const detailedWrap = basicResults.detailedWrap;
+        const exportSummary = basicResults.exportSummary;
+        const exportDetailed = basicResults.exportDetailed;
+        const summarySection = basicResults.summarySection;
+        const detailedSection = basicResults.detailedSection;
+        const csvControls = basicResults.csvControls;
         const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
         let activeScanId = null;
@@ -596,6 +602,8 @@
         let pollActiveScanId = null;
         let pollInFlight = false;
         let pollStartAt = null;
+        let latestCompletedScan = null;
+        let showLatestPanel = false;
         const WATCHDOG_MS = 45000;
         const WATCHDOG_CHECK_MS = 5000;
 
@@ -833,15 +841,17 @@
           setStatus(statusMessage, variant);
         };
 
-        const renderSummary = (scan) => {
-          if (!summaryLead || !summaryList) {
+        const renderSummary = (scan, elements) => {
+          const summaryLeadEl = elements?.summaryLead;
+          const summaryListEl = elements?.summaryList;
+          if (!summaryLeadEl || !summaryListEl) {
             return;
           }
           const follower = scan.follower_snapshot ?? '—';
-          summaryLead.textContent = `At ${formatTimestamp(
+          summaryLeadEl.textContent = `At ${formatTimestamp(
             scan.started_at
           )}, your playlist follower count was ${follower}.`;
-          summaryList.innerHTML = '';
+          summaryListEl.innerHTML = '';
           (scan.summary || []).forEach((item) => {
             const row = document.createElement('div');
             row.className = `summary-row ${item.tracked_found_in_top20 ? '' : 'summary-row-missing'}`;
@@ -851,7 +861,7 @@
               ? `your playlist rank was #${item.tracked_rank}.`
               : 'your playlist was not found in the top 20.';
             row.textContent = `On ${dateLabel} at ${timeLabel} in ${countryLabel} for ‘${item.keyword}’, ${rankText}`;
-            summaryList.appendChild(row);
+            summaryListEl.appendChild(row);
           });
         };
 
@@ -880,11 +890,12 @@
           return formatFollowersValue(candidate);
         };
 
-        const renderDetailed = (scan) => {
-          if (!detailedWrap) {
+        const renderDetailed = (scan, elements) => {
+          const detailedWrapEl = elements?.detailedWrap;
+          if (!detailedWrapEl) {
             return;
           }
-          detailedWrap.innerHTML = '';
+          detailedWrapEl.innerHTML = '';
           const detailed = scan.detailed || {};
           const countryAccordions = [];
           Object.values(detailed).forEach((countryData) => {
@@ -983,25 +994,15 @@
             });
 
             countryDetails.appendChild(keywordContainer);
-            detailedWrap.appendChild(countryDetails);
+            detailedWrapEl.appendChild(countryDetails);
           });
         };
 
-      const loadResults = async (scanId) => {
-          const response = await fetch(`/api/basic-rank-checker/scans/${scanId}`);
-          const data = await parseJsonSafely(response);
-          if (!response.ok) {
-            throw new Error(normalizeErrorMessage(data, 'Failed to load scan results.'));
-          }
-          if (!data || typeof data !== 'object') {
-            throw new Error('Failed to load scan results.');
-          }
-          renderSummary(data);
-          renderDetailed(data);
-          const startedAt =
-            data.started_at || data.searched_at || data.summary?.[0]?.searched_at;
+        const updateExportLinks = (scanId, startedAt, elements) => {
+          const exportSummaryEl = elements?.exportSummary;
+          const exportDetailedEl = elements?.exportDetailed;
           const timestamp = formatFileTimestamp(startedAt);
-          const effectiveScanId = data.scan_id || scanId;
+          const effectiveScanId = scanId || 'scan';
           const filenameBase = timestamp
             ? `${timestamp}_${effectiveScanId}`
             : `${effectiveScanId}`;
@@ -1012,39 +1013,81 @@
             }
             return `${url.pathname}${url.search}`;
           };
-          if (exportSummary) {
-            exportSummary.href = buildExportUrl(
+          if (exportSummaryEl) {
+            exportSummaryEl.href = buildExportUrl(
               `/api/basic-rank-checker/scans/${scanId}/export/summary.csv`
             );
-            exportSummary.download = `${filenameBase}_summary.csv`;
+            exportSummaryEl.download = `${filenameBase}_summary.csv`;
           }
-          if (exportDetailed) {
-            exportDetailed.href = buildExportUrl(
+          if (exportDetailedEl) {
+            exportDetailedEl.href = buildExportUrl(
               `/api/basic-rank-checker/scans/${scanId}/export/detailed.csv`
             );
-            exportDetailed.download = `${filenameBase}_detailed.csv`;
+            exportDetailedEl.download = `${filenameBase}_detailed.csv`;
           }
         };
 
-        const showEmptyState = (message) => {
-          if (summaryLead) {
-            summaryLead.textContent = message;
-            summaryLead.hidden = false;
+        const fetchScanResults = async (scanId) => {
+          const response = await fetch(`/api/basic-rank-checker/scans/${scanId}`);
+          const data = await parseJsonSafely(response);
+          if (!response.ok) {
+            throw new Error(normalizeErrorMessage(data, 'Failed to load scan results.'));
           }
-          if (summaryList) {
-            summaryList.innerHTML = '';
-            summaryList.hidden = true;
+          if (!data || typeof data !== 'object') {
+            throw new Error('Failed to load scan results.');
           }
-          if (detailedWrap) {
-            detailedWrap.innerHTML = '';
+          return data;
+        };
+
+        const renderScanResults = (scan, elements, scanId) => {
+          if (!scan || typeof scan !== 'object') {
+            return;
           }
-          if (detailedSection) {
-            detailedSection.hidden = true;
+          renderSummary(scan, elements);
+          renderDetailed(scan, elements);
+          if (elements?.summaryList) {
+            elements.summaryList.hidden = false;
           }
-          if (csvControls) {
-            hideSection(csvControls);
+          if (elements?.detailedSection) {
+            elements.detailedSection.hidden = false;
           }
-          setStage(3, summarySection);
+          if (elements?.csvControls) {
+            showSection(elements.csvControls);
+          }
+          if (elements?.resultsWrap) {
+            showSection(elements.resultsWrap);
+          }
+          const startedAt =
+            scan.started_at || scan.searched_at || scan.summary?.[0]?.searched_at;
+          updateExportLinks(scanId, startedAt, elements);
+        };
+
+        const showEmptyState = (elements, message) => {
+          if (elements?.summaryLead) {
+            elements.summaryLead.textContent = message;
+            elements.summaryLead.hidden = false;
+          }
+          if (elements?.summaryList) {
+            elements.summaryList.innerHTML = '';
+            elements.summaryList.hidden = true;
+          }
+          if (elements?.detailedWrap) {
+            elements.detailedWrap.innerHTML = '';
+          }
+          if (elements?.detailedSection) {
+            elements.detailedSection.hidden = true;
+          }
+          if (elements?.csvControls) {
+            hideSection(elements.csvControls);
+          }
+          if (elements?.resultsWrap) {
+            showSection(elements.resultsWrap);
+          }
+        };
+
+        const loadResults = async (scanId, elements = basicResults) => {
+          const data = await fetchScanResults(scanId);
+          renderScanResults(data, elements, data.scan_id || scanId);
         };
 
         const connectEventStream = (scanId) => {
@@ -1169,34 +1212,39 @@
           }
         };
 
+        const setLatestPanelVisibility = (shouldShow) => {
+          showLatestPanel = shouldShow;
+          if (!latestResults?.resultsWrap) {
+            return;
+          }
+          if (showLatestPanel) {
+            showSection(latestResults.resultsWrap);
+          } else {
+            hideSection(latestResults.resultsWrap);
+          }
+        };
+
         const loadLatestScan = async () => {
           if (!latestButton) {
             return;
           }
           const trackedPlaylistId = resolveTrackedPlaylistId();
           latestButton.disabled = true;
-          hasStopped = false;
-          if (progressLog) {
-            progressLog.innerHTML = '';
-          }
-          if (eventSource) {
-            eventSource.close();
-            eventSource = null;
-          }
-          clearWatchdog();
-          stopPolling();
-          setProgress(0, 0, 'Loading latest scan…');
-          setStage(2, progressWrap || scanRoot);
 
           try {
-            const url = new URL('/api/basic-rank-checker/scans/latest', window.location.origin);
+            const url = new URL(
+              '/api/basic-rank-checker/scans/latest-completed',
+              window.location.origin
+            );
             if (trackedPlaylistId) {
               url.searchParams.set('tracked_playlist_id', trackedPlaylistId);
             }
             const response = await fetch(`${url.pathname}${url.search}`);
             const data = await readErrorPayload(response);
             if (response.status === 404) {
-              showEmptyState('No scans yet.');
+              latestCompletedScan = null;
+              setLatestPanelVisibility(true);
+              showEmptyState(latestResults, 'No completed scans yet.');
               return;
             }
             if (!response.ok) {
@@ -1206,26 +1254,16 @@
               throw new Error('Failed to load latest scan.');
             }
 
-            activeScanId = data.scan_id;
-            if (data.status === 'failed') {
-              setStatus('Scan interrupted. Please run again.', 'status-error');
-              setStage(1, scanParameters || scanRoot);
+            latestCompletedScan = data;
+            setLatestPanelVisibility(true);
+            const resultsPayload = data.results || {};
+            if (!hasResults(resultsPayload)) {
+              showEmptyState(latestResults, 'No completed scans yet.');
               return;
             }
-
-            if (data.progress) {
-              applyProgressSnapshot(data.progress, 'Scan in progress...');
-            }
-
-            if (data.status === 'completed' || data.status === 'completed_partial') {
-              await loadResults(activeScanId);
-              setStage(3, summarySection);
-              return;
-            }
-
-            connectEventStream(activeScanId);
+            renderScanResults(resultsPayload, latestResults, data.scan_id);
           } catch (error) {
-            setStage(1, scanParameters || scanRoot);
+            setLatestPanelVisibility(false);
             setStatus(normalizeErrorMessage(error, 'Failed to load latest scan.'), 'status-error');
           } finally {
             latestButton.disabled = false;
