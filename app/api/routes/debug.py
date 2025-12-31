@@ -9,6 +9,7 @@ from app.basic_rank_checker.events import scan_event_manager
 from app.core.db import SessionLocal, engine
 from app.core.debug_tools import require_debug_tools, require_debug_tools_enabled
 from app.core.spotify import get_spotify_metrics_snapshot
+from app.models.basic_scan import BasicScan
 
 router = APIRouter(
     prefix="/api/debug",
@@ -163,6 +164,41 @@ def schema_version(request: Request):
 def sse_state(request: Request):
     state = scan_event_manager.snapshot()
     return {"ok": True, **state, "ts": _now_iso()}
+
+
+@router.get("/scan/{scan_id}", dependencies=[Depends(require_debug_tools_enabled)])
+def scan_state(scan_id: str):
+    if SessionLocal is None:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"ok": False, "error": "Database session not configured"},
+        )
+
+    session = SessionLocal()
+    try:
+        scan = session.get(BasicScan, scan_id)
+    except Exception as exc:  # pragma: no cover - best effort defensive response
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"ok": False, "error": str(exc)},
+        )
+    finally:
+        session.close()
+
+    if scan is None:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"ok": False, "error": "Scan not found."},
+        )
+
+    state = scan_event_manager.get_state(scan_id)
+    return {
+        "ok": True,
+        "scan_id": scan_id,
+        "status": scan.status,
+        **state,
+        "ts": _now_iso(),
+    }
 
 
 @router.get("/spotify-metrics", dependencies=[Depends(require_debug_tools_enabled)])

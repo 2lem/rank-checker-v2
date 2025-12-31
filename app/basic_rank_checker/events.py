@@ -4,8 +4,11 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from queue import Empty, Queue
 from typing import Iterator
+
+from app.basic_rank_checker.scan_logging import log_scan_heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +16,8 @@ logger = logging.getLogger(__name__)
 class ScanEventManager:
     def __init__(self) -> None:
         self._queues: dict[str, Queue] = {}
+        self._last_event_ts: dict[str, str] = {}
+        self._last_progress: dict[str, dict] = {}
         self._stream_timeout_seconds = self._resolve_timeout()
         self._heartbeat_interval_seconds = self._resolve_heartbeat_interval()
 
@@ -46,6 +51,15 @@ class ScanEventManager:
         queue = self._queues.get(scan_id)
         if queue is None:
             return
+        self._last_event_ts[scan_id] = datetime.now(timezone.utc).isoformat()
+        if payload.get("type") == "progress":
+            self._last_progress[scan_id] = {
+                "message": payload.get("message"),
+                "step": payload.get("step"),
+                "total": payload.get("total"),
+                "country": payload.get("country"),
+                "keyword": payload.get("keyword"),
+            }
         queue.put(payload)
 
     def stream(self, scan_id: str) -> Iterator[str]:
@@ -71,14 +85,8 @@ class ScanEventManager:
                         break
                     if time.monotonic() - last_heartbeat_at >= self._heartbeat_interval_seconds:
                         heartbeat_event = {"type": "heartbeat", "status": "running"}
-                        logger.info(
-                            "scan heartbeat",
-                            extra={
-                                "type": "scan_heartbeat",
-                                "scan_id": scan_id,
-                                "elapsed_sec": int(elapsed),
-                            },
-                        )
+                        self._last_event_ts[scan_id] = datetime.now(timezone.utc).isoformat()
+                        log_scan_heartbeat(scan_id, int(elapsed))
                         yield f"data: {json.dumps(heartbeat_event)}\n\n"
                         last_heartbeat_at = time.monotonic()
                     continue
@@ -104,6 +112,12 @@ class ScanEventManager:
         return {
             "queue_count": len(active_scan_ids),
             "active_scan_ids": active_scan_ids,
+        }
+
+    def get_state(self, scan_id: str) -> dict[str, object | None]:
+        return {
+            "last_event_ts": self._last_event_ts.get(scan_id),
+            "last_progress": self._last_progress.get(scan_id),
         }
 
 
