@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.basic_rank_checker.events import scan_event_manager
@@ -109,13 +109,13 @@ def stream_scan_events(scan_id: str):
         raise HTTPException(status_code=404, detail="Scan not found.") from exc
 
     # SSE must not hold DB sessions open to avoid pool starvation/hanging.
-    def _preflight(session: Session) -> tuple[str, str | None]:
+    def _preflight(session: Session) -> tuple[str, str | None, dict]:
         scan = session.get(BasicScan, scan_id)
         if scan is None:
             raise HTTPException(status_code=404, detail="Scan not found.")
-        return scan.status, scan.error_message
+        return scan.status, scan.error_message, _resolve_scan_progress(session, scan)
 
-    scan_status, scan_error_message = db_preflight_check(_preflight)
+    scan_status, scan_error_message, scan_progress = db_preflight_check(_preflight)
 
     queue = scan_event_manager.get_queue(scan_id)
     if queue is None:
@@ -126,6 +126,19 @@ def stream_scan_events(scan_id: str):
             scan_event_manager.publish(
                 scan_id,
                 {"type": "error", "message": scan_error_message or "Scan failed."},
+            )
+        elif scan_status in {"running", "queued"}:
+            scan_event_manager.publish(
+                scan_id,
+                {
+                    "type": "progress",
+                    "message": "Resuming scan…",
+                    "step": scan_progress.get("completed_units"),
+                    "total": scan_progress.get("total_units"),
+                    "progress_pct": scan_progress.get("progress_pct"),
+                    "eta_ms": scan_progress.get("eta_ms"),
+                    "eta_human": scan_progress.get("eta_human"),
+                },
             )
 
     return StreamingResponse(
@@ -139,6 +152,47 @@ def stream_scan_events(scan_id: str):
     )
 
 
+@router.get("/scans/latest")
+def get_latest_scan(
+    tracked_playlist_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    if tracked_playlist_id:
+        try:
+            UUID(str(tracked_playlist_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid tracked_playlist_id.") from exc
+
+    query = select(BasicScan)
+    if tracked_playlist_id:
+        query = query.where(BasicScan.tracked_playlist_id == tracked_playlist_id)
+    scan = db.execute(query.order_by(BasicScan.created_at.desc()).limit(1)).scalar_one_or_none()
+    if scan is None:
+        raise HTTPException(status_code=404, detail="No scans yet.")
+
+    progress_payload = _resolve_scan_progress(db, scan)
+    status_value = scan.status
+    if status_value in {"running", "queued"} and scan.last_progress_at:
+        if (datetime.now(timezone.utc) - scan.last_progress_at).total_seconds() > 15 * 60:
+            status_value = "failed"
+
+    response = {
+        "scan_id": str(scan.id),
+        "status": status_value,
+        "created_at": _format_dt(scan.created_at),
+        "country": scan.scanned_countries or [],
+        "keywords": scan.scanned_keywords or [],
+        "progress": progress_payload,
+    }
+    if status_value == "failed":
+        response["error_message"] = "Scan interrupted."
+    if scan.status in {"completed", "completed_partial"} or progress_payload.get("completed_units"):
+        results_payload = fetch_scan_details(db, str(scan.id))
+        if results_payload:
+            response["results"] = _serialize_scan_payload(results_payload)
+    return response
+
+
 @router.get("/scans/{scan_id}")
 def get_scan(scan_id: str, db: Session = Depends(get_db)):
     try:
@@ -149,18 +203,7 @@ def get_scan(scan_id: str, db: Session = Depends(get_db)):
     payload = fetch_scan_details(db, scan_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Scan not found.")
-    payload["started_at"] = _format_dt(payload.get("started_at"))
-    payload["finished_at"] = _format_dt(payload.get("finished_at"))
-    for entry in payload.get("summary") or []:
-        entry["searched_at"] = _format_dt(entry.get("searched_at"))
-    for country_data in payload.get("detailed", {}).values():
-        for keyword_data in country_data.get("keywords", {}).values():
-            keyword_data["searched_at"] = _format_dt(keyword_data.get("searched_at"))
-            for result in keyword_data.get("results", []):
-                result["playlist_last_added_track_at"] = _format_dt(
-                    result.get("playlist_last_added_track_at")
-                )
-    return payload
+    return _serialize_scan_payload(payload)
 
 
 @router.get("/scans/{scan_id}/export/summary.csv")
@@ -297,3 +340,46 @@ def export_detailed_csv(
         ],
         rows,
     )
+
+
+def _serialize_scan_payload(payload: dict) -> dict:
+    payload["created_at"] = _format_dt(payload.get("created_at"))
+    payload["started_at"] = _format_dt(payload.get("started_at"))
+    payload["finished_at"] = _format_dt(payload.get("finished_at"))
+    for entry in payload.get("summary") or []:
+        entry["searched_at"] = _format_dt(entry.get("searched_at"))
+    for country_data in payload.get("detailed", {}).values():
+        for keyword_data in country_data.get("keywords", {}).values():
+            keyword_data["searched_at"] = _format_dt(keyword_data.get("searched_at"))
+            for result in keyword_data.get("results", []):
+                result["playlist_last_added_track_at"] = _format_dt(
+                    result.get("playlist_last_added_track_at")
+                )
+    return payload
+
+
+def _resolve_scan_progress(db: Session, scan: BasicScan) -> dict:
+    total_units = scan.progress_total_units or max(
+        len(scan.scanned_countries or []) * len(scan.scanned_keywords or []), 1
+    )
+    completed_units = scan.progress_completed_units
+    if completed_units is None:
+        completed_units = (
+            db.execute(
+                select(func.count(BasicScanQuery.id)).where(
+                    BasicScanQuery.basic_scan_id == scan.id
+                )
+            )
+            .scalar_one()
+            or 0
+        )
+    progress_pct = scan.progress_pct
+    if progress_pct is None:
+        progress_pct = int(round((completed_units / total_units) * 100)) if total_units else 0
+    return {
+        "completed_units": completed_units,
+        "total_units": total_units,
+        "progress_pct": progress_pct,
+        "eta_ms": scan.eta_ms,
+        "eta_human": scan.eta_human,
+    }

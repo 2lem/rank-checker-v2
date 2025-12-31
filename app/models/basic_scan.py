@@ -59,6 +59,14 @@ class BasicScan(Base):
         default=list,
         server_default=text("'[]'::jsonb"),
     )
+    progress_completed_units: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_total_units: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    eta_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    eta_human: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_progress_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
