@@ -132,6 +132,13 @@
     <script>
       const statusArea = document.getElementById('playlist-status');
       const refreshButton = document.querySelector('[data-refresh-stats]');
+      const playlistDetailRoot = document.querySelector('[data-tracked-card][data-playlist-id]');
+      const playlistId = playlistDetailRoot?.dataset.playlistId || null;
+      const ownerValue = playlistDetailRoot?.querySelector('[data-playlist-owner]') || null;
+      const followersValue = playlistDetailRoot?.querySelector('[data-playlist-followers]') || null;
+      const tracksValue = playlistDetailRoot?.querySelector('[data-playlist-tracks]') || null;
+      const scannedValue = playlistDetailRoot?.querySelector('[data-playlist-scanned]') || null;
+      const updatedValue = playlistDetailRoot?.querySelector('[data-playlist-updated]') || null;
       const toolbarButtons = document.querySelectorAll('[data-panel-target]');
       const panels = document.querySelectorAll('.panel[data-panel]');
       const toolbar = document.querySelector('.toolbar-panel');
@@ -287,15 +294,145 @@
         }
       };
 
+      const formatFollowersValue = (value) => {
+        if (value === undefined || value === null || value === '') {
+          return '—';
+        }
+        if (typeof value === 'object') {
+          if ('total' in value) {
+            return formatFollowersValue(value.total);
+          }
+          return '—';
+        }
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) {
+          return numeric.toLocaleString();
+        }
+        return value;
+      };
+
+      const formatRelativeTime = (value) => {
+        if (!value) {
+          return '—';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return '—';
+        }
+        const deltaSeconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+        if (deltaSeconds < 60) {
+          return 'just now';
+        }
+        const minutes = Math.floor(deltaSeconds / 60);
+        if (minutes < 60) {
+          return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+        }
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) {
+          return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+        }
+        const days = Math.floor(hours / 24);
+        return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+      };
+
+      const captureDomSnapshot = () => ({
+        owner: ownerValue?.textContent?.trim() || '',
+        followers: followersValue?.textContent?.trim() || '',
+        tracks: tracksValue?.textContent?.trim() || '',
+        scanned: scannedValue?.textContent?.trim() || '',
+        updated: updatedValue?.textContent?.trim() || '',
+      });
+
+      const buildDataSnapshot = (data) => ({
+        owner: data?.owner_name || '—',
+        followers: formatFollowersValue(data?.followers_total),
+        tracks: formatFollowersValue(data?.tracks_count),
+        scanned: formatRelativeTime(data?.stats_updated_at),
+        updated: formatRelativeTime(data?.playlist_last_updated_at),
+      });
+
+      const snapshotsDiffer = (next, baseline) =>
+        Object.keys(baseline || {}).some((key) => (next?.[key] || '') !== (baseline?.[key] || ''));
+
+      const applyPlaylistData = (data) => {
+        if (!data) {
+          return;
+        }
+        if (ownerValue) {
+          ownerValue.textContent = data.owner_name || '—';
+        }
+        if (followersValue) {
+          followersValue.textContent = formatFollowersValue(data.followers_total);
+        }
+        if (tracksValue) {
+          tracksValue.textContent = formatFollowersValue(data.tracks_count);
+        }
+        if (scannedValue) {
+          scannedValue.textContent = formatRelativeTime(data.stats_updated_at);
+        }
+        if (updatedValue) {
+          updatedValue.textContent = formatRelativeTime(data.playlist_last_updated_at);
+        }
+      };
+
+      const fetchPlaylistDetail = async () => {
+        if (!playlistId) {
+          return null;
+        }
+        const response = await fetch('/api/playlists');
+        if (!response.ok) {
+          return null;
+        }
+        const payload = await parseJsonSafely(response);
+        if (!Array.isArray(payload)) {
+          return null;
+        }
+        return payload.find((item) => String(item.id) === String(playlistId)) || null;
+      };
+
+      const pollForPlaylistUpdate = async (baselineSnapshot, baselineRefreshAt) => {
+        const POLL_INTERVAL_MS = 2000;
+        const MAX_ATTEMPTS = 30;
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+          try {
+            const data = await fetchPlaylistDetail();
+            if (data) {
+              const currentSnapshot = buildDataSnapshot(data);
+              const refreshAt = data.last_meta_refresh_at || null;
+              if (
+                snapshotsDiffer(currentSnapshot, baselineSnapshot) ||
+                (baselineRefreshAt && refreshAt && refreshAt !== baselineRefreshAt)
+              ) {
+                applyPlaylistData(data);
+                return { updated: true, data };
+              }
+            }
+          } catch (error) {
+            if (typeof console !== 'undefined' && console.error) {
+              console.error('[ui] refresh stats polling failed', error);
+            }
+          }
+          await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        }
+        return { updated: false, data: null };
+      };
+
       refreshButton?.addEventListener('click', async () => {
-        if (!refreshButton) {
+        if (!refreshButton || !playlistDetailRoot || !playlistId) {
           return;
         }
         refreshButton.disabled = true;
         setStatus('Fetching data from Spotify… please wait', 'status-loading');
-        let didReload = false;
+        let didUpdate = false;
+        let baselineSnapshot = captureDomSnapshot();
+        let baselineRefreshAt = null;
 
         try {
+          const preRefreshData = await fetchPlaylistDetail();
+          if (preRefreshData) {
+            baselineSnapshot = buildDataSnapshot(preRefreshData);
+            baselineRefreshAt = preRefreshData.last_meta_refresh_at || null;
+          }
           const response = await fetch(`/api/playlists/{{ playlist.id }}/refresh-stats`, {
             method: 'POST',
           });
@@ -318,17 +455,25 @@
           if (refreshedAt) {
             const timeLabel = refreshedAt.toLocaleString();
             setStatus(`✅ Playlist metadata refreshed at ${timeLabel}`, 'status-success');
-            didReload = true;
-            window.location.reload();
-            return;
+          } else {
+            const queuedLabel = queuedAt ? queuedAt.toLocaleString() : 'just now';
+            const statusLabel =
+              data && typeof data === 'object' && data.status === 'already_running'
+                ? 'Already running'
+                : 'Queued';
+            setStatus(`⏳ ${statusLabel}: refresh scheduled at ${queuedLabel}.`, 'status-success');
           }
 
-          const queuedLabel = queuedAt ? queuedAt.toLocaleString() : 'just now';
-          const statusLabel =
-            data && typeof data === 'object' && data.status === 'already_running'
-              ? 'Already running'
-              : 'Queued';
-          setStatus(`⏳ ${statusLabel}: refresh scheduled at ${queuedLabel}.`, 'status-success');
+          const pollResult = await pollForPlaylistUpdate(baselineSnapshot, baselineRefreshAt);
+          if (pollResult.updated) {
+            didUpdate = true;
+            setStatus('✅ Playlist stats updated.', 'status-success');
+          } else {
+            setStatus(
+              'Refresh completed, but UI update timed out. Please reload.',
+              'status-error'
+            );
+          }
         } catch (error) {
           if (typeof console !== 'undefined' && console.error) {
             console.error('[ui] refresh stats failed', error);
@@ -340,7 +485,7 @@
           setStatus(message, 'status-error');
         } finally {
           refreshButton.disabled = false;
-          if (!didReload && statusArea?.classList.contains('status-loading')) {
+          if (!didUpdate && statusArea?.classList.contains('status-loading')) {
             setStatus('Unable to refresh playlist metadata.', 'status-error');
           }
         }
@@ -409,22 +554,6 @@
       };
 
       const formatFollowersValue = (value) => {
-        if (value === undefined || value === null || value === '') {
-          return '—';
-        }
-        if (typeof value === 'object') {
-          if ('total' in value) {
-            return formatFollowersValue(value.total);
-          }
-          return '—';
-        }
-        const numeric = Number(value);
-        if (Number.isFinite(numeric)) {
-          return numeric.toLocaleString();
-        }
-        return value;
-      };
-
       const flagEmoji = (code) => {
         const upper = (code || '').toUpperCase();
         if (upper.length !== 2) {
