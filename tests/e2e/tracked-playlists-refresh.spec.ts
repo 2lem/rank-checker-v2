@@ -51,6 +51,7 @@ test('Tracked playlist refresh completes', async ({ page }) => {
   ]);
 
   await expect(status).not.toHaveClass(/status-loading/);
+  await expect(status).not.toContainText('Fetching data');
   await page.waitForFunction(
     ({ followers, scanned, updated }) => {
       const followersEl = document.querySelector('[data-playlist-followers]');
