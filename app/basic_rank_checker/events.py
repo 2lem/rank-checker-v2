@@ -87,12 +87,14 @@ class ScanEventManager:
                 if payload.get("type") == "done":
                     payload["type"] = "completed"
                     payload.setdefault("status", "completed")
+                elif payload.get("type") == "completed_partial":
+                    payload.setdefault("status", "completed_partial")
                 elif payload.get("type") == "error":
                     payload.setdefault("status", "error")
 
                 yield f"data: {json.dumps(payload)}\n\n"
                 last_heartbeat_at = time.monotonic()
-                if payload.get("type") in {"completed", "partial", "error"}:
+                if payload.get("type") in {"completed", "completed_partial", "partial", "error"}:
                     break
 
         return _generator()
