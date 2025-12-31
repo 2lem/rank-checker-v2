@@ -23,12 +23,12 @@ class ScanEventManager:
 
     @staticmethod
     def _resolve_heartbeat_interval() -> int:
-        raw_value = os.getenv("SCAN_SSE_HEARTBEAT_SECONDS", "5")
+        raw_value = os.getenv("SCAN_SSE_HEARTBEAT_SECONDS", "3")
         try:
             parsed = int(raw_value)
         except (TypeError, ValueError):
-            parsed = 5
-        return min(max(parsed, 5), 10)
+            parsed = 3
+        return min(max(parsed, 3), 5)
 
     @staticmethod
     def _resolve_timeout() -> int:
