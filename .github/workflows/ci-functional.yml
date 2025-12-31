@@ -1,0 +1,181 @@
+name: CI Functional Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  smoke_and_e2e:
+    runs-on: ubuntu-latest
+    outputs:
+      smoke_status: ${{ steps.smoke.outcome }}
+      e2e_status: ${{ steps.e2e_summary.outputs.e2e_status }}
+      e2e_summary: ${{ steps.e2e_summary.outputs.e2e_summary }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run smoke tests
+        id: smoke
+        continue-on-error: true
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+        run: node scripts/smoke.mjs
+
+      - name: Run Playwright tests
+        id: e2e
+        continue-on-error: true
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+          TEST_TRACKED_PLAYLIST_ID: ${{ secrets.TEST_TRACKED_PLAYLIST_ID }}
+          TEST_PLAYLIST_URL_OR_ID: ${{ secrets.TEST_PLAYLIST_URL_OR_ID }}
+          BASIC_SCAN_PATH: ${{ secrets.BASIC_SCAN_PATH }}
+          ADD_PLAYLIST_PATH: ${{ secrets.ADD_PLAYLIST_PATH }}
+        run: npm run test:e2e
+
+      - name: Summarize Playwright results
+        id: e2e_summary
+        if: always()
+        run: node scripts/summarize-playwright.mjs
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+
+      - name: Fail if tests failed
+        if: ${{ steps.smoke.outcome != 'success' || steps.e2e.outcome != 'success' }}
+        run: exit 1
+
+  pr_comment:
+    if: github.event_name == 'pull_request'
+    needs: smoke_and_e2e
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gather changed files
+        id: changed_files
+        run: |
+          git fetch origin main
+          files=$(git diff --name-only origin/main...HEAD)
+          if [ -z "$files" ]; then
+            files="(no changes detected)"
+          fi
+          {
+            echo "files<<EOF"
+            echo "$files"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        env:
+          CHANGED_FILES: ${{ steps.changed_files.outputs.files }}
+          SMOKE_STATUS: ${{ needs.smoke_and_e2e.outputs.smoke_status }}
+          E2E_STATUS: ${{ needs.smoke_and_e2e.outputs.e2e_status }}
+          E2E_SUMMARY: ${{ needs.smoke_and_e2e.outputs.e2e_summary }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
+          script: |
+            const filesRaw = process.env.CHANGED_FILES || '(no changes detected)';
+            const files = filesRaw
+              .split('\n')
+              .filter(Boolean)
+              .map((file) => `- ${file}`)
+              .join('\n');
+
+            const smokeStatus = process.env.SMOKE_STATUS === 'success' ? '✅ Passed' : '❌ Failed';
+            const e2eStatus = process.env.E2E_STATUS === 'success' ? '✅ Passed' : '❌ Failed';
+            const e2eSummary = process.env.E2E_SUMMARY || '- ⚠️ Playwright results not found';
+
+            const body = `## Automated Functional Test Report
+
+**Changed files**
+${files}
+
+**Smoke tests**: ${smokeStatus}
+
+**E2E flows** (${e2eStatus})
+${e2eSummary}
+
+**Deploy note**
+Deploy hook not used; Railway deploy happens after merge to main.
+
+**Artifacts**
+- Playwright report: ${process.env.RUN_URL} (download artifact \"playwright-report\")`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+  auto_merge:
+    if: github.event_name == 'pull_request'
+    needs: smoke_and_e2e
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Ensure GitHub CLI
+        run: |
+          if ! command -v gh > /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y gh
+          fi
+
+      - name: Attempt auto-merge
+        id: merge
+        env:
+          GH_TOKEN: ${{ secrets.BOT_GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set +e
+          gh pr merge "$PR_URL" --merge --auto
+          status=$?
+          echo "merge_status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Comment when auto-merge fails
+        if: steps.merge.outputs.merge_status != '0'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.BOT_GITHUB_TOKEN }}
+          script: |
+            const body = `## Auto-merge skipped
+
+Unable to enable auto-merge for this PR. This may be due to branch protections or repository settings. Please merge manually once checks are green.`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
