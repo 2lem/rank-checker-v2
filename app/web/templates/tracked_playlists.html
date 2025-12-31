@@ -58,7 +58,6 @@
                     name="manual_playlist_url"
                     type="url"
                     placeholder="https://open.spotify.com/playlist/..."
-                    required
                     data-manual-scan-playlist
                   />
                 </label>
@@ -124,6 +123,9 @@
                 <div class="summary" id="manual-scan-summary">
                   <h3>Summary</h3>
                   <div class="summary-lead" data-manual-scan-summary-lead></div>
+                  <div class="summary-note" data-manual-scan-summary-note hidden>
+                    No playlist was provided for this scan.
+                  </div>
                   <div class="summary-list" data-manual-scan-summary-list></div>
                 </div>
                 <div class="detailed-scan-insights" id="manual-scan-detailed">
@@ -348,6 +350,30 @@
         window.scrollTo({ top: Math.max(target, 0), behavior: 'smooth' });
       };
 
+      const parseBulkKeywords = (raw) =>
+        raw
+          .split(/[\n,]+/g)
+          .map((value) => value.trim())
+          .filter(Boolean);
+
+      const addKeywordsFromInput = (raw, manager) => {
+        const value = raw || '';
+        if (!value.trim()) {
+          return false;
+        }
+        if (!/[\n,]/.test(value)) {
+          return manager.addValue(value);
+        }
+        const keywords = parseBulkKeywords(value);
+        let addedAny = false;
+        keywords.forEach((keyword) => {
+          if (manager.addValue(keyword)) {
+            addedAny = true;
+          }
+        });
+        return addedAny;
+      };
+
       const createChip = ({ label, removable, locked, onRemove }) => {
         const chip = document.createElement('span');
         chip.className = `chip ${locked ? 'chip-locked' : ''}`;
@@ -493,7 +519,7 @@
         });
 
         keywordAdd?.addEventListener('click', () => {
-          if (keywordManager.addValue(keywordInput.value)) {
+          if (addKeywordsFromInput(keywordInput.value, keywordManager)) {
             keywordInput.value = '';
           }
         });
@@ -726,7 +752,7 @@
           });
 
           editKeywordAdd?.addEventListener('click', () => {
-            if (editKeywordManager.addValue(editKeywordInput.value)) {
+            if (addKeywordsFromInput(editKeywordInput.value, editKeywordManager)) {
               editKeywordInput.value = '';
             }
           });
@@ -823,6 +849,7 @@
         const progressLog = scanRoot.querySelector('[data-manual-scan-progress-log]');
         const resultsWrap = scanRoot.querySelector('[data-manual-scan-results]');
         const summaryLead = scanRoot.querySelector('[data-manual-scan-summary-lead]');
+        const summaryNote = scanRoot.querySelector('[data-manual-scan-summary-note]');
         const summaryList = scanRoot.querySelector('[data-manual-scan-summary-list]');
         const detailedWrap = scanRoot.querySelector('[data-manual-scan-detailed]');
         const csvControls = scanRoot.querySelector('[data-manual-scan-csv-controls]');
@@ -882,7 +909,7 @@
         });
 
         keywordAdd?.addEventListener('click', () => {
-          if (keywordManager.addValue(keywordInput.value)) {
+          if (addKeywordsFromInput(keywordInput.value, keywordManager)) {
             keywordInput.value = '';
           }
         });
@@ -983,6 +1010,13 @@
           }
           if (summaryLead) {
             summaryLead.textContent = '';
+            summaryLead.hidden = false;
+          }
+          if (summaryNote) {
+            summaryNote.hidden = true;
+          }
+          if (summaryList) {
+            summaryList.hidden = false;
           }
         };
 
@@ -1015,6 +1049,21 @@
           if (!summaryLead || !summaryList) {
             return;
           }
+          const hasPlaylist = Boolean(
+            scan.manual_playlist?.playlist_url || scan.manual_playlist?.playlist_name
+          );
+          if (summaryNote) {
+            summaryNote.hidden = hasPlaylist;
+          }
+          if (!hasPlaylist) {
+            summaryLead.textContent = '';
+            summaryLead.hidden = true;
+            summaryList.innerHTML = '';
+            summaryList.hidden = true;
+            return;
+          }
+          summaryLead.hidden = false;
+          summaryList.hidden = false;
           const follower = scan.follower_snapshot ?? '—';
           const manualName = scan.manual_playlist?.playlist_name || scan.tracked_playlist_name;
           const playlistLabel = manualName ? `“${manualName}”` : 'the playlist';
@@ -1348,11 +1397,6 @@
             return;
           }
           const playlistUrl = (playlistInput.value || '').trim();
-          if (!playlistUrl) {
-            setStatus('Playlist URL is required.', 'status-error');
-            setStage(1, scanParameters || scanRoot);
-            return;
-          }
 
           runButton.disabled = true;
           resetProgress();
@@ -1365,7 +1409,7 @@
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                playlist_url: playlistUrl,
+                playlist_url: playlistUrl || null,
                 target_keywords: keywordManager.getValues(),
                 target_countries: countryManager.getValues(),
               }),
