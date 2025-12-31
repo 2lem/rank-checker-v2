@@ -15,8 +15,10 @@ from app.core.spotify import (
     extract_playlist_id,
     fetch_spotify_playlist_metadata,
     get_access_token,
+    log_scan_spotify_usage,
     normalize_spotify_playlist_url,
     search_playlists,
+    start_scan_spotify_usage,
 )
 from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
 
@@ -68,11 +70,18 @@ def run_manual_scan(scan_id: str) -> None:
         return
 
     db = SessionLocal()
+    scan_kind = "manual"
+    tracked_playlist_id: str | None = None
+    countries_count = 0
+    keywords_count = 0
+    ended_status = "error"
+    start_scan_spotify_usage(scan_id)
     try:
         log_scan_lifecycle("task_started", scan_id)
         scan = db.get(BasicScan, scan_id)
         if scan is None:
             return
+        tracked_playlist_id = scan.tracked_playlist_id
 
         playlist_url = (scan.manual_playlist_url or "").strip()
         playlist_id = None
@@ -92,12 +101,14 @@ def run_manual_scan(scan_id: str) -> None:
         scan_id_value = scan.id
         countries = list(scan.scanned_countries or [])
         keywords = list(scan.scanned_keywords or [])
+        countries_count = len(countries)
+        keywords_count = len(keywords)
         total_steps = max(len(countries) * len(keywords), 1)
 
         # Release the initial SELECT transaction before long-running Spotify requests.
         db.rollback()
 
-        token = get_access_token()
+        token = get_access_token(scan_id=scan_id)
         manual_meta: dict = {}
         follower_snapshot = None
         if playlist_id:
@@ -278,6 +289,9 @@ def run_manual_scan(scan_id: str) -> None:
         db.add(scan)
         db.commit()
         log_scan_lifecycle("completed", scan_id, results_count=total_results_count)
+        ended_status = (
+            "completed_partial" if skipped_iterations and total_results_count else "completed"
+        )
         if skipped_iterations and total_results_count:
             logger.info(
                 "scan_completed_partial",
@@ -308,6 +322,7 @@ def run_manual_scan(scan_id: str) -> None:
     except Exception as exc:
         log_scan_failure(scan_id, exc)
         logger.exception("Manual scan failed")
+        ended_status = "error"
         try:
             scan = db.get(BasicScan, scan_id)
             if scan:
@@ -320,6 +335,14 @@ def run_manual_scan(scan_id: str) -> None:
             db.rollback()
         scan_event_manager.publish(scan_id, {"type": "error", "message": str(exc)})
     finally:
+        log_scan_spotify_usage(
+            scan_id=scan_id,
+            scan_kind=scan_kind,
+            tracked_playlist_id=tracked_playlist_id,
+            countries_count=countries_count,
+            keywords_count=keywords_count,
+            ended_status=ended_status,
+        )
         db.close()
 
 
