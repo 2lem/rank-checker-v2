@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Iterable
-from typing import Optional
 
 from pydantic import BaseModel, Field, validator
 
@@ -22,14 +21,16 @@ def _normalize_list(values: Iterable[str] | None, *, upper: bool = False) -> lis
 
 
 class ManualScanCreate(BaseModel):
-    playlist_url: Optional[str] = None
+    playlist_url: str
     target_keywords: list[str] = Field(default_factory=list)
     target_countries: list[str] = Field(default_factory=list)
 
     @validator("playlist_url")
-    def _strip_playlist_url(cls, value: Optional[str]) -> Optional[str]:
+    def _strip_playlist_url(cls, value: str) -> str:
         cleaned = (value or "").strip()
-        return cleaned or None
+        if not cleaned:
+            raise ValueError("playlist_url is required")
+        return cleaned
 
     @validator("target_keywords", pre=True)
     def _normalize_keywords(cls, value: Iterable[str] | None) -> list[str]:
