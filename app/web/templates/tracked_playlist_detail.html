@@ -296,7 +296,7 @@
         let didReload = false;
 
         try {
-          const response = await fetch(`/api/playlists/{{ playlist.id }}/refresh`, {
+          const response = await fetch(`/api/playlists/refresh/{{ playlist.id }}`, {
             method: 'POST',
           });
           if (!response.ok) {

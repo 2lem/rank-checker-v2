@@ -191,7 +191,7 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
 
 
 @router.post(
-    "/{tracked_playlist_id}/refresh",
+    "/refresh/{tracked_playlist_id}",
     response_model=RefreshPlaylistResponse,
 )
 def refresh_playlist_stats(
