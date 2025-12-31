@@ -977,7 +977,11 @@
         let reconnectAttempts = 0;
         let pollActiveScanId = null;
         let pollInFlight = false;
+        let watchdogTimer = null;
+        let lastMessageAt = null;
         let resilientEnabled = window.__SSE_RESILIENCE_ENABLED__ !== false;
+        const WATCHDOG_MS = 40000;
+        const WATCHDOG_CHECK_MS = 5000;
 
         const defaultOption = document.createElement('option');
         defaultOption.value = '';
@@ -1441,12 +1445,70 @@
           reconnectAttempts = 0;
         };
 
+        const clearWatchdog = () => {
+          if (watchdogTimer) {
+            clearInterval(watchdogTimer);
+            watchdogTimer = null;
+          }
+          lastMessageAt = null;
+        };
+
+        const startWatchdog = () => {
+          clearWatchdog();
+          lastMessageAt = Date.now();
+          watchdogTimer = setInterval(() => {
+            if (!lastMessageAt) {
+              return;
+            }
+            if (Date.now() - lastMessageAt > WATCHDOG_MS) {
+              safeStop('timeout');
+            }
+          }, WATCHDOG_CHECK_MS);
+        };
+
+        const updateLastMessageAt = () => {
+          lastMessageAt = Date.now();
+        };
+
         const stopEventSource = () => {
           if (eventSource) {
             eventSource.close();
             eventSource = null;
           }
           clearResilientTimers();
+        };
+
+        const safeStop = (reason, options = {}) => {
+          const statusMessages = {
+            completed: '✅ Manual scan completed.',
+            timeout: 'Manual scan timed out. Please try again.',
+            'connection error': 'Manual scan connection lost. Please try again.',
+            'handler error': 'Manual scan failed. Please try again.',
+            'scan failed': 'Manual scan failed. Please try again.',
+          };
+          const statusMessage = statusMessages[reason] || 'Manual scan stopped.';
+          const variant = reason === 'completed' ? 'status-success' : 'status-error';
+
+          if (reason === 'completed') {
+            setProgress(options.total || 1, options.total || 1, 'Scan completed.');
+            if (!options.keepStage) {
+              setStage(3, summarySection);
+            }
+          } else {
+            setProgress(0, 1, statusMessage);
+            setStage(1, scanParameters || scanRoot);
+          }
+
+          stopEventSource();
+          stopPolling();
+          clearWatchdog();
+          isCompleted = reason === 'completed';
+
+          if (runButton) {
+            runButton.disabled = false;
+          }
+          setStatus(statusMessage, variant);
+          return false;
         };
 
         const startResilientSSE = ({ url, onMessage, onError, onOpen, onStatus, onMaxRetries }) => {
@@ -1490,7 +1552,12 @@
             eventSource.onerror = (error) => {
               lastEventAt = Date.now();
               debugLog('EventSource error', error);
-              onError?.(error);
+              const shouldReconnect = onError?.(error);
+              if (shouldReconnect === false) {
+                closed = true;
+                stopEventSource();
+                return;
+              }
               reconnect();
             };
             scheduleInactivityCheck();
@@ -1537,6 +1604,7 @@
           uiDebug('manual-scan:start', { playlistUrl });
           stopPolling();
           stopEventSource();
+          clearWatchdog();
 
           let startedScan = false;
 
@@ -1564,7 +1632,31 @@
             startCompletionPoll(activeScanId);
             const handleMessage = async (event) => {
               try {
-                const payload = JSON.parse(event.data);
+                updateLastMessageAt();
+                const rawText = event?.data ?? '';
+                let payload = null;
+                try {
+                  payload = JSON.parse(rawText);
+                } catch (error) {
+                  payload = null;
+                }
+                const statusValue = `${payload?.status ?? payload?.type ?? ''}`.toLowerCase();
+                const completionText = rawText.toLowerCase();
+                const completionSignals = ['completed', 'done', 'finished'];
+                if (
+                  completionSignals.includes(statusValue) ||
+                  completionSignals.some((signal) => completionText.includes(signal))
+                ) {
+                  stopPolling();
+                  await loadResults(activeScanId);
+                  setStage(3, summarySection);
+                  safeStop('completed', {
+                    total: payload?.total,
+                    keepStage: true,
+                  });
+                  uiDebug('manual-scan:completed', activeScanId);
+                  return;
+                }
                 if (payload.type === 'progress') {
                   const signature = `${payload.step}|${payload.total}|${payload.message}`;
                   if (signature === lastProgressSignature) {
@@ -1576,35 +1668,26 @@
                 }
                 if (payload.type === 'done') {
                   // Guard against reconnect/status updates after a terminal completion.
-                  isCompleted = true;
-                  stopEventSource();
                   stopPolling();
-                  setProgress(payload.total || 1, payload.total || 1, 'Scan completed.');
                   await loadResults(activeScanId);
                   setStage(3, summarySection);
-                  runButton.disabled = false;
+                  safeStop('completed', {
+                    total: payload?.total,
+                    keepStage: true,
+                  });
                   uiDebug('manual-scan:completed', activeScanId);
                 }
                 if (payload.type === 'error') {
-                  isCompleted = true;
-                  stopEventSource();
                   stopPolling();
                   appendLog(payload.message || 'Scan failed.');
-                  setProgress(0, 1, payload.message || 'Scan failed.');
-                  setStage(1);
-                  runButton.disabled = false;
+                  safeStop('scan failed');
                   uiDebug('manual-scan:error', payload.message || 'Scan failed.');
                 }
               } catch (error) {
                 if (typeof console !== 'undefined' && console.error) {
                   console.error('[ui] manual scan event failed', error);
                 }
-                stopEventSource();
-                stopPolling();
-                setStage(1);
-                if (runButton) {
-                  runButton.disabled = false;
-                }
+                safeStop('handler error');
               }
             };
 
@@ -1612,27 +1695,30 @@
               startResilientSSE({
                 url: eventsUrl,
                 onMessage: handleMessage,
+                onOpen: () => startWatchdog(),
                 onStatus: (status) => {
                   if (!isCompleted) {
                     setProgressStatus(status);
                   }
                 },
+                onError: (error) => {
+                  if (typeof console !== 'undefined' && console.error) {
+                    console.error('[ui] manual scan connection error', error);
+                  }
+                  return safeStop('connection error');
+                },
                 onMaxRetries: () => startCompletionPoll(activeScanId),
               });
             } else {
               eventSource = new EventSource(eventsUrl);
+              startWatchdog();
               eventSource.onmessage = handleMessage;
               eventSource.onerror = (error) => {
                 if (!isCompleted) {
                   if (typeof console !== 'undefined' && console.error) {
                     console.error('[ui] manual scan connection error', error);
                   }
-                  stopEventSource();
-                  stopPolling();
-                  setStage(1);
-                  if (runButton) {
-                    runButton.disabled = false;
-                  }
+                  safeStop('connection error');
                 }
               };
             }
@@ -1655,6 +1741,7 @@
             if (!startedScan) {
               stopEventSource();
               stopPolling();
+              clearWatchdog();
             }
           }
         };
@@ -1678,6 +1765,7 @@
           resetProgress();
           stopEventSource();
           stopPolling();
+          clearWatchdog();
           isCompleted = false;
           activeScanId = null;
           if (runButton) {
