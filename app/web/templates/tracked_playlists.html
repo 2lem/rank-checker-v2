@@ -228,46 +228,46 @@
         if (!pageRoot) {
           return;
         }
-      window.__UI_DEBUG__ = true;
-      const UI_DEBUG = window.__UI_DEBUG__ === true;
-      const uiDebug = (...args) => {
-        if (UI_DEBUG && typeof console !== 'undefined' && console.debug) {
-          console.debug('[ui]', ...args);
-        }
-      };
+        window.__UI_DEBUG__ = true;
+        const UI_DEBUG = window.__UI_DEBUG__ === true;
+        const uiDebug = (...args) => {
+          if (UI_DEBUG && typeof console !== 'undefined' && console.debug) {
+            console.debug('[ui]', ...args);
+          }
+        };
 
-      const form = document.getElementById('add-playlist-form');
-      const statusArea = document.getElementById('playlist-status');
-      const addPanel = document.querySelector('[data-collapsible="add-playlist"]');
-      const addButton = document.querySelector('[data-panel-target="add-playlist"]');
-      const addCancelButton = document.querySelector('[data-panel-target="add-playlist-cancel"]');
-      const manualScanToggle = document.getElementById('manual-scan-toggle');
-      const manualScanSection = document.getElementById('manual-scan-section');
-      const playlistControls = document.getElementById('playlist-controls');
-      const manualScanCloseButton = manualScanSection?.querySelector('[data-manual-scan-close]');
+        const form = document.getElementById('add-playlist-form');
+        const statusArea = document.getElementById('playlist-status');
+        const addPanel = document.querySelector('[data-collapsible="add-playlist"]');
+        const addButton = document.querySelector('[data-panel-target="add-playlist"]');
+        const addCancelButton = document.querySelector('[data-panel-target="add-playlist-cancel"]');
+        const manualScanToggle = document.getElementById('manual-scan-toggle');
+        const manualScanSection = document.getElementById('manual-scan-section');
+        const playlistControls = document.getElementById('playlist-controls');
+        const manualScanCloseButton = manualScanSection?.querySelector('[data-manual-scan-close]');
 
-      const availableMarkets = {{ available_markets | tojson }};
-      const marketLabelMap = new Map(
-        availableMarkets.map((market) => [market.code.toUpperCase(), market.label])
-      );
+        const availableMarkets = {{ available_markets | tojson }};
+        const marketLabelMap = new Map(
+          availableMarkets.map((market) => [market.code.toUpperCase(), market.label])
+        );
 
-      const resolveMarketLabel = (code) => marketLabelMap.get((code || '').toUpperCase()) || code;
-      const formatTimestamp = (value) => {
-        if (!value) {
-          return '—';
-        }
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) {
-          return value;
-        }
-        return new Intl.DateTimeFormat('sv-SE', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-        }).format(date);
-      };
+        const resolveMarketLabel = (code) => marketLabelMap.get((code || '').toUpperCase()) || code;
+        const formatTimestamp = (value) => {
+          if (!value) {
+            return '—';
+          }
+          const date = new Date(value);
+          if (Number.isNaN(date.getTime())) {
+            return value;
+          }
+          return new Intl.DateTimeFormat('sv-SE', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          }).format(date);
+        };
 
       const formatSummaryDateParts = (value) => {
         if (!value) {
@@ -929,42 +929,69 @@
       window.__SSE_RESILIENCE_ENABLED__ = window.__SSE_RESILIENCE_ENABLED__ ?? true;
       const DEBUG_SSE_RESILIENCE = window.__DEBUG_SSE_RESILIENCE__ === true;
 
-      const setupManualScanSection = () => {
-        if (!manualScanToggle || !manualScanSection) {
-          return;
-        }
-        const scanRoot = manualScanSection.querySelector('[data-manual-scan]');
-        if (!scanRoot) {
-          return;
-        }
+        const setupManualScanSection = () => {
+          if (!manualScanToggle || !manualScanSection) {
+            return;
+          }
+          const scanRoot = manualScanSection.querySelector('[data-manual-scan]');
+          if (!scanRoot) {
+            return;
+          }
 
-        const playlistInput = scanRoot.querySelector('[data-manual-scan-playlist]');
-        const countrySelect = scanRoot.querySelector('[data-manual-scan-country-select]');
-        const countryAdd = scanRoot.querySelector('[data-manual-scan-country-add]');
-        const countryPills = scanRoot.querySelector('[data-manual-scan-country-pills]');
-        const countryInfo = scanRoot.querySelector('[data-manual-scan-country-info]');
-        const keywordInput = scanRoot.querySelector('[data-manual-scan-keyword-input]');
-        const keywordAdd = scanRoot.querySelector('[data-manual-scan-keyword-add]');
-        const keywordPills = scanRoot.querySelector('[data-manual-scan-keyword-pills]');
-        const keywordInfo = scanRoot.querySelector('[data-manual-scan-keyword-info]');
+          const playlistInput = scanRoot.querySelector('[data-manual-scan-playlist]');
+          const countrySelect = scanRoot.querySelector('[data-manual-scan-country-select]');
+          const countryAdd = scanRoot.querySelector('[data-manual-scan-country-add]');
+          const countryPills = scanRoot.querySelector('[data-manual-scan-country-pills]');
+          const countryInfo = scanRoot.querySelector('[data-manual-scan-country-info]');
+          const keywordInput = scanRoot.querySelector('[data-manual-scan-keyword-input]');
+          const keywordAdd = scanRoot.querySelector('[data-manual-scan-keyword-add]');
+          const keywordPills = scanRoot.querySelector('[data-manual-scan-keyword-pills]');
+          const keywordInfo = scanRoot.querySelector('[data-manual-scan-keyword-info]');
 
-        const scanParameters = scanRoot.querySelector('[data-manual-scan-parameters]');
-        const runControls = scanRoot.querySelector('[data-manual-scan-run-controls]');
-        const runButton = scanRoot.querySelector('[data-manual-scan-run]');
-        const progressWrap = scanRoot.querySelector('[data-manual-scan-progress]');
-        const progressFill = scanRoot.querySelector('[data-manual-scan-progress-fill]');
-        const progressStatus = scanRoot.querySelector('[data-manual-scan-progress-status]');
-        const progressLog = scanRoot.querySelector('[data-manual-scan-progress-log]');
-        const resultsWrap = scanRoot.querySelector('[data-manual-scan-results]');
-        const summaryLead = scanRoot.querySelector('[data-manual-scan-summary-lead]');
-        const summaryNote = scanRoot.querySelector('[data-manual-scan-summary-note]');
-        const summaryList = scanRoot.querySelector('[data-manual-scan-summary-list]');
-        const detailedWrap = scanRoot.querySelector('[data-manual-scan-detailed]');
-        const csvControls = scanRoot.querySelector('[data-manual-scan-csv-controls]');
-        const summarySection = document.getElementById('manual-scan-summary');
-        const exportSummary = scanRoot.querySelector('[data-manual-scan-export-summary]');
-        const exportDetailed = scanRoot.querySelector('[data-manual-scan-export-detailed]');
-        const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          const scanParameters = scanRoot.querySelector('[data-manual-scan-parameters]');
+          const runControls = scanRoot.querySelector('[data-manual-scan-run-controls]');
+          const runButton = scanRoot.querySelector('[data-manual-scan-run]');
+          const progressWrap = scanRoot.querySelector('[data-manual-scan-progress]');
+          const progressFill = scanRoot.querySelector('[data-manual-scan-progress-fill]');
+          const progressStatus = scanRoot.querySelector('[data-manual-scan-progress-status]');
+          const progressLog = scanRoot.querySelector('[data-manual-scan-progress-log]');
+          const resultsWrap = scanRoot.querySelector('[data-manual-scan-results]');
+          const summaryLead = scanRoot.querySelector('[data-manual-scan-summary-lead]');
+          const summaryNote = scanRoot.querySelector('[data-manual-scan-summary-note]');
+          const summaryList = scanRoot.querySelector('[data-manual-scan-summary-list]');
+          const detailedWrap = scanRoot.querySelector('[data-manual-scan-detailed]');
+          const csvControls = scanRoot.querySelector('[data-manual-scan-csv-controls]');
+          const summarySection = document.getElementById('manual-scan-summary');
+          const exportSummary = scanRoot.querySelector('[data-manual-scan-export-summary]');
+          const exportDetailed = scanRoot.querySelector('[data-manual-scan-export-detailed]');
+          const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+          if (
+            !playlistInput ||
+            !countrySelect ||
+            !countryPills ||
+            !countryInfo ||
+            !keywordInput ||
+            !keywordPills ||
+            !keywordInfo ||
+            !scanParameters ||
+            !runControls ||
+            !runButton ||
+            !progressWrap ||
+            !progressFill ||
+            !progressStatus ||
+            !progressLog ||
+            !resultsWrap ||
+            !summaryLead ||
+            !summaryList ||
+            !detailedWrap ||
+            !csvControls ||
+            !summarySection ||
+            !exportSummary ||
+            !exportDetailed
+          ) {
+            return;
+          }
 
         let currentStage = 1;
         let activeScanId = null;
@@ -980,6 +1007,7 @@
         let watchdogTimer = null;
         let lastMessageAt = null;
         let resilientEnabled = window.__SSE_RESILIENCE_ENABLED__ !== false;
+        let hasStopped = false;
         const WATCHDOG_MS = 45000;
         const WATCHDOG_CHECK_MS = 5000;
 
@@ -1479,6 +1507,10 @@
         };
 
         const safeStop = (reason, options = {}) => {
+          if (hasStopped) {
+            return false;
+          }
+          hasStopped = true;
           const statusMessages = {
             completed: '✅ Manual scan completed.',
             timeout: 'Manual scan timed out. Please try again.',
@@ -1506,6 +1538,9 @@
 
           if (runButton) {
             runButton.disabled = false;
+          }
+          if (progressLog) {
+            progressLog.innerHTML = '';
           }
           setStatus(statusMessage, variant);
           return false;
@@ -1598,6 +1633,7 @@
           const playlistUrl = (playlistInput.value || '').trim();
 
           isCompleted = false;
+          hasStopped = false;
           runButton.disabled = true;
           resetProgress();
           setProgress(0, 0, 'Starting scan…');

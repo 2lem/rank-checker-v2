@@ -448,6 +448,7 @@
         let currentStage = 1;
         let watchdogTimer = null;
         let lastMessageAt = null;
+        let hasStopped = false;
         const WATCHDOG_MS = 45000;
         const WATCHDOG_CHECK_MS = 5000;
 
@@ -546,11 +547,18 @@
         };
 
         const safeStop = async (reason, options = {}) => {
+          if (hasStopped) {
+            return;
+          }
+          hasStopped = true;
           if (eventSource) {
             eventSource.close();
             eventSource = null;
           }
           clearWatchdog();
+          if (progressLog) {
+            progressLog.innerHTML = '';
+          }
 
           const statusMessages = {
             completed: '✅ Basic Scan completed.',
@@ -793,6 +801,7 @@
           if (!runButton) {
             return;
           }
+          hasStopped = false;
           runButton.disabled = true;
           if (progressLog) {
             progressLog.innerHTML = '';
