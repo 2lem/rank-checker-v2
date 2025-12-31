@@ -352,7 +352,7 @@
 
       const parseBulkKeywords = (raw) =>
         raw
-          .split(/[\r\n,]+/g)
+          .split(/[\n,]+/g)
           .map((value) => value.trim())
           .filter(Boolean);
 
@@ -371,26 +371,6 @@
             addedAny = true;
           }
         });
-        return addedAny;
-      };
-
-      const handleKeywordPaste = (event, manager) => {
-        const clipboard = event.clipboardData || window.clipboardData;
-        const text = clipboard?.getData('text') || '';
-        if (!/[\r\n]/.test(text)) {
-          return;
-        }
-        event.preventDefault();
-        const tokens = Array.from(new Set(parseBulkKeywords(text)));
-        let addedAny = false;
-        tokens.forEach((token) => {
-          if (manager.addValue(token)) {
-            addedAny = true;
-          }
-        });
-        if (event.target) {
-          event.target.value = '';
-        }
         return addedAny;
       };
 
@@ -550,9 +530,6 @@
             keywordAdd.click();
           }
         });
-        keywordInput?.addEventListener('paste', (event) =>
-          handleKeywordPaste(event, keywordManager)
-        );
 
         playlistInput?.addEventListener('input', (event) => {
           const input = event.target;
@@ -786,9 +763,6 @@
               editKeywordAdd.click();
             }
           });
-          editKeywordInput?.addEventListener('paste', (event) =>
-            handleKeywordPaste(event, editKeywordManager)
-          );
 
           editCancel?.addEventListener('click', () => {
             editCountryManager.setValues(existingCountries.map((value) => value.toUpperCase()));
@@ -946,9 +920,6 @@
             keywordAdd.click();
           }
         });
-        keywordInput?.addEventListener('paste', (event) =>
-          handleKeywordPaste(event, keywordManager)
-        );
 
         playlistInput?.addEventListener('input', (event) => {
           const input = event.target;
@@ -1443,23 +1414,9 @@
                 target_countries: countryManager.getValues(),
               }),
             });
-            const data = await response.json().catch(() => null);
+            const data = await response.json();
             if (!response.ok) {
-              let message = response.statusText || 'Failed to start scan.';
-              const detail = data?.detail;
-              if (typeof detail === 'string') {
-                message = detail;
-              } else if (Array.isArray(detail)) {
-                message = detail
-                  .map((entry) => (typeof entry === 'string' ? entry : entry?.msg || entry?.message))
-                  .filter(Boolean)
-                  .join(' ');
-              } else if (detail && typeof detail === 'object') {
-                message = detail.message || JSON.stringify(detail);
-              } else if (data?.detail === null && data?.message) {
-                message = data.message;
-              }
-              throw new Error(message || 'Failed to start scan.');
+              throw new Error(data.detail || 'Failed to start scan.');
             }
             activeScanId = data.scan_id;
             const eventsUrl = `/api/basic-rank-checker/scans/${activeScanId}/events`;
