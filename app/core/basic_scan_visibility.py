@@ -8,6 +8,8 @@ _lock = Lock()
 _total_http_requests = 0
 _total_spotify_requests = 0
 _scan_start_times: dict[str, float] = {}
+_scan_start_spotify_requests: dict[str, int] = {}
+_scan_metadata: dict[str, tuple[str | None, str | None]] = {}
 
 
 def log_basic_scan_start(*, scan_id: str, country: str | None, keyword: str | None) -> None:
@@ -16,6 +18,8 @@ def log_basic_scan_start(*, scan_id: str, country: str | None, keyword: str | No
     with _lock:
         _total_http_requests += 1
         _scan_start_times[scan_id] = time.monotonic()
+        _scan_start_spotify_requests[scan_id] = _total_spotify_requests
+        _scan_metadata[scan_id] = (country, keyword)
     print(f"[BASIC_SCAN_START] country={country} keyword={keyword} ts={ts}")
 
 
@@ -24,11 +28,19 @@ def log_basic_scan_end(*, scan_id: str) -> None:
         total_http_requests = _total_http_requests
         total_spotify_requests = _total_spotify_requests
         start_time = _scan_start_times.pop(scan_id, None)
+        start_spotify_requests = _scan_start_spotify_requests.pop(scan_id, total_spotify_requests)
+        country, keyword = _scan_metadata.pop(scan_id, (None, None))
     duration_ms = round((time.monotonic() - start_time) * 1000, 2) if start_time else 0.0
+    delta_spotify_requests = total_spotify_requests - start_spotify_requests
     print("[BASIC_SCAN_END]")
     print(f"total_http_requests={total_http_requests}")
     print(f"total_spotify_requests={total_spotify_requests}")
     print(f"duration_ms={duration_ms}")
+    print(
+        "[BASIC_SCAN_SUMMARY] "
+        f"country={country} keyword={keyword} "
+        f"delta_spotify_requests={delta_spotify_requests} duration_ms={duration_ms}"
+    )
 
 
 def log_spotify_call(endpoint: str) -> None:
