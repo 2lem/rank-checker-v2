@@ -9,11 +9,14 @@ on:
 
 jobs:
   smoke_and_e2e:
+    environment: production
     runs-on: ubuntu-latest
     outputs:
       smoke_status: ${{ steps.smoke.outcome }}
       e2e_status: ${{ steps.e2e_summary.outputs.e2e_status }}
       e2e_summary: ${{ steps.e2e_summary.outputs.e2e_summary }}
+    env:
+      BASE_URL: ${{ vars.BASE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,11 +35,18 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      - name: Verify BASE_URL is provided
+        run: |
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "BASE_URL environment variable is required for smoke tests. Configure vars.BASE_URL in the production environment."
+            exit 1
+          fi
+          echo "BASE_URL is set; proceeding with smoke tests."
+
       - name: Run smoke tests
         id: smoke
         continue-on-error: true
         env:
-          BASE_URL: ${{ secrets.BASE_URL }}
           TEST_TRACKED_PLAYLIST_ID: ${{ secrets.TEST_TRACKED_PLAYLIST_ID }}
           TEST_PLAYLIST_URL_OR_ID: ${{ secrets.TEST_PLAYLIST_URL_OR_ID }}
         run: node scripts/smoke.mjs
@@ -45,7 +55,6 @@ jobs:
         id: e2e
         continue-on-error: true
         env:
-          BASE_URL: ${{ secrets.BASE_URL }}
           TEST_TRACKED_PLAYLIST_ID: ${{ secrets.TEST_TRACKED_PLAYLIST_ID }}
           TEST_PLAYLIST_URL_OR_ID: ${{ secrets.TEST_PLAYLIST_URL_OR_ID }}
           BASIC_SCAN_PATH: ${{ secrets.BASIC_SCAN_PATH }}

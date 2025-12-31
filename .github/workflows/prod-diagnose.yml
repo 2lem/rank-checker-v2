@@ -5,9 +5,10 @@ on:
 
 jobs:
   diagnose:
+    environment: production
     runs-on: ubuntu-latest
     env:
-      BASE_URL: ${{ secrets.BASE_URL }}
+      BASE_URL: ${{ vars.BASE_URL }}
       TEST_TRACKED_PLAYLIST_ID: ${{ secrets.TEST_TRACKED_PLAYLIST_ID }}
       TEST_PLAYLIST_URL_OR_ID: ${{ secrets.TEST_PLAYLIST_URL_OR_ID }}
       DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
