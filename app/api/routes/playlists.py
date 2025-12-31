@@ -182,19 +182,23 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
 def refresh_playlist_stats(
     tracked_playlist_id: UUID,
 ):
-    queued_at = datetime.now(timezone.utc)
+    start_time = datetime.now(timezone.utc)
     job_id, started = enqueue_refresh(str(tracked_playlist_id))
+    queued_at = datetime.now(timezone.utc)
     status_label = "queued" if started else "already_running"
     logger.info(
-        "Refresh stats request queued tracked_playlist_id=%s job_id=%s status=%s",
+        "Refresh stats request queued tracked_playlist_id=%s job_id=%s status=%s duration_ms=%.2f",
         tracked_playlist_id,
         job_id,
         status_label,
+        (queued_at - start_time).total_seconds() * 1000,
     )
     return {
         "ok": True,
         "job_id": job_id,
+        "queued": started,
         "queued_at": queued_at,
+        "ts": queued_at,
         "status": status_label,
     }
 

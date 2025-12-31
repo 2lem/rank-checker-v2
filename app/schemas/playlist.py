@@ -41,7 +41,9 @@ class TrackedPlaylistTargetsUpdate(BaseModel):
 class RefreshPlaylistResponse(BaseModel):
     ok: bool
     job_id: str | None = None
+    queued: bool | None = None
     queued_at: datetime | None = None
+    ts: datetime | None = None
     refreshed_at: datetime | None = None
     playlist: TrackedPlaylistOut | None = None
     status: str | None = None
