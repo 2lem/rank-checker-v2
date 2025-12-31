@@ -47,6 +47,28 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
         return None
 
 
+def _classify_spotify_error(exc: Exception) -> str:
+    if isinstance(exc, requests.HTTPError):
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        if status_code == 429:
+            return "rate_limit"
+        if status_code == 408 or (isinstance(status_code, int) and status_code >= 500):
+            return "transient"
+        return "transient"
+    if isinstance(exc, requests.RequestException):
+        return "transient"
+    return "transient"
+
+
+def _log_iteration_event(
+    event: str, *, scan_id: str, country: str, keyword: str, reason: str | None = None
+) -> None:
+    payload = {"scan_id": scan_id, "country": country, "keyword": keyword}
+    if reason:
+        payload["reason"] = reason
+    logger.info(event, extra=payload)
+
+
 def create_basic_scan(db: Session, tracked_playlist: TrackedPlaylist) -> BasicScan:
     is_tracked_playlist = tracked_playlist.id is not None
     scan = BasicScan(
@@ -146,6 +168,8 @@ def run_basic_scan(scan_id: str) -> None:
         playlist_meta_cache: dict[str, dict] = {}
         total_playlist_occurrences = 0
         unique_playlists_fetched = 0
+        total_results_count = 0
+        skipped_iterations = 0
 
         step = 0
         for country in countries:
@@ -162,85 +186,126 @@ def run_basic_scan(scan_id: str) -> None:
                         "total": total_steps,
                     },
                 )
-                searched_at = _now_utc()
-                items = search_playlists(keyword, country, token, limit=35, offset=0)[:20]
-
-                playlist_ids_to_fetch = [
-                    item.get("id")
-                    for item in items
-                    if item.get("id") and not item.get("placeholder")
-                ]
-                total_playlist_occurrences += len(playlist_ids_to_fetch)
-                unique_playlists_fetched += _prefetch_playlist_metadata(
-                    playlist_ids_to_fetch, token, playlist_meta_cache
-                )
-
-                tracked_rank = None
-                query = BasicScanQuery(
-                    basic_scan_id=scan_id_value,
-                    country_code=country,
+                _log_iteration_event(
+                    "spotify_iteration_start",
+                    scan_id=scan_id,
+                    country=country,
                     keyword=keyword,
-                    searched_at=searched_at,
-                    tracked_rank=None,
-                    tracked_found_in_top20=False,
                 )
-                db.add(query)
-                db.flush()
+                try:
+                    searched_at = _now_utc()
+                    items = search_playlists(keyword, country, token, limit=35, offset=0)[:20]
 
-                results: list[BasicScanResult] = []
-                for index, item in enumerate(items, start=1):
-                    playlist_id = item.get("id")
-                    is_placeholder = item.get("placeholder")
-                    meta = playlist_meta_cache.get(playlist_id or "") if playlist_id else {}
-                    playlist_name = meta.get("playlist_name") or item.get("name")
-                    playlist_owner = meta.get("playlist_owner") or _extract_owner(item)
-                    playlist_followers = None if is_placeholder else meta.get("playlist_followers")
-                    tracks_total = (item.get("tracks") or {}).get("total")
-                    songs_count = (
-                        meta.get("songs_count")
-                        if meta.get("songs_count") is not None
-                        else tracks_total
-                    )
-                    playlist_last_added_track_at_raw = meta.get("playlist_last_track_added_at")
-                    playlist_last_added_track_at = (
-                        _parse_iso_datetime(playlist_last_added_track_at_raw)
-                        if isinstance(playlist_last_added_track_at_raw, str)
-                        else playlist_last_added_track_at_raw
-                    )
-                    playlist_description = meta.get("playlist_description") or item.get("description")
-                    playlist_url = meta.get("playlist_url") or (item.get("external_urls") or {}).get(
-                        "spotify"
+                    playlist_ids_to_fetch = [
+                        item.get("id")
+                        for item in items
+                        if item.get("id") and not item.get("placeholder")
+                    ]
+                    total_playlist_occurrences += len(playlist_ids_to_fetch)
+                    unique_playlists_fetched += _prefetch_playlist_metadata(
+                        playlist_ids_to_fetch, token, playlist_meta_cache
                     )
 
-                    is_tracked = playlist_id == tracked_playlist_playlist_id
-                    if is_tracked and tracked_rank is None:
-                        tracked_rank = index
-                    results.append(
-                        BasicScanResult(
-                            basic_scan_query_id=query.id,
-                            rank=index,
-                            playlist_id=playlist_id,
-                            playlist_name=playlist_name,
-                            playlist_owner=playlist_owner,
-                            playlist_followers=playlist_followers,
-                            songs_count=songs_count,
-                            playlist_last_added_track_at=playlist_last_added_track_at,
-                            playlist_description=playlist_description,
-                            playlist_url=playlist_url,
-                            is_tracked_playlist=is_tracked,
+                    tracked_rank = None
+                    query = BasicScanQuery(
+                        basic_scan_id=scan_id_value,
+                        country_code=country,
+                        keyword=keyword,
+                        searched_at=searched_at,
+                        tracked_rank=None,
+                        tracked_found_in_top20=False,
+                    )
+                    db.add(query)
+                    db.flush()
+
+                    results: list[BasicScanResult] = []
+                    for index, item in enumerate(items, start=1):
+                        playlist_id = item.get("id")
+                        is_placeholder = item.get("placeholder")
+                        meta = playlist_meta_cache.get(playlist_id or "") if playlist_id else {}
+                        playlist_name = meta.get("playlist_name") or item.get("name")
+                        playlist_owner = meta.get("playlist_owner") or _extract_owner(item)
+                        playlist_followers = (
+                            None if is_placeholder else meta.get("playlist_followers")
                         )
-                    )
+                        tracks_total = (item.get("tracks") or {}).get("total")
+                        songs_count = (
+                            meta.get("songs_count")
+                            if meta.get("songs_count") is not None
+                            else tracks_total
+                        )
+                        playlist_last_added_track_at_raw = meta.get(
+                            "playlist_last_track_added_at"
+                        )
+                        playlist_last_added_track_at = (
+                            _parse_iso_datetime(playlist_last_added_track_at_raw)
+                            if isinstance(playlist_last_added_track_at_raw, str)
+                            else playlist_last_added_track_at_raw
+                        )
+                        playlist_description = meta.get("playlist_description") or item.get(
+                            "description"
+                        )
+                        playlist_url = meta.get("playlist_url") or (
+                            item.get("external_urls") or {}
+                        ).get("spotify")
 
-                query.tracked_rank = tracked_rank
-                query.tracked_found_in_top20 = tracked_rank is not None
-                db.add_all(results)
-                db.add(query)
-                db.commit()
+                        is_tracked = playlist_id == tracked_playlist_playlist_id
+                        if is_tracked and tracked_rank is None:
+                            tracked_rank = index
+                        results.append(
+                            BasicScanResult(
+                                basic_scan_query_id=query.id,
+                                rank=index,
+                                playlist_id=playlist_id,
+                                playlist_name=playlist_name,
+                                playlist_owner=playlist_owner,
+                                playlist_followers=playlist_followers,
+                                songs_count=songs_count,
+                                playlist_last_added_track_at=playlist_last_added_track_at,
+                                playlist_description=playlist_description,
+                                playlist_url=playlist_url,
+                                is_tracked_playlist=is_tracked,
+                            )
+                        )
+
+                    query.tracked_rank = tracked_rank
+                    query.tracked_found_in_top20 = tracked_rank is not None
+                    db.add_all(results)
+                    db.add(query)
+                    db.commit()
+                    total_results_count += len(results)
+                    _log_iteration_event(
+                        "spotify_iteration_success",
+                        scan_id=scan_id,
+                        country=country,
+                        keyword=keyword,
+                    )
+                except requests.RequestException as exc:
+                    db.rollback()
+                    skipped_iterations += 1
+                    reason = _classify_spotify_error(exc)
+                    _log_iteration_event(
+                        "spotify_iteration_skipped",
+                        scan_id=scan_id,
+                        country=country,
+                        keyword=keyword,
+                        reason=reason,
+                    )
+                    continue
 
         scan.status = "completed"
         scan.finished_at = _now_utc()
         db.add(scan)
         db.commit()
+        if skipped_iterations and total_results_count:
+            logger.info(
+                "scan_completed_partial",
+                extra={
+                    "scan_id": scan_id,
+                    "skipped_iterations": skipped_iterations,
+                    "total_results": total_results_count,
+                },
+            )
         logger.info(
             "Basic scan playlist metadata fetch stats",
             extra={
@@ -250,7 +315,15 @@ def run_basic_scan(scan_id: str) -> None:
                 "playlist_meta_cache_size": len(playlist_meta_cache),
             },
         )
-        scan_event_manager.publish(scan_id, {"type": "done", "scan_id": scan_id})
+        completion_type = "completed_partial" if skipped_iterations and total_results_count else "done"
+        scan_event_manager.publish(
+            scan_id,
+            {
+                "type": completion_type,
+                "scan_id": scan_id,
+                "results": fetch_scan_details(db, scan_id),
+            },
+        )
     except Exception as exc:
         logger.exception("Basic scan failed")
         try:
