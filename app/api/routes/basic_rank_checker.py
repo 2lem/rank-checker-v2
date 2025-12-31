@@ -124,7 +124,15 @@ def stream_scan_events(scan_id: str):
                 {"type": "error", "message": scan_error_message or "Scan failed."},
             )
 
-    return StreamingResponse(scan_event_manager.stream(scan_id), media_type="text/event-stream")
+    return StreamingResponse(
+        scan_event_manager.stream(scan_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/scans/{scan_id}")
