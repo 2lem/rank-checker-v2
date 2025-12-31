@@ -37,5 +37,12 @@ class ScanEventManager:
 
         return _generator()
 
+    def snapshot(self) -> dict[str, int | list[str]]:
+        active_scan_ids = sorted(self._queues.keys())
+        return {
+            "queue_count": len(active_scan_ids),
+            "active_scan_ids": active_scan_ids,
+        }
+
 
 scan_event_manager = ScanEventManager()

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.basic_rank_checker.events import scan_event_manager
 from app.core.db import SessionLocal, engine
 from app.core.debug_tools import require_debug_tools
 
@@ -109,3 +110,10 @@ def schema_version(request: Request):
         "manual_columns": sorted([row[0] for row in manual_columns]),
         "ts": _now_iso(),
     }
+
+
+@router.get("/sse-state")
+def sse_state(request: Request):
+    require_debug_tools(request)
+    state = scan_event_manager.snapshot()
+    return {"ok": True, **state, "ts": _now_iso()}
