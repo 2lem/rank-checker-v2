@@ -54,7 +54,7 @@
             <p>Run a manual scan using stored targets.</p>
           </div>
           <div class="panel-body">
-            <div class="basic-scan" data-basic-scan>
+            <div class="basic-scan" data-basic-scan data-tracked-playlist-id="{{ playlist.id }}">
               <section class="scan-parameters" id="scan-parameters" data-basic-scan-parameters>
                 <div class="scan-config-row">
                   <span class="scan-config-label">Countries</span>
@@ -647,7 +647,20 @@
           }
         };
 
+        const resolveTrackedPlaylistId = () => {
+          const datasetId = scanRoot?.dataset?.trackedPlaylistId;
+          if (datasetId) {
+            return datasetId;
+          }
+          const pathId = window.location.pathname.split('/').filter(Boolean).pop();
+          if (!pathId && typeof console !== 'undefined' && console.debug) {
+            console.debug('[basic-scan] tracked playlist id missing for payload');
+          }
+          return pathId || '';
+        };
+
         const startScan = async () => {
+          const trackedPlaylistId = resolveTrackedPlaylistId();
           runButton.disabled = true;
           progressLog.innerHTML = '';
           setProgress(0, 0, 'Starting scan…');
@@ -656,7 +669,7 @@
             const response = await fetch('/api/basic-rank-checker/scans', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ tracked_playlist_id: '{{ playlist.id }}' }),
+              body: JSON.stringify({ tracked_playlist_id: trackedPlaylistId }),
             });
             const data = await response.json();
             if (!response.ok) {
