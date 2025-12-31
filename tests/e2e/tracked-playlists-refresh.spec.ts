@@ -1,23 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { attachSseStateOnFailure, installSseObserver } from './sse-helpers';
 
-const waitForPlaylistRefresh = async (page, playlistId, previousTimestamp) => {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    const response = await page.request.get('/api/playlists');
-    const payload = await response.json();
-    const tracked = Array.isArray(payload)
-      ? payload.find((item) => String(item.id) === String(playlistId))
-      : null;
-    const currentTimestamp = tracked?.last_meta_refresh_at;
-    if (currentTimestamp && currentTimestamp !== previousTimestamp) {
-      return currentTimestamp;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-  }
-  throw new Error('Refresh job did not update last_meta_refresh_at within timeout.');
-};
-
 test('Tracked playlist refresh completes', async ({ page }) => {
   test.setTimeout(60_000);
   const playlistId = process.env.TEST_TRACKED_PLAYLIST_ID;
@@ -29,14 +12,16 @@ test('Tracked playlist refresh completes', async ({ page }) => {
 
   const status = page.locator('#playlist-status');
   const refreshButton = page.locator('[data-refresh-stats]');
+  const followersValue = page.locator('[data-playlist-followers]');
+  const scannedValue = page.locator('[data-playlist-scanned]');
+  const updatedValue = page.locator('[data-playlist-updated]');
 
   await expect(refreshButton).toBeVisible();
-  const playlistsResponse = await page.request.get('/api/playlists');
-  const playlistsPayload = await playlistsResponse.json();
-  const trackedBefore = Array.isArray(playlistsPayload)
-    ? playlistsPayload.find((item) => String(item.id) === String(playlistId))
-    : null;
-  const previousRefreshAt = trackedBefore?.last_meta_refresh_at || null;
+  await expect(followersValue).toBeVisible();
+
+  const initialFollowers = (await followersValue.textContent())?.trim() ?? '';
+  const initialScanned = (await scannedValue.textContent())?.trim() ?? '';
+  const initialUpdated = (await updatedValue.textContent())?.trim() ?? '';
 
   const refreshStart = Date.now();
   const [refreshResponse] = await Promise.all([
@@ -66,9 +51,23 @@ test('Tracked playlist refresh completes', async ({ page }) => {
   ]);
 
   await expect(status).not.toHaveClass(/status-loading/);
-  if (refreshPayload?.status !== 'already_running') {
-    await waitForPlaylistRefresh(page, playlistId, previousRefreshAt);
-  }
+  await page.waitForFunction(
+    ({ followers, scanned, updated }) => {
+      const followersEl = document.querySelector('[data-playlist-followers]');
+      const scannedEl = document.querySelector('[data-playlist-scanned]');
+      const updatedEl = document.querySelector('[data-playlist-updated]');
+      const currentFollowers = followersEl?.textContent?.trim() || '';
+      const currentScanned = scannedEl?.textContent?.trim() || '';
+      const currentUpdated = updatedEl?.textContent?.trim() || '';
+      return (
+        currentFollowers !== followers ||
+        currentScanned !== scanned ||
+        currentUpdated !== updated
+      );
+    },
+    { followers: initialFollowers, scanned: initialScanned, updated: initialUpdated },
+    { timeout: 60000 }
+  );
 });
 
 test.afterEach(async ({ page }, testInfo) => {
