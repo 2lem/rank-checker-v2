@@ -206,10 +206,12 @@ def _endpoint_path(url: str) -> str:
     return parsed.path or "/"
 
 
-def _compute_backoff(attempt: int, base_seconds: float, cap_seconds: float) -> float:
+def _compute_backoff(
+    attempt: int, base_seconds: float, cap_seconds: float, jitter_seconds: float
+) -> float:
     exponent = max(attempt - 1, 0)
     backoff = base_seconds * (2**exponent)
-    jitter = random.uniform(0, base_seconds)
+    jitter = random.uniform(0, jitter_seconds)
     return min(backoff + jitter, cap_seconds)
 
 
@@ -288,6 +290,9 @@ def _spotify_request(
     while True:
         attempt += 1
         budget_enforced = False
+        budget_enforced_scope: str | None = None
+        budget_limit: int | None = None
+        budget_current: int | None = None
         for warning in _spotify_budget.record(scan_id):
             _log_budget_warning(
                 scope=warning["scope"],
@@ -295,15 +300,24 @@ def _spotify_request(
                 current=warning["current"],
                 scan_id=warning["scan_id"],
             )
-            if warning["scope"] == "scan":
+            if warning["scope"] == "scan" and scan_id:
                 budget_enforced = True
-                _log_event(
-                    "spotify_budget_enforced",
-                    scan_id=warning["scan_id"],
-                    limit=warning["limit"],
-                    current=warning["current"],
-                )
+                budget_enforced_scope = "scan"
+                budget_limit = warning["limit"]
+                budget_current = warning["current"]
+            elif warning["scope"] == "global" and not scan_id:
+                budget_enforced = True
+                budget_enforced_scope = "global"
+                budget_limit = warning["limit"]
+                budget_current = warning["current"]
         if budget_enforced:
+            _log_event(
+                "spotify_budget_enforced",
+                scope=budget_enforced_scope,
+                scan_id=scan_id,
+                limit=budget_limit,
+                current=budget_current,
+            )
             return {}
         started_at = datetime.now(timezone.utc).isoformat()
         start_monotonic = time.monotonic()
@@ -367,7 +381,7 @@ def _spotify_request(
             )
             if retry_transient_count < max_transient_retries:
                 retry_transient_count += 1
-                wait_seconds = _compute_backoff(retry_transient_count, 0.5, 8.0)
+                wait_seconds = _compute_backoff(retry_transient_count, 0.5, 10.0, 0.25)
                 _log_event(
                     "spotify_api_retry",
                     request_id=request_id,
@@ -377,7 +391,7 @@ def _spotify_request(
                     path=path,
                     attempt=attempt,
                     wait_seconds=wait_seconds,
-                    reason="exception",
+                    reason="transient",
                 )
                 time.sleep(wait_seconds)
                 continue
@@ -439,12 +453,12 @@ def _spotify_request(
                 )
                 response.raise_for_status()
             retry_429_count += 1
-            retry_after_seconds = 1
+            retry_after_seconds = 2
             if retry_after_header:
                 try:
                     retry_after_seconds = int(retry_after_header)
                 except ValueError:
-                    retry_after_seconds = 1
+                    retry_after_seconds = 2
             wait_seconds = min(retry_after_seconds, SPOTIFY_MAX_RETRY_AFTER)
             _log_event(
                 "spotify_api_retry",
@@ -464,7 +478,7 @@ def _spotify_request(
         if response.status_code >= 500 or response.status_code == 408:
             if retry_transient_count < max_transient_retries:
                 retry_transient_count += 1
-                wait_seconds = _compute_backoff(retry_transient_count, 0.5, 8.0)
+                wait_seconds = _compute_backoff(retry_transient_count, 0.5, 10.0, 0.25)
                 _log_event(
                     "spotify_api_retry",
                     request_id=request_id,
@@ -474,7 +488,7 @@ def _spotify_request(
                     path=path,
                     attempt=attempt,
                     wait_seconds=wait_seconds,
-                    reason="server_error",
+                    reason="transient",
                 )
                 time.sleep(wait_seconds)
                 continue

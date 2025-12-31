@@ -45,7 +45,7 @@ def test_spotify_logs_successful_request(monkeypatch: pytest.MonkeyPatch, caplog
 
 def test_spotify_retries_on_429(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     responses = [
-        _response(429, {"error": "rate limit"}, headers={"Retry-After": "1"}),
+        _response(429, {"error": "rate limit"}, headers={"Retry-After": "3"}),
         _response(200, {"ok": True}),
     ]
     mock_request = Mock(side_effect=responses)
@@ -60,7 +60,7 @@ def test_spotify_retries_on_429(monkeypatch: pytest.MonkeyPatch, caplog: pytest.
     assert payload == {"ok": True}
     assert mock_request.call_count == 2
     assert sleep_mock.call_count == 1
-    assert sleep_mock.call_args_list[0].args[0] == 1
+    assert sleep_mock.call_args_list[0].args[0] == 3
 
     events = _event_names(caplog)
     assert "spotify_api_retry" in events
@@ -98,3 +98,26 @@ def test_spotify_retries_on_5xx(monkeypatch: pytest.MonkeyPatch) -> None:
     assert mock_request.call_count == 2
     assert sleep_mock.call_count == 1
     assert sleep_mock.call_args_list[0].args[0] == 0.5
+
+
+def test_spotify_enforces_scan_budget(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    spotify_budget = spotify.SpotifyCallBudget()
+    mock_request = Mock(return_value=_response(200, {"ok": True}))
+
+    monkeypatch.setattr(spotify, "_spotify_budget", spotify_budget)
+    monkeypatch.setattr(spotify, "MAX_SPOTIFY_CALLS_PER_SCAN", 0)
+    monkeypatch.setattr(spotify.requests, "request", mock_request)
+
+    caplog.set_level(logging.INFO, logger="app.core.spotify")
+
+    payload = spotify.spotify_get(
+        "https://api.spotify.com/v1/playlists/test",
+        token="token",
+        scan_id="scan-1",
+    )
+
+    assert payload == {}
+    assert mock_request.call_count == 0
+
+    events = _event_names(caplog)
+    assert "spotify_budget_enforced" in events
