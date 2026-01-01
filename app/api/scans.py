@@ -5,14 +5,14 @@ from sqlalchemy.orm import Session
 
 from app.basic_rank_checker.events import scan_event_manager
 from app.basic_rank_checker.manual_service import create_manual_scan, run_manual_scan
-from app.core.db import get_db
+from app.core.db import provide_db_session
 from app.schemas.manual_scan import ManualScanCreate
 
 router = APIRouter(tags=["scans"])
 
 
 @router.post("/manual")
-def manual_scan(payload: ManualScanCreate, db: Session = Depends(get_db)):
+def manual_scan(payload: ManualScanCreate, db: Session = Depends(provide_db_session)):
     scan = create_manual_scan(
         db,
         playlist_url=payload.playlist_url,

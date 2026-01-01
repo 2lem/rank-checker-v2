@@ -2,13 +2,25 @@ import logging
 import os
 from contextvars import ContextVar
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 
 logger = logging.getLogger(__name__)
 
 # TEMP DEBUG: store the current request path for transaction lifecycle logging.
 request_path_var: ContextVar[str | None] = ContextVar("request_path", default=None)
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_sqlite(_element, _compiler, **_kwargs):
+    return "JSON"
+
+
+@compiles(UUID, "sqlite")
+def _compile_uuid_sqlite(_element, _compiler, **_kwargs):
+    return "CHAR(36)"
 
 
 def get_database_url() -> str | None:
@@ -27,11 +39,20 @@ def _create_engine():
     if not database_url:
         return None
     engine_kwargs = {"pool_pre_ping": True}
+    if database_url.startswith("sqlite"):
+        engine_kwargs["connect_args"] = {"check_same_thread": False}
 
     if database_url.startswith("postgresql+psycopg2://"):
         engine_kwargs["connect_args"] = {"application_name": "rank-checker-v2-fastapi"}
 
     return create_engine(database_url, **engine_kwargs)
+
+
+def json_array_default_clause():
+    database_url = get_database_url()
+    is_sqlite = bool(database_url and database_url.startswith("sqlite"))
+    default_expr = "'[]'" if is_sqlite else "'[]'::jsonb"
+    return text(default_expr)
 
 
 engine = _create_engine()
@@ -68,3 +89,8 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def provide_db_session():
+    """Dependency alias to avoid leaking internal helper names into route modules."""
+    yield from get_db()

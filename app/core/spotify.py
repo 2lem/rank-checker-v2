@@ -522,6 +522,16 @@ def _spotify_request_with_meta(
                 scan_id=pacing["scan_id"],
             )
             sleep_ms = max(sleep_ms, int(pacing["sleep_ms"]))
+        if sleep_ms:
+            pacing_detail = max(pacings, key=lambda item: int(item.get("sleep_ms", 0)))
+            logger.info(
+                "[RATE_LIMIT] waiting_ms=%s scope=%s current=%s limit=%s scan_id=%s",
+                sleep_ms,
+                pacing_detail.get("scope"),
+                pacing_detail.get("current"),
+                pacing_detail.get("limit"),
+                pacing_detail.get("scan_id"),
+            )
         started_at = datetime.now(timezone.utc).isoformat()
         start_monotonic = time.monotonic()
         log_spotify_call(path)
@@ -550,7 +560,7 @@ def _spotify_request_with_meta(
         try:
             with _spotify_concurrency_guard():
                 if sleep_ms:
-                    time.sleep(sleep_ms / 1000)
+                    time.sleep(sleep_ms / 500)
                 response = requests.request(
                     method,
                     url,

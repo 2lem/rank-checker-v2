@@ -5,6 +5,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, fun
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.db import json_array_default_clause
 from app.models.base import Base
 
 
@@ -30,13 +31,13 @@ class BasicScan(Base):
         JSONB,
         nullable=False,
         default=list,
-        server_default=text("'[]'::jsonb"),
+        server_default=json_array_default_clause(),
     )
     scanned_keywords: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
         default=list,
-        server_default=text("'[]'::jsonb"),
+        server_default=json_array_default_clause(),
     )
     follower_snapshot: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_tracked_playlist: Mapped[bool] = mapped_column(
@@ -51,13 +52,13 @@ class BasicScan(Base):
         JSONB,
         nullable=False,
         default=list,
-        server_default=text("'[]'::jsonb"),
+        server_default=json_array_default_clause(),
     )
     manual_target_keywords: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
         default=list,
-        server_default=text("'[]'::jsonb"),
+        server_default=json_array_default_clause(),
     )
     progress_completed_units: Mapped[int | None] = mapped_column(Integer, nullable=True)
     progress_total_units: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -23,6 +25,7 @@ from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
 from app.repositories.tracked_playlists import get_tracked_playlist_by_id
 
 router = APIRouter(tags=["basic-rank-checker"])
+logger = logging.getLogger(__name__)
 
 
 def _format_dt(value: datetime | None) -> str | None:
@@ -75,31 +78,38 @@ def _csv_response(filename: str, headers: list[str], rows: list[list[object | No
 
 @router.post("/scans")
 def start_basic_scan(payload: dict, db: Session = Depends(get_db)):
-    tracked_playlist_id = (payload or {}).get("tracked_playlist_id")
-    if not tracked_playlist_id:
-        raise HTTPException(status_code=400, detail="tracked_playlist_id is required.")
+    started_monotonic = time.perf_counter()
+    status_label = "error"
     try:
-        UUID(str(tracked_playlist_id))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid tracked_playlist_id.") from exc
+        tracked_playlist_id = (payload or {}).get("tracked_playlist_id")
+        if not tracked_playlist_id:
+            raise HTTPException(status_code=400, detail="tracked_playlist_id is required.")
+        try:
+            tracked_uuid = UUID(str(tracked_playlist_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid tracked_playlist_id.") from exc
 
-    tracked = get_tracked_playlist_by_id(db, str(tracked_playlist_id))
-    if not tracked:
-        raise HTTPException(status_code=404, detail="Tracked playlist not found.")
-    if not tracked.target_countries or not tracked.target_keywords:
-        raise HTTPException(
-            status_code=400,
-            detail="Tracked playlist must have target countries and keywords.",
-        )
+        tracked = get_tracked_playlist_by_id(db, tracked_uuid)
+        if not tracked:
+            raise HTTPException(status_code=404, detail="Tracked playlist not found.")
+        if not tracked.target_countries or not tracked.target_keywords:
+            raise HTTPException(
+                status_code=400,
+                detail="Tracked playlist must have target countries and keywords.",
+            )
 
-    scan = create_basic_scan(db, tracked)
-    country = (tracked.target_countries or [None])[0]
-    keyword = (tracked.target_keywords or [None])[0]
-    log_basic_scan_start(scan_id=str(scan.id), country=country, keyword=keyword)
-    scan_event_manager.create_queue(str(scan.id))
-    thread = threading.Thread(target=run_basic_scan, args=(str(scan.id),), daemon=True)
-    thread.start()
-    return {"scan_id": str(scan.id), "status": "started"}
+        scan = create_basic_scan(db, tracked)
+        country = (tracked.target_countries or [None])[0]
+        keyword = (tracked.target_keywords or [None])[0]
+        log_basic_scan_start(scan_id=str(scan.id), country=country, keyword=keyword)
+        scan_event_manager.create_queue(str(scan.id))
+        thread = threading.Thread(target=run_basic_scan, args=(str(scan.id),), daemon=True)
+        thread.start()
+        status_label = "started"
+        return {"scan_id": str(scan.id), "status": "started"}
+    finally:
+        duration_ms = int(round((time.perf_counter() - started_monotonic) * 1000))
+        logger.info("[SCAN_START_REQUEST] duration_ms=%s status=%s", duration_ms, status_label)
 
 
 @router.get("/scans/{scan_id}/events")
