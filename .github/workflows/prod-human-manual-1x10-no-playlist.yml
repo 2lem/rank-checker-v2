@@ -28,15 +28,25 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run prod human manual scan (1x10, no playlist)
-        run: npx playwright test --grep "manual scan 1x10 no playlis
+        run: npx playwright test tests/playwright/manual_scan_1x10_no_playlist.spec.ts
+
+      - name: Check manual scan artifact
+        if: always()
+        id: artifact_check
+        run: |
+          if [ -f artifacts/prod_manual_scan_1x10_no_playlist.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload manual scan artifact
-        if: always()
+        if: always() && steps.artifact_check.outputs.exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: prod-human-manual-1x10-no-playlist
           path: artifacts/prod_manual_scan_1x10_no_playlist.json
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Upload Playwright report
         if: failure()

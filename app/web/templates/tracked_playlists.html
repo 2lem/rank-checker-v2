@@ -27,6 +27,7 @@
             id="manual-scan-toggle"
             aria-controls="manual-scan-section"
             aria-expanded="false"
+            data-testid="manual-scan-tab"
           >
             Manual Scan
           </button>
@@ -59,13 +60,25 @@
                     type="url"
                     placeholder="https://open.spotify.com/playlist/..."
                     data-manual-scan-playlist
+                    data-testid="playlist-input"
                   />
                 </label>
                 <div class="scan-config-row">
                   <span class="scan-config-label">Countries</span>
                   <div class="field-inline">
-                    <select class="market-select" data-manual-scan-country-select></select>
-                    <button class="btn btn-secondary" type="button" data-manual-scan-country-add>Add</button>
+                    <select
+                      class="market-select"
+                      data-manual-scan-country-select
+                      data-testid="country-input"
+                    ></select>
+                    <button
+                      class="btn btn-secondary"
+                      type="button"
+                      data-manual-scan-country-add
+                      data-testid="country-add-button"
+                    >
+                      Add
+                    </button>
                   </div>
                   <div class="pill-list" data-manual-scan-country-pills></div>
                   <div class="info-box" data-manual-scan-country-info hidden>
@@ -80,8 +93,16 @@
                       rows="2"
                       placeholder="e.g. lofi, focus, chill"
                       data-manual-scan-keyword-input
+                      data-testid="keyword-input"
                     ></textarea>
-                    <button class="btn btn-secondary" type="button" data-manual-scan-keyword-add>Add</button>
+                    <button
+                      class="btn btn-secondary"
+                      type="button"
+                      data-manual-scan-keyword-add
+                      data-testid="keyword-add-button"
+                    >
+                      Add
+                    </button>
                   </div>
                   <div class="pill-list" data-manual-scan-keyword-pills></div>
                   <div class="info-box" data-manual-scan-keyword-info hidden>
@@ -90,7 +111,14 @@
                 </div>
                 <div class="run-scan-controls" id="manual-run-scan-controls" data-manual-scan-run-controls>
                   <div class="manual-scan-actions">
-                    <button class="btn btn-primary" type="button" data-manual-scan-run>Run Manual Scan</button>
+                    <button
+                      class="btn btn-primary"
+                      type="button"
+                      data-manual-scan-run
+                      data-testid="run-manual-scan-button"
+                    >
+                      Run Manual Scan
+                    </button>
                     <span class="manual-scan-actions-spacer" aria-hidden="true"></span>
                     <button class="btn btn-secondary" type="button" data-manual-scan-close>Close</button>
                   </div>
@@ -105,14 +133,22 @@
                 <div class="progress-bar">
                   <div class="progress-fill" data-manual-scan-progress-fill></div>
                 </div>
-                <div class="progress-status" data-manual-scan-progress-status>Starting scan…</div>
+                <div class="progress-status" data-manual-scan-progress-status data-testid="scan-status">
+                  Starting scan…
+                </div>
                 <div class="progress-helper" data-manual-scan-progress-helper>
                   Your scan is still in progress. Refresh this page in a few minutes to see your scan
                   results.
                 </div>
                 <div class="progress-log" data-manual-scan-progress-log></div>
               </section>
-              <section class="results" id="manual-scan-results" data-manual-scan-results hidden>
+              <section
+                class="results"
+                id="manual-scan-results"
+                data-manual-scan-results
+                data-testid="results-container"
+                hidden
+              >
                 <div class="results-header">
                   <h3>Basic Scan Results</h3>
                   <div
@@ -126,7 +162,7 @@
                 </div>
                 <div class="summary" id="manual-scan-summary">
                   <h3>Summary</h3>
-                  <div class="summary-lead" data-manual-scan-summary-lead></div>
+                  <div class="summary-lead" data-manual-scan-summary-lead data-testid="empty-state"></div>
                   <div class="summary-list" data-manual-scan-summary-list></div>
                 </div>
                 <div class="detailed-scan-insights" id="manual-scan-detailed">
