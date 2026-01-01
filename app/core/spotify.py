@@ -8,7 +8,7 @@ import re
 import time
 import uuid
 from collections import Counter, deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -44,30 +44,47 @@ MAX_SPOTIFY_CALLS_PER_MINUTE = int(os.getenv("SPOTIFY_MAX_CALLS_PER_MINUTE", "60
 MAX_SPOTIFY_CALLS_PER_SCAN = int(os.getenv("SPOTIFY_MAX_CALLS_PER_SCAN", "2000"))
 SPOTIFY_BUDGET_PACING_THRESHOLD = float(os.getenv("SPOTIFY_BUDGET_PACING_THRESHOLD", "0.85"))
 SPOTIFY_BUDGET_PACING_SLEEP_MS = int(os.getenv("SPOTIFY_BUDGET_PACING_SLEEP_MS", "250"))
-_SPOTIFY_RPS_LOCK = Lock()
-_SPOTIFY_RPS_NEXT_ALLOWED_TIME = 0.0
 
 
-def _apply_spotify_rps_limit() -> None:
-    global _SPOTIFY_RPS_NEXT_ALLOWED_TIME
-    if SPOTIFY_GLOBAL_RPS <= 0:
-        return
-    min_interval = 1.0 / SPOTIFY_GLOBAL_RPS
-    wait_seconds = 0.0
-    with _SPOTIFY_RPS_LOCK:
-        now = time.monotonic()
-        if now < _SPOTIFY_RPS_NEXT_ALLOWED_TIME:
-            wait_seconds = _SPOTIFY_RPS_NEXT_ALLOWED_TIME - now
-        _SPOTIFY_RPS_NEXT_ALLOWED_TIME = max(_SPOTIFY_RPS_NEXT_ALLOWED_TIME, now) + min_interval
-    if wait_seconds > 0:
-        wait_ms = int(round(wait_seconds * 1000))
-        if wait_ms >= 25:
-            logger.info(
-                "[RATE_LIMIT] waiting_ms=%s reason=rps rps=%s",
+class SpotifyGlobalRpsLimiter:
+    def __init__(
+        self,
+        *,
+        now: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+        logger_: logging.Logger = logger,
+    ) -> None:
+        self._lock = Lock()
+        self._next_allowed_ts = 0.0
+        self._now = now
+        self._sleep = sleep
+        self._logger = logger_
+
+    def acquire(self, rps: float) -> None:
+        if rps <= 0:
+            return
+        min_interval = 1.0 / rps
+        wait_seconds = 0.0
+        next_allowed_in_seconds = 0.0
+        with self._lock:
+            now = self._now()
+            if now < self._next_allowed_ts:
+                wait_seconds = self._next_allowed_ts - now
+            self._next_allowed_ts = max(self._next_allowed_ts, now) + min_interval
+            next_allowed_in_seconds = max(self._next_allowed_ts - now, 0.0)
+        if wait_seconds > 0:
+            wait_ms = int(round(wait_seconds * 1000))
+            next_allowed_in_ms = int(round(next_allowed_in_seconds * 1000))
+            self._logger.info(
+                "[RATE_LIMIT] global_wait_ms=%s rps=%s next_allowed_in_ms=%s",
                 wait_ms,
-                SPOTIFY_GLOBAL_RPS,
+                rps,
+                next_allowed_in_ms,
             )
-        time.sleep(wait_seconds)
+            self._sleep(wait_seconds)
+
+
+_spotify_global_rps_limiter = SpotifyGlobalRpsLimiter()
 
 
 def _ensure_spotify_semaphore_loop() -> asyncio.AbstractEventLoop:
@@ -557,36 +574,36 @@ def _spotify_request_with_meta(
                 pacing_detail.get("limit"),
                 pacing_detail.get("scan_id"),
             )
-        started_at = datetime.now(timezone.utc).isoformat()
-        start_monotonic = time.monotonic()
-        log_spotify_call(path)
-        _log_spotify_call(
-            phase="start",
-            endpoint=path,
-            method=method,
-            status_code=None,
-            duration_ms=None,
-            retry_after_sec=None,
-            scan_id=scan_id,
-            playlist_id=playlist_id,
-            country=country,
-            keyword=keyword,
-        )
-        _log_event(
-            "spotify_api_request",
-            request_id=request_id,
-            scan_id=scan_id,
-            job_id=job_id,
-            method=method,
-            path=path,
-            started_at=started_at,
-            attempt=attempt,
-        )
+        if sleep_ms:
+            time.sleep(sleep_ms / 1000)
+        _spotify_global_rps_limiter.acquire(SPOTIFY_GLOBAL_RPS)
         try:
             with _spotify_concurrency_guard():
-                if sleep_ms:
-                    time.sleep(sleep_ms / 1000)
-                _apply_spotify_rps_limit()
+                started_at = datetime.now(timezone.utc).isoformat()
+                start_monotonic = time.monotonic()
+                log_spotify_call(path)
+                _log_spotify_call(
+                    phase="start",
+                    endpoint=path,
+                    method=method,
+                    status_code=None,
+                    duration_ms=None,
+                    retry_after_sec=None,
+                    scan_id=scan_id,
+                    playlist_id=playlist_id,
+                    country=country,
+                    keyword=keyword,
+                )
+                _log_event(
+                    "spotify_api_request",
+                    request_id=request_id,
+                    scan_id=scan_id,
+                    job_id=job_id,
+                    method=method,
+                    path=path,
+                    started_at=started_at,
+                    attempt=attempt,
+                )
                 response = requests.request(
                     method,
                     url,
