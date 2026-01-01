@@ -28,7 +28,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run prod human manual scan (1x10, no playlist)
-        run: npx playwright test scripts/playwright/manual_scan_1x10_no_playlist.spec.ts
+        run: npx playwright test --grep "manual scan 1x10 no playlis
 
       - name: Upload manual scan artifact
         if: always()
