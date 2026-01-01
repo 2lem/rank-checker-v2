@@ -1092,8 +1092,6 @@ def fetch_playlist_details(playlist_ids, token: str, cache: dict):
         owner_info = detail.get("owner") or {}
         playlist_owner = owner_info.get("display_name") or owner_info.get("id")
         playlist_last_track_added_at = None
-        if tracks_total and snapshot_id:
-            playlist_last_track_added_at = get_latest_track_added_at(pid, snapshot_id, token)
         images = detail.get("images") or []
         playlist_image_url = images[0].get("url") if images else ""
         cache[pid] = {
@@ -1122,9 +1120,9 @@ def fetch_playlist_details(playlist_ids, token: str, cache: dict):
                         "playlist_name": "-",
                         "playlist_url": "",
                         "playlist_description": "",
-                        "playlist_followers": None,
-                        "songs_count": None,
-                        "playlist_last_track_added_at": None,
+                    "playlist_followers": None,
+                    "songs_count": None,
+                    "playlist_last_track_added_at": None,
                         "playlist_image": "",
                         "playlist_owner": None,
                     }
