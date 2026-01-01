@@ -274,3 +274,23 @@ def test_scan_spotify_usage_metrics_snapshot_tracks_intervals(
     assert snapshot["peak_rps"] == 3.0
     assert snapshot["avg_rps"] == 3.0
     assert snapshot["any_429_count"] == 1
+
+
+def test_scan_spotify_usage_metrics_snapshot_guards_short_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _FakeClock()
+    tracker = spotify.SpotifyScanUsageTracker(ttl_seconds=60)
+    monkeypatch.setattr(spotify.time, "time", clock.time)
+    monkeypatch.setattr(spotify.time, "monotonic", clock.monotonic)
+
+    scan_id = "scan-usage-3"
+    tracker.start(scan_id)
+    tracker.record_start(scan_id, "/v1/search")
+    clock.advance(0.2)
+    tracker.record_start(scan_id, "/v1/search")
+
+    snapshot = tracker.snapshot(scan_id)
+    assert snapshot is not None
+    assert snapshot["spotify_total_calls"] == 2
+    assert snapshot["avg_rps"] == 2.0

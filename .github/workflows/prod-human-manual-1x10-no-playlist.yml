@@ -54,3 +54,11 @@ jobs:
         with:
           name: playwright-report-prod-human-manual-1x10-no-playlist
           path: playwright-report
+
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-trace-prod-human-manual-1x10-no-playlist
+          path: test-results
+          if-no-files-found: warn

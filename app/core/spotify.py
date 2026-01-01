@@ -277,7 +277,8 @@ class SpotifyScanUsageTracker:
                 duration = max(last_start - first_start, 0.0)
             avg_rps = None
             if duration is not None:
-                avg_rps = round(total_calls / max(duration, 0.001), 3)
+                effective_duration = max(duration, 1.0)
+                avg_rps = round(total_calls / effective_duration, 3)
             return {
                 "spotify_total_calls": total_calls,
                 "peak_rps": round(entry["peak_rps_est"], 3),
