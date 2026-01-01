@@ -1,16 +1,17 @@
-name: Prod Dedicated Fixed Scan
+name: Prod Diagnose Dedicated Scan
 
 on:
   workflow_dispatch:
 
+concurrency:
+  group: prod-diagnose
+  cancel-in-progress: true
+
 jobs:
-  dedicated-fixed-scan:
+  prod-diagnose-dedicated-scan:
     runs-on: ubuntu-latest
-    concurrency:
-      group: prod-dedicated-fixed-scan
-      cancel-in-progress: true
     env:
-      BASE_URL: https://rank-checker-v2-production.up.railway.app
+      BASE_URL: ${{ secrets.PROD_BASE_URL || 'https://rank-checker-v2-production.up.railway.app' }}
       DIAG_TRACKED_PLAYLIST_ID: 6bc10d07-d549-49c7-aa0e-bdf0a1c085bb
     steps:
       - name: Checkout repository
@@ -26,15 +27,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install requests
 
-      - name: Run dedicated fixed scan (2x3)
+      - name: Run prod diagnose dedicated scan
         run: |
           set -euo pipefail
-          python scripts/run_dedicated_scan_fixed_2x3.py
+          python scripts/prod_diagnose_click_dedicated_scan.py
 
-      - name: Upload dedicated scan artifact
+      - name: Upload prod diagnose artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dedicated-fixed-2x3
-          path: artifacts/dedicated_fixed_2x3_result.json
+          name: prod-diagnose-dedicated-click
+          path: artifacts/prod_diagnose_dedicated_click.json
           if-no-files-found: error
