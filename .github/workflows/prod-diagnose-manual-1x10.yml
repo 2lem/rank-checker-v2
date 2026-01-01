@@ -13,7 +13,6 @@ jobs:
     env:
       BASE_URL: ${{ secrets.PROD_BASE_URL || 'https://rank-checker-v2-production.up.railway.app' }}
       DIAG_TRACKED_PLAYLIST_ID: 6bc10d07-d549-49c7-aa0e-bdf0a1c085bb
-      DEBUG_TOKEN: ${{ secrets.PROD_DEBUG_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

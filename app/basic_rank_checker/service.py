@@ -26,6 +26,7 @@ from app.core.spotify import (
     PLAYLIST_URL,
     fetch_playlist_details,
     get_access_token,
+    get_scan_spotify_metrics,
     log_scan_spotify_usage,
     search_playlists,
     start_scan_spotify_usage,
@@ -725,8 +726,9 @@ def fetch_scan_details(db: Session, scan_id: str | uuid.UUID) -> dict | None:
 
     total_units = max(len(scan.scanned_countries or []) * len(scan.scanned_keywords or []), 1)
     progress_payload = _progress_payload(scan, len(queries), total_units)
+    spotify_metrics = get_scan_spotify_metrics(str(scan.id))
 
-    return {
+    payload = {
         "scan_id": scan.id,
         "tracked_playlist_id": scan.tracked_playlist_id,
         "status": scan.status,
@@ -742,3 +744,8 @@ def fetch_scan_details(db: Session, scan_id: str | uuid.UUID) -> dict | None:
         "summary": summary,
         "detailed": detailed,
     }
+
+    if spotify_metrics:
+        payload.update(spotify_metrics)
+
+    return payload

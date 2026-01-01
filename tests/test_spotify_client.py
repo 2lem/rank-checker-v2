@@ -234,3 +234,43 @@ def test_scan_spotify_usage_summary_counts_calls(
     payloads = _scan_usage_payloads(caplog)
     assert len(payloads) == 1
     assert payloads[0]["spotify_calls_total"] == 3
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def time(self) -> float:
+        return self.now
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_scan_spotify_usage_metrics_snapshot_tracks_intervals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _FakeClock()
+    tracker = spotify.SpotifyScanUsageTracker(ttl_seconds=60)
+    monkeypatch.setattr(spotify.time, "time", clock.time)
+    monkeypatch.setattr(spotify.time, "monotonic", clock.monotonic)
+
+    scan_id = "scan-usage-2"
+    tracker.start(scan_id)
+    tracker.record_start(scan_id, "/v1/playlists/test")
+    clock.advance(0.6)
+    tracker.record_start(scan_id, "/v1/playlists/test")
+    clock.advance(0.4)
+    tracker.record_start(scan_id, "/v1/playlists/test")
+    tracker.record_response(scan_id, 429)
+
+    snapshot = tracker.snapshot(scan_id)
+    assert snapshot is not None
+    assert snapshot["spotify_total_calls"] == 3
+    assert snapshot["min_inter_start_s"] == 0.4
+    assert snapshot["peak_rps"] == 3.0
+    assert snapshot["avg_rps"] == 3.0
+    assert snapshot["any_429_count"] == 1
