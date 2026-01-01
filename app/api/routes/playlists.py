@@ -70,6 +70,14 @@ def get_playlists(db: Session = Depends(get_db)):
     return list_tracked_playlists(db)
 
 
+@router.get("/{tracked_playlist_id}", response_model=TrackedPlaylistOut)
+def get_playlist(tracked_playlist_id: UUID, db: Session = Depends(get_db)):
+    tracked = get_tracked_playlist_by_id(db, tracked_playlist_id)
+    if not tracked:
+        raise HTTPException(status_code=404, detail="Tracked playlist not found.")
+    return tracked
+
+
 @router.post("", response_model=TrackedPlaylistOut, status_code=status.HTTP_201_CREATED)
 def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
     playlist_url = normalize_spotify_playlist_url(payload.playlist_url)

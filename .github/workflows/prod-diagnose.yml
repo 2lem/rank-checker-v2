@@ -1,28 +1,17 @@
-name: Prod Diagnose
+name: Prod Dedicated Fixed Scan
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    types:
-      - labeled
+  workflow_dispatch:
 
 jobs:
-  diagnose:
-    if: >-
-      github.event_name == 'push' ||
-      contains(github.event.pull_request.labels.*.name, 'run-prod-diagnose')
-    environment: production
+  dedicated-fixed-scan:
     runs-on: ubuntu-latest
     concurrency:
-      group: prod-diagnose
-      cancel-in-progress: false
+      group: prod-dedicated-fixed-scan
+      cancel-in-progress: true
     env:
       BASE_URL: https://rank-checker-v2-production.up.railway.app
-      TEST_TRACKED_PLAYLIST_ID: ${{ secrets.TEST_TRACKED_PLAYLIST_ID }}
-      TEST_PLAYLIST_URL_OR_ID: ${{ secrets.TEST_PLAYLIST_URL_OR_ID }}
-      DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
+      DIAG_TRACKED_PLAYLIST_ID: 6bc10d07-d549-49c7-aa0e-bdf0a1c085bb
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,256 +26,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install requests
 
-      - name: Run production diagnostics
+      - name: Run dedicated fixed scan (2x3)
         run: |
           set -euo pipefail
+          python scripts/run_dedicated_scan_fixed_2x3.py
 
-          if [ -z "${BASE_URL:-}" ]; then
-            echo "BASE_URL is required"
-            exit 1
-          fi
-
-          LOG_DIR="artifacts/prod-diagnose"
-          mkdir -p "$LOG_DIR"
-
-          run_request() {
-            local name="$1"
-            local method="$2"
-            local url="$3"
-            local data="${4-}"
-            local header="${5-}"
-            local body_file="${LOG_DIR}/${name}.body.txt"
-            local headers_file="${LOG_DIR}/${name}.headers.txt"
-            local metrics_file="${LOG_DIR}/${name}.metrics.txt"
-            local stderr_file="${LOG_DIR}/${name}.stderr.txt"
-            local tmp_file
-            tmp_file="$(mktemp)"
-
-            local curl_args=(
-              --http1.1
-              --max-time 30
-              -D "$headers_file"
-              -o "$tmp_file"
-              -w "CURL_HTTP_CODE=%{http_code}\nCURL_TIME_TOTAL=%{time_total}\nCURL_TIME_STARTTRANSFER=%{time_starttransfer}\nCURL_TIME_CONNECT=%{time_connect}\n"
-            )
-
-            if [ -n "$data" ]; then
-              curl_args+=( -H "Content-Type: application/json" --data "$data" )
-            fi
-            if [ -n "$header" ]; then
-              curl_args+=( -H "$header" )
-            fi
-
-            set +e
-            curl -sS -X "$method" "${curl_args[@]}" "$url" 2> "$stderr_file" > "$metrics_file"
-            local exit_code=$?
-            set -e
-
-            echo "CURL_EXIT_CODE=$exit_code" >> "$metrics_file"
-            head -c 5120 "$tmp_file" > "$body_file"
-            rm -f "$tmp_file"
-          }
-
-          BASE="${BASE_URL%/}"
-          run_request "health" "GET" "${BASE}/health"
-
-          if [ -n "${TEST_TRACKED_PLAYLIST_ID:-}" ]; then
-            run_request \
-              "refresh-stats" \
-              "POST" \
-              "${BASE}/api/playlists/${TEST_TRACKED_PLAYLIST_ID}/refresh-stats"
-          else
-            echo "TEST_TRACKED_PLAYLIST_ID missing; skipping refresh stats" > "${LOG_DIR}/refresh-stats.metrics.txt"
-          fi
-
-          if [ -n "${TEST_TRACKED_PLAYLIST_ID:-}" ]; then
-            run_request \
-              "basic-scan" \
-              "POST" \
-              "${BASE}/api/basic-rank-checker/scans" \
-              "{\"tracked_playlist_id\":\"${TEST_TRACKED_PLAYLIST_ID}\"}"
-          else
-            echo "TEST_TRACKED_PLAYLIST_ID missing; skipping basic scan" > "${LOG_DIR}/basic-scan.metrics.txt"
-          fi
-
-          if [ -n "${TEST_PLAYLIST_URL_OR_ID:-}" ]; then
-            run_request \
-              "manual-scan" \
-              "POST" \
-              "${BASE}/api/scans/manual" \
-              "{\"playlist_url\":\"${TEST_PLAYLIST_URL_OR_ID}\",\"target_keywords\":[\"test\"],\"target_countries\":[\"US\"]}"
-          else
-            echo "TEST_PLAYLIST_URL_OR_ID missing; skipping manual scan" > "${LOG_DIR}/manual-scan.metrics.txt"
-          fi
-
-          DEBUG_HEADER=""
-          if [ -n "${DEBUG_TOKEN:-}" ]; then
-            DEBUG_HEADER="X-Debug-Token: ${DEBUG_TOKEN}"
-          fi
-
-          run_request "debug-routes" "GET" "${BASE}/api/debug/routes" "" "$DEBUG_HEADER" || true
-          run_request "debug-db-activity" "GET" "${BASE}/api/debug/db-activity" "" "$DEBUG_HEADER" || true
-          run_request "debug-db-pool" "GET" "${BASE}/api/debug/db-pool" "" "$DEBUG_HEADER" || true
-          run_request "debug-sse-state" "GET" "${BASE}/api/debug/sse-state" "" "$DEBUG_HEADER" || true
-
-          assert_not_404() {
-            local name="$1"
-            local label="$2"
-            local metrics_file="${LOG_DIR}/${name}.metrics.txt"
-            if [ ! -f "$metrics_file" ]; then
-              echo "Missing metrics for ${label}" >&2
-              exit 1
-            fi
-            local http_code
-            http_code="$(grep -E '^CURL_HTTP_CODE=' "$metrics_file" | cut -d= -f2 || true)"
-            if [ "$http_code" = "404" ]; then
-              echo "${label} returned 404" >&2
-              exit 1
-            fi
-          }
-
-          assert_not_404 "debug-routes" "GET /api/debug/routes"
-          assert_not_404 "debug-sse-state" "GET /api/debug/sse-state"
-          assert_not_404 "debug-db-activity" "GET /api/debug/db-activity"
-
-          summarize_request() {
-            local name="$1"
-            local label="$2"
-            local metrics_file="${LOG_DIR}/${name}.metrics.txt"
-            if [ ! -f "$metrics_file" ]; then
-              echo "- ${label}: no metrics file found" >> "$GITHUB_STEP_SUMMARY"
-              return
-            fi
-            local http_code
-            http_code="$(grep -E '^CURL_HTTP_CODE=' "$metrics_file" | cut -d= -f2 || true)"
-            local total
-            total="$(grep -E '^CURL_TIME_TOTAL=' "$metrics_file" | cut -d= -f2 || true)"
-            local ttfb
-            ttfb="$(grep -E '^CURL_TIME_STARTTRANSFER=' "$metrics_file" | cut -d= -f2 || true)"
-            local connect
-            connect="$(grep -E '^CURL_TIME_CONNECT=' "$metrics_file" | cut -d= -f2 || true)"
-            local exit_code
-            exit_code="$(grep -E '^CURL_EXIT_CODE=' "$metrics_file" | cut -d= -f2 || true)"
-            local timeout_note=""
-            if [ "$exit_code" = "28" ]; then
-              timeout_note="(timeout)"
-            fi
-            echo "- ${label}: HTTP ${http_code:-n/a} ${timeout_note} total=${total:-n/a}s ttfb=${ttfb:-n/a}s connect=${connect:-n/a}s" >> "$GITHUB_STEP_SUMMARY"
-          }
-
-          {
-            echo "## Production diagnostics summary"
-            echo ""
-            echo "**Base URL**: ${BASE}"
-            echo ""
-            echo "### Request timings"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          summarize_request "health" "GET /health"
-          summarize_request "refresh-stats" "POST /api/playlists/refresh/{id}"
-          summarize_request "basic-scan" "POST /api/basic-rank-checker/scans"
-          summarize_request "manual-scan" "POST /api/scans/manual"
-
-          {
-            echo ""
-            echo "### Debug endpoints"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          summarize_request "debug-db-activity" "GET /api/debug/db-activity"
-          summarize_request "debug-db-pool" "GET /api/debug/db-pool"
-          summarize_request "debug-sse-state" "GET /api/debug/sse-state"
-          summarize_request "debug-routes" "GET /api/debug/routes"
-
-          DB_POOL_BODY="${LOG_DIR}/debug-db-pool.body.txt"
-          if [ -f "$DB_POOL_BODY" ]; then
-            pool_status="$(grep -Eo '"pool_status"[^,]+' "$DB_POOL_BODY" || true)"
-            if [ -n "$pool_status" ]; then
-              echo "" >> "$GITHUB_STEP_SUMMARY"
-              echo "**DB pool status**: ${pool_status}" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          fi
-
-      - name: Run 1x10 limiter verification
-        run: |
-          set -euo pipefail
-
-          python scripts/verify_prod_limiter_1x10.py
-
-      - name: Upload 1x10 limiter artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: verify-prod-limiter-1x10
-          path: artifacts/verify_prod_limiter_1x10.json
-          if-no-files-found: error
-
-      - name: Build 1x10 AFTER report artifact
-        run: |
-          set -euo pipefail
-
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          report_path = Path("artifacts/spotify_safe_zone_1x10_after_limiter.md")
-          payload = json.loads(Path("artifacts/verify_prod_limiter_1x10.json").read_text())
-
-          post_duration_ms = payload.get("post_duration_ms")
-          peak_rps = payload.get("peak_rps")
-          avg_rps = payload.get("avg_rps")
-          any_429_count = payload.get("any_429_count")
-          limiter_evidence = payload.get("limiter_evidence")
-          limiter_verdict = payload.get("limiter_verdict")
-          safety_verdict = payload.get("safety_verdict")
-
-          timeout_verdict = "CONFIRMED" if post_duration_ms is not None and post_duration_ms < 1000 else "NOT CONFIRMED"
-
-          report = f\"\"\"# Spotify safe-zone diagnostics (1 country × 10 keywords) — AFTER limiter
-
-          ## BEFORE vs AFTER (post-limiter)
-
-          | Metric | BEFORE (pre-limiter) | AFTER (post-limiter) |
-          | --- | --- | --- |
-          | POST `/api/basic-rank-checker/scans` duration_ms | ~652 ms | {post_duration_ms} |
-          | Peak Spotify start RPS | ~8.0 | {peak_rps} |
-          | Avg Spotify start RPS | ~7.0 | {avg_rps} |
-          | Any 429s | Not recorded | {any_429_count} |
-          | Throttling evidence | None | {limiter_evidence} |
-
-          ## Final verdicts (explicit)
-
-          - Timeout fix: **{timeout_verdict}**
-          - Global rate limiter: **{limiter_verdict}**
-          - Spotify safety (1 country + 10 keywords): **{safety_verdict}**
-          \"\"\"
-
-          report_path.parent.mkdir(parents=True, exist_ok=True)
-          report_path.write_text(report.strip() + \"\\n\")
-          PY
-
-      - name: Upload 1x10 AFTER report artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: spotify-safe-zone-1x10-after-limiter
-          path: artifacts/spotify_safe_zone_1x10_after_limiter.md
-          if-no-files-found: error
-
-      - name: Run prod limiter human-sim verification
-        env:
-          BASE_URL: ${{ env.BASE_URL }}
-        run: |
-          set -euo pipefail
-          python scripts/verify_prod_limiter_2x3.py
-
-      - name: Upload diagnostics artifact
+      - name: Upload dedicated scan artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: prod-diagnose
-          path: artifacts/prod-diagnose
-
-      - name: Upload limiter verification artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: prod-limiter-human-sim
-          path: artifacts/verify_prod_limiter_2x3.json
+          name: dedicated-fixed-2x3
+          path: artifacts/dedicated_fixed_2x3_result.json
+          if-no-files-found: error
