@@ -136,7 +136,7 @@ def test_spotify_paces_scan_budget(monkeypatch: pytest.MonkeyPatch, caplog: pyte
     assert payload == {"ok": True}
     assert mock_request.call_count == 1
     assert sleep_mock.call_count == 1
-    assert sleep_mock.call_args_list[0].args[0] == 0.2
+    assert sleep_mock.call_args_list[0].args[0] == 0.1
 
     pacing_logs = []
     for record in caplog.records:

@@ -25,6 +25,7 @@ from app.core.config import (
     SEARCH_URL,
     SPOTIFY_CLIENT_ID,
     SPOTIFY_CLIENT_SECRET,
+    SPOTIFY_GLOBAL_RPS,
     SPOTIFY_MAX_CONCURRENCY,
     SPOTIFY_MAX_RETRY_AFTER,
     SPOTIFY_REQUEST_TIMEOUT,
@@ -43,6 +44,30 @@ MAX_SPOTIFY_CALLS_PER_MINUTE = int(os.getenv("SPOTIFY_MAX_CALLS_PER_MINUTE", "60
 MAX_SPOTIFY_CALLS_PER_SCAN = int(os.getenv("SPOTIFY_MAX_CALLS_PER_SCAN", "2000"))
 SPOTIFY_BUDGET_PACING_THRESHOLD = float(os.getenv("SPOTIFY_BUDGET_PACING_THRESHOLD", "0.85"))
 SPOTIFY_BUDGET_PACING_SLEEP_MS = int(os.getenv("SPOTIFY_BUDGET_PACING_SLEEP_MS", "250"))
+_SPOTIFY_RPS_LOCK = Lock()
+_SPOTIFY_RPS_NEXT_ALLOWED_TIME = 0.0
+
+
+def _apply_spotify_rps_limit() -> None:
+    global _SPOTIFY_RPS_NEXT_ALLOWED_TIME
+    if SPOTIFY_GLOBAL_RPS <= 0:
+        return
+    min_interval = 1.0 / SPOTIFY_GLOBAL_RPS
+    wait_seconds = 0.0
+    with _SPOTIFY_RPS_LOCK:
+        now = time.monotonic()
+        if now < _SPOTIFY_RPS_NEXT_ALLOWED_TIME:
+            wait_seconds = _SPOTIFY_RPS_NEXT_ALLOWED_TIME - now
+        _SPOTIFY_RPS_NEXT_ALLOWED_TIME = max(_SPOTIFY_RPS_NEXT_ALLOWED_TIME, now) + min_interval
+    if wait_seconds > 0:
+        wait_ms = int(round(wait_seconds * 1000))
+        if wait_ms >= 25:
+            logger.info(
+                "[RATE_LIMIT] waiting_ms=%s reason=rps rps=%s",
+                wait_ms,
+                SPOTIFY_GLOBAL_RPS,
+            )
+        time.sleep(wait_seconds)
 
 
 def _ensure_spotify_semaphore_loop() -> asyncio.AbstractEventLoop:
@@ -561,6 +586,7 @@ def _spotify_request_with_meta(
             with _spotify_concurrency_guard():
                 if sleep_ms:
                     time.sleep(sleep_ms / 1000)
+                _apply_spotify_rps_limit()
                 response = requests.request(
                     method,
                     url,
