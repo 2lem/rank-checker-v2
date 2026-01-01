@@ -560,7 +560,7 @@ def _spotify_request_with_meta(
         try:
             with _spotify_concurrency_guard():
                 if sleep_ms:
-                    time.sleep(sleep_ms / 500)
+                    time.sleep(sleep_ms / 1000)
                 response = requests.request(
                     method,
                     url,
