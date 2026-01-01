@@ -410,18 +410,30 @@
         window.scrollTo({ top: Math.max(target, 0), behavior: 'smooth' });
       };
 
-      const parseBulkKeywords = (raw) =>
-        raw
-          .split(/[\n,]+/g)
+      const parseBulkKeywords = (raw) => {
+        const entries = (raw || '')
+          .split(/[,\n\r\t]+/g)
           .map((value) => value.trim())
           .filter(Boolean);
+        const unique = [];
+        const seen = new Set();
+        entries.forEach((entry) => {
+          const key = entry.toLowerCase();
+          if (seen.has(key)) {
+            return;
+          }
+          seen.add(key);
+          unique.push(entry);
+        });
+        return unique;
+      };
 
       const addKeywordsFromInput = (raw, manager) => {
         const value = raw || '';
         if (!value.trim()) {
           return false;
         }
-        if (!/[\n,]/.test(value)) {
+        if (!/[\n,\r\t]/.test(value)) {
           return manager.addValue(value);
         }
         const keywords = parseBulkKeywords(value);
@@ -1002,12 +1014,20 @@
         let reconnectAttempts = 0;
         let pollActiveScanId = null;
         let pollInFlight = false;
+        let pollFailureCount = 0;
+        let pollDelayMs = 5000;
         let watchdogTimer = null;
         let lastMessageAt = null;
         let resilientEnabled = window.__SSE_RESILIENCE_ENABLED__ !== false;
         let hasStopped = false;
+        let terminalState = null;
+        let connectionWarningActive = false;
+        let lastProgressMessage = '';
         const WATCHDOG_MS = 45000;
         const WATCHDOG_CHECK_MS = 5000;
+        const POLL_BASE_DELAY_MS = 5000;
+        const POLL_MAX_DELAY_MS = 30000;
+        const POLL_FAILURE_WARNING_THRESHOLD = 2;
 
         const defaultOption = document.createElement('option');
         defaultOption.value = '';
@@ -1113,13 +1133,18 @@
             progressFill.style.width = `${percent}%`;
           }
           if (progressStatus) {
-            progressStatus.textContent = message || 'Scanning...';
+            const nextMessage = message || 'Scanning...';
+            lastProgressMessage = nextMessage;
+            if (!connectionWarningActive) {
+              progressStatus.textContent = nextMessage;
+            }
           }
         };
 
         const setProgressStatus = (message) => {
-          if (progressStatus && message) {
+          if (progressStatus && message && !connectionWarningActive) {
             progressStatus.textContent = message;
+            lastProgressMessage = message;
           }
         };
 
@@ -1195,26 +1220,27 @@
               scan.tracked_playlist_name
           );
           summaryList.innerHTML = '';
-          if (!hasPlaylist) {
-            summaryLead.hidden = false;
-            summaryLead.textContent = 'Manual scan completed without a playlist.';
-            summaryList.hidden = true;
-            return;
-          }
           summaryLead.hidden = false;
           summaryList.hidden = false;
+          if (!hasPlaylist) {
+            summaryLead.textContent = 'Manual scan completed without a playlist.';
+          }
           const follower = scan.follower_snapshot ?? '—';
-          summaryLead.textContent = `At ${formatTimestamp(
-            scan.started_at
-          )}, your playlist follower count was ${follower}.`;
+          if (hasPlaylist) {
+            summaryLead.textContent = `At ${formatTimestamp(
+              scan.started_at
+            )}, your playlist follower count was ${follower}.`;
+          }
           (scan.summary || []).forEach((item) => {
             const row = document.createElement('div');
             row.className = `summary-row ${item.tracked_found_in_top20 ? '' : 'summary-row-missing'}`;
             const countryLabel = resolveMarketLabel(item.country);
             const { dateLabel, timeLabel } = formatSummaryDateParts(item.searched_at);
-            const rankText = item.tracked_found_in_top20
-              ? `your playlist rank was #${item.tracked_rank}.`
-              : 'your playlist was not found in the top 20.';
+            const rankText = hasPlaylist
+              ? item.tracked_found_in_top20
+                ? `your playlist rank was #${item.tracked_rank}.`
+                : 'your playlist was not found in the top 20.'
+              : 'top 20 results listed.';
             row.textContent = `On ${dateLabel} at ${timeLabel} in ${countryLabel} for ‘${item.keyword}’, ${rankText}`;
             summaryList.appendChild(row);
           });
@@ -1404,69 +1430,128 @@
         const isScanComplete = (scan) =>
           scan?.status === 'completed' || Boolean(scan?.finished_at) || hasResults(scan);
 
+        const showConnectionWarning = (message) => {
+          if (!progressStatus || !activeScanId || terminalState) {
+            return;
+          }
+          connectionWarningActive = true;
+          progressStatus.textContent = message;
+        };
+
+        const clearConnectionWarning = () => {
+          if (!progressStatus || !connectionWarningActive) {
+            return;
+          }
+          connectionWarningActive = false;
+          if (lastProgressMessage) {
+            progressStatus.textContent = lastProgressMessage;
+          }
+        };
+
+        const setTerminalState = (state) => {
+          terminalState = state;
+          isCompleted = state === 'completed';
+        };
+
         const stopPolling = () => {
           if (pollTimer) {
-            clearInterval(pollTimer);
+            clearTimeout(pollTimer);
             pollTimer = null;
           }
           pollStartAt = null;
           pollActiveScanId = null;
           pollInFlight = false;
+          pollFailureCount = 0;
+          pollDelayMs = POLL_BASE_DELAY_MS;
+          clearConnectionWarning();
         };
 
-        const startCompletionPoll = (scanId) => {
+        const updatePollDelay = () => {
+          if (pollFailureCount === 0) {
+            pollDelayMs = POLL_BASE_DELAY_MS;
+            return;
+          }
+          pollDelayMs = Math.min(
+            POLL_BASE_DELAY_MS * 2 ** (pollFailureCount - 1),
+            POLL_MAX_DELAY_MS
+          );
+        };
+
+        const schedulePoll = () => {
+          if (!pollActiveScanId || terminalState) {
+            return;
+          }
+          if (pollTimer) {
+            clearTimeout(pollTimer);
+          }
+          pollTimer = setTimeout(() => startCompletionPoll(pollActiveScanId), pollDelayMs);
+        };
+
+        const startCompletionPoll = async (scanId) => {
           if (!resilientEnabled || !scanId) {
             return;
           }
-          stopPolling();
-          pollActiveScanId = scanId;
-          pollStartAt = Date.now();
-          pollTimer = setInterval(async () => {
-            if (!pollActiveScanId || pollInFlight) {
-              return;
+          if (pollInFlight) {
+            return;
+          }
+          if (!pollActiveScanId) {
+            pollActiveScanId = scanId;
+            pollStartAt = Date.now();
+          }
+          if (Date.now() - pollStartAt > 10 * 60 * 1000) {
+            debugLog('Polling timed out');
+            stopPolling();
+            return;
+          }
+          pollInFlight = true;
+          try {
+            const response = await fetch(
+              `/api/basic-rank-checker/scans/${pollActiveScanId}`
+            );
+            const data = await parseJsonSafely(response);
+            if (!response.ok) {
+              throw new Error(normalizeErrorMessage(data, 'Unable to check scan status.'));
             }
-            if (Date.now() - pollStartAt > 10 * 60 * 1000) {
-              debugLog('Polling timed out');
+            pollFailureCount = 0;
+            updatePollDelay();
+            clearConnectionWarning();
+            if (isScanComplete(data)) {
+              setTerminalState('completed');
+              stopEventSource();
               stopPolling();
+              setProgress(1, 1, 'Scan completed.');
+              await loadResults(pollActiveScanId);
+              setStage(3, summarySection);
+              if (runButton) {
+                runButton.disabled = false;
+              }
               return;
             }
-            pollInFlight = true;
-            try {
-              const response = await fetch(
-                `/api/basic-rank-checker/scans/${pollActiveScanId}`
-              );
-              const data = await parseJsonSafely(response);
-              if (!response.ok) {
-                throw new Error(normalizeErrorMessage(data, 'Unable to check scan status.'));
+            if (data.status === 'failed') {
+              setTerminalState('failed');
+              stopEventSource();
+              stopPolling();
+              appendLog('Scan failed.');
+              setProgress(0, 1, 'Scan failed.');
+              setStage(1);
+              if (runButton) {
+                runButton.disabled = false;
               }
-              if (isScanComplete(data)) {
-                // Guard against reconnect/status updates after a terminal completion.
-                isCompleted = true;
-                stopEventSource();
-                stopPolling();
-                setProgress(1, 1, 'Scan completed.');
-                await loadResults(pollActiveScanId);
-                setStage(3, summarySection);
-                if (runButton) {
-                  runButton.disabled = false;
-                }
-              } else if (data.status === 'failed') {
-                isCompleted = true;
-                stopEventSource();
-                stopPolling();
-                appendLog('Scan failed.');
-                setProgress(0, 1, 'Scan failed.');
-                setStage(1);
-                if (runButton) {
-                  runButton.disabled = false;
-                }
-              }
-            } catch (error) {
-              debugLog('Polling error', error);
-            } finally {
-              pollInFlight = false;
+              return;
             }
-          }, 5000);
+          } catch (error) {
+            pollFailureCount += 1;
+            updatePollDelay();
+            if (pollFailureCount >= POLL_FAILURE_WARNING_THRESHOLD) {
+              showConnectionWarning('Connection lost. Retrying…');
+            }
+            debugLog('Polling error', error);
+          } finally {
+            pollInFlight = false;
+            if (!terminalState && pollActiveScanId) {
+              schedulePoll();
+            }
+          }
         };
 
         const clearResilientTimers = () => {
@@ -1518,6 +1603,9 @@
           if (hasStopped) {
             return false;
           }
+          if (terminalState && reason === 'connection error') {
+            return false;
+          }
           hasStopped = true;
           const statusMessages = {
             completed: '✅ Manual scan completed.',
@@ -1528,6 +1616,12 @@
           };
           const statusMessage = statusMessages[reason] || 'Manual scan stopped.';
           const variant = reason === 'completed' ? 'status-success' : 'status-error';
+          if (reason === 'completed') {
+            setTerminalState('completed');
+          } else if (reason !== 'connection error') {
+            setTerminalState('failed');
+          }
+          clearConnectionWarning();
 
           if (reason === 'completed') {
             setProgress(options.total || 1, options.total || 1, 'Scan completed.');
@@ -1542,7 +1636,6 @@
           stopEventSource();
           stopPolling();
           clearWatchdog();
-          isCompleted = reason === 'completed';
 
           if (runButton) {
             runButton.disabled = false;
@@ -1654,6 +1747,11 @@
 
           isCompleted = false;
           hasStopped = false;
+          terminalState = null;
+          connectionWarningActive = false;
+          lastProgressMessage = '';
+          pollFailureCount = 0;
+          pollDelayMs = POLL_BASE_DELAY_MS;
           runButton.disabled = true;
           resetProgress();
           setProgress(0, 0, 'Starting scan…');
@@ -1693,6 +1791,7 @@
             const handleMessage = async (event) => {
               try {
                 updateLastMessageAt();
+                clearConnectionWarning();
                 const rawText = event?.data ?? '';
                 let payload = null;
                 try {
@@ -1763,29 +1862,39 @@
                 onMessage: handleMessage,
                 onOpen: () => startWatchdog(),
                 onStatus: (status) => {
-                  if (!isCompleted) {
-                    setProgressStatus(status);
+                  if (!terminalState) {
+                    showConnectionWarning(status);
                   }
                 },
                 onError: (error) => {
                   if (typeof console !== 'undefined' && console.error) {
                     console.error('[ui] manual scan connection error', error);
                   }
-                  return safeStop('connection error');
+                  if (!activeScanId || terminalState) {
+                    return false;
+                  }
+                  showConnectionWarning('Connection lost. Retrying…');
+                  return true;
                 },
-                onMaxRetries: () => startCompletionPoll(activeScanId),
+                onMaxRetries: () => {
+                  if (!terminalState) {
+                    startCompletionPoll(activeScanId);
+                  }
+                },
               });
             } else {
               eventSource = new EventSource(eventsUrl);
               startWatchdog();
               eventSource.onmessage = handleMessage;
               eventSource.onerror = (error) => {
-                if (!isCompleted) {
-                  if (typeof console !== 'undefined' && console.error) {
-                    console.error('[ui] manual scan connection error', error);
-                  }
-                  safeStop('connection error');
+                if (typeof console !== 'undefined' && console.error) {
+                  console.error('[ui] manual scan connection error', error);
                 }
+                if (!activeScanId || terminalState) {
+                  return;
+                }
+                showConnectionWarning('Connection lost. Retrying…');
+                startCompletionPoll(activeScanId);
               };
             }
           } catch (error) {
@@ -1833,6 +1942,7 @@
           stopPolling();
           clearWatchdog();
           isCompleted = false;
+          terminalState = null;
           activeScanId = null;
           if (runButton) {
             runButton.disabled = false;
