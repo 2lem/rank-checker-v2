@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test:e2e": "playwright test",
+    "test:unit": "node --test",
     "test:smoke": "node scripts/smoke.mjs"
   },
   "devDependencies": {

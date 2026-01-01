@@ -281,8 +281,13 @@
 }
 
 .field-inline select,
-.field-inline input {
+.field-inline input,
+.field-inline textarea {
   flex: 1;
+}
+
+.field-inline textarea {
+  resize: vertical;
 }
 
 .pill-list {

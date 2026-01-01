@@ -75,12 +75,12 @@
                 <div class="scan-config-row">
                   <span class="scan-config-label">Keywords</span>
                   <div class="field-inline">
-                    <input
+                    <textarea
                       name="manual_target_keywords_input"
-                      type="text"
+                      rows="2"
                       placeholder="e.g. lofi, focus, chill"
                       data-manual-scan-keyword-input
-                    />
+                    ></textarea>
                     <button class="btn btn-secondary" type="button" data-manual-scan-keyword-add>Add</button>
                   </div>
                   <div class="pill-list" data-manual-scan-keyword-pills></div>
@@ -166,7 +166,12 @@
           <label class="field">
             <span class="field-label">Target Keywords</span>
             <div class="field-inline">
-              <input name="target_keywords_input" type="text" placeholder="e.g. lofi, focus, chill" data-keyword-input />
+              <textarea
+                name="target_keywords_input"
+                rows="2"
+                placeholder="e.g. lofi, focus, chill"
+                data-keyword-input
+              ></textarea>
               <button class="btn btn-secondary" type="button" data-keyword-add>Add</button>
             </div>
             <div class="pill-list" data-keyword-pills></div>
@@ -215,7 +220,8 @@
       </section>
     </main>
 
-    <script>
+    <script type="module">
+      import { parseKeywords } from '/static/keyword_utils.js';
       const initTrackedPlaylistsPage = () => {
         const pageRoots = document.querySelectorAll('[data-tracked-playlists-page]');
         if (pageRoots.length !== 1) {
@@ -410,33 +416,12 @@
         window.scrollTo({ top: Math.max(target, 0), behavior: 'smooth' });
       };
 
-      const parseBulkKeywords = (raw) => {
-        const entries = (raw || '')
-          .split(/[,\n\r\t]+/g)
-          .map((value) => value.trim())
-          .filter(Boolean);
-        const unique = [];
-        const seen = new Set();
-        entries.forEach((entry) => {
-          const key = entry.toLowerCase();
-          if (seen.has(key)) {
-            return;
-          }
-          seen.add(key);
-          unique.push(entry);
-        });
-        return unique;
-      };
-
       const addKeywordsFromInput = (raw, manager) => {
         const value = raw || '';
         if (!value.trim()) {
           return false;
         }
-        if (!/[\n,\r\t]/.test(value)) {
-          return manager.addValue(value);
-        }
-        const keywords = parseBulkKeywords(value);
+        const keywords = parseKeywords(value);
         let addedAny = false;
         keywords.forEach((keyword) => {
           if (manager.addValue(keyword)) {
@@ -1428,7 +1413,7 @@
         };
 
         const isScanComplete = (scan) =>
-          scan?.status === 'completed' || Boolean(scan?.finished_at) || hasResults(scan);
+          scan?.status === 'completed' || scan?.status === 'completed_partial';
 
         const showConnectionWarning = (message) => {
           if (!progressStatus || !activeScanId || terminalState) {
