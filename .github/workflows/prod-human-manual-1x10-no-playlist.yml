@@ -1,0 +1,47 @@
+name: Prod Human Manual Scan 1x10 (No Playlist)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: prod-human-manual-1x10-no-playlist
+  cancel-in-progress: true
+
+jobs:
+  prod-human-manual-scan:
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: https://rank-checker-v2-production.up.railway.app
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run prod human manual scan (1x10, no playlist)
+        run: npx playwright test scripts/playwright/manual_scan_1x10_no_playlist.spec.ts
+
+      - name: Upload manual scan artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-human-manual-1x10-no-playlist
+          path: artifacts/prod_manual_scan_1x10_no_playlist.json
+          if-no-files-found: error
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-prod-human-manual-1x10-no-playlist
+          path: playwright-report
