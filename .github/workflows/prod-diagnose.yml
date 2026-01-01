@@ -1,20 +1,25 @@
 name: Prod Diagnose
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
+  pull_request:
+    types:
+      - labeled
 
 jobs:
   diagnose:
+    if: >-
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'run-prod-diagnose')
     environment: production
     runs-on: ubuntu-latest
     concurrency:
       group: prod-diagnose
       cancel-in-progress: false
     env:
-      BASE_URL: ${{ vars.PROD_BASE_URL || vars.BASE_URL || secrets.PROD_BASE_URL || secrets.BASE_URL || 'https://rank-checker-v2-production.up.railway.app' }}
+      BASE_URL: https://rank-checker-v2-production.up.railway.app
       TEST_TRACKED_PLAYLIST_ID: ${{ secrets.TEST_TRACKED_PLAYLIST_ID }}
       TEST_PLAYLIST_URL_OR_ID: ${{ secrets.TEST_PLAYLIST_URL_OR_ID }}
       DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
@@ -200,6 +205,70 @@ jobs:
               echo "**DB pool status**: ${pool_status}" >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
+
+      - name: Run 1x10 limiter verification
+        run: |
+          set -euo pipefail
+
+          python scripts/verify_prod_limiter_1x10.py
+
+      - name: Upload 1x10 limiter artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-prod-limiter-1x10
+          path: artifacts/verify_prod_limiter_1x10.json
+          if-no-files-found: error
+
+      - name: Build 1x10 AFTER report artifact
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report_path = Path("artifacts/spotify_safe_zone_1x10_after_limiter.md")
+          payload = json.loads(Path("artifacts/verify_prod_limiter_1x10.json").read_text())
+
+          post_duration_ms = payload.get("post_duration_ms")
+          peak_rps = payload.get("peak_rps")
+          avg_rps = payload.get("avg_rps")
+          any_429_count = payload.get("any_429_count")
+          limiter_evidence = payload.get("limiter_evidence")
+          limiter_verdict = payload.get("limiter_verdict")
+          safety_verdict = payload.get("safety_verdict")
+
+          timeout_verdict = "CONFIRMED" if post_duration_ms is not None and post_duration_ms < 1000 else "NOT CONFIRMED"
+
+          report = f\"\"\"# Spotify safe-zone diagnostics (1 country × 10 keywords) — AFTER limiter
+
+          ## BEFORE vs AFTER (post-limiter)
+
+          | Metric | BEFORE (pre-limiter) | AFTER (post-limiter) |
+          | --- | --- | --- |
+          | POST `/api/basic-rank-checker/scans` duration_ms | ~652 ms | {post_duration_ms} |
+          | Peak Spotify start RPS | ~8.0 | {peak_rps} |
+          | Avg Spotify start RPS | ~7.0 | {avg_rps} |
+          | Any 429s | Not recorded | {any_429_count} |
+          | Throttling evidence | None | {limiter_evidence} |
+
+          ## Final verdicts (explicit)
+
+          - Timeout fix: **{timeout_verdict}**
+          - Global rate limiter: **{limiter_verdict}**
+          - Spotify safety (1 country + 10 keywords): **{safety_verdict}**
+          \"\"\"
+
+          report_path.parent.mkdir(parents=True, exist_ok=True)
+          report_path.write_text(report.strip() + \"\\n\")
+          PY
+
+      - name: Upload 1x10 AFTER report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotify-safe-zone-1x10-after-limiter
+          path: artifacts/spotify_safe_zone_1x10_after_limiter.md
+          if-no-files-found: error
 
       - name: Run prod limiter human-sim verification
         env:
