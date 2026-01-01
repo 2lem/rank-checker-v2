@@ -106,6 +106,10 @@
                   <div class="progress-fill" data-manual-scan-progress-fill></div>
                 </div>
                 <div class="progress-status" data-manual-scan-progress-status>Starting scan…</div>
+                <div class="progress-helper" data-manual-scan-progress-helper>
+                  Your scan is still in progress. Refresh this page in a few minutes to see your scan
+                  results.
+                </div>
                 <div class="progress-log" data-manual-scan-progress-log></div>
               </section>
               <section class="results" id="manual-scan-results" data-manual-scan-results hidden>
@@ -948,6 +952,7 @@
           const progressWrap = scanRoot.querySelector('[data-manual-scan-progress]');
           const progressFill = scanRoot.querySelector('[data-manual-scan-progress-fill]');
           const progressStatus = scanRoot.querySelector('[data-manual-scan-progress-status]');
+          const progressHelper = scanRoot.querySelector('[data-manual-scan-progress-helper]');
           const progressLog = scanRoot.querySelector('[data-manual-scan-progress-log]');
           const resultsWrap = scanRoot.querySelector('[data-manual-scan-results]');
           const summaryLead = scanRoot.querySelector('[data-manual-scan-summary-lead]');
@@ -974,6 +979,7 @@
             !progressWrap ||
             !progressFill ||
             !progressStatus ||
+            !progressHelper ||
             !progressLog ||
             !resultsWrap ||
             !summaryLead ||
@@ -990,6 +996,7 @@
 
         let currentStage = 1;
         let activeScanId = null;
+        let activeScanStatus = null;
         let eventSource = null;
         let lastProgressSignature = null;
         let pollTimer = null;
@@ -1008,6 +1015,9 @@
         let terminalState = null;
         let connectionWarningActive = false;
         let lastProgressMessage = '';
+        let etaMsFromServer = null;
+        let etaMsLive = null;
+        let etaTickInterval = null;
         const WATCHDOG_MS = 45000;
         const WATCHDOG_CHECK_MS = 5000;
         const POLL_BASE_DELAY_MS = 5000;
@@ -1109,7 +1119,83 @@
           scrollSectionToCenter(target);
         };
 
-        const setProgress = (current, total, message) => {
+        const computeEtaMinutes = (etaMs) => {
+          if (!Number.isFinite(etaMs)) {
+            return null;
+          }
+          const clampedMs = Math.max(0, etaMs);
+          if (clampedMs <= 0) {
+            return null;
+          }
+          const minutes = Math.ceil(clampedMs / 60000);
+          if (minutes < 1) {
+            return 1;
+          }
+          return minutes;
+        };
+
+        const updateProgressHelper = (etaMsValue = null) => {
+          if (!progressHelper) {
+            return;
+          }
+          const minutes = computeEtaMinutes(etaMsValue);
+          if (minutes !== null) {
+            progressHelper.textContent = `Your scan is still in progress. Estimated time remaining: ${minutes} minutes. Refresh this page in ${minutes} minutes to see your scan results.`;
+          } else {
+            progressHelper.textContent =
+              'Your scan is still in progress. Refresh this page in a few minutes to see your scan results.';
+          }
+        };
+
+        const setEtaMsFromServer = (etaMs) => {
+          if (Number.isFinite(etaMs)) {
+            etaMsFromServer = Math.max(etaMs, 0);
+            etaMsLive = etaMsFromServer;
+          } else {
+            etaMsFromServer = null;
+            etaMsLive = null;
+          }
+          updateProgressHelper(etaMsLive);
+        };
+
+        const stopEtaTick = () => {
+          if (etaTickInterval) {
+            clearInterval(etaTickInterval);
+            etaTickInterval = null;
+          }
+        };
+
+        const startEtaTick = () => {
+          if (etaTickInterval) {
+            return;
+          }
+          etaTickInterval = setInterval(() => {
+            if (!['queued', 'running'].includes(activeScanStatus)) {
+              stopEtaTick();
+              return;
+            }
+            if (!Number.isFinite(etaMsLive)) {
+              return;
+            }
+            etaMsLive = Math.max(0, etaMsLive - 1000);
+            updateProgressHelper(etaMsLive);
+          }, 1000);
+        };
+
+        const syncEtaTicker = () => {
+          if (['queued', 'running'].includes(activeScanStatus)) {
+            startEtaTick();
+          } else {
+            stopEtaTick();
+          }
+        };
+
+        const setActiveScanStatus = (status) => {
+          activeScanStatus = status;
+          syncEtaTicker();
+        };
+
+        const setProgress = (current, total, message, options = {}) => {
           if (!progressWrap) {
             return;
           }
@@ -1123,6 +1209,11 @@
             if (!connectionWarningActive) {
               progressStatus.textContent = nextMessage;
             }
+          }
+          if (options && Object.hasOwn(options, 'eta_ms')) {
+            setEtaMsFromServer(options.eta_ms);
+          } else {
+            updateProgressHelper(etaMsLive);
           }
         };
 
@@ -1152,6 +1243,10 @@
             progressLog.innerHTML = '';
           }
           lastProgressSignature = null;
+          etaMsFromServer = null;
+          etaMsLive = null;
+          stopEtaTick();
+          updateProgressHelper(null);
           if (summaryList) {
             summaryList.innerHTML = '';
           }
@@ -1436,6 +1531,9 @@
         const setTerminalState = (state) => {
           terminalState = state;
           isCompleted = state === 'completed';
+          if (state === 'completed' || state === 'failed') {
+            setActiveScanStatus(state);
+          }
         };
 
         const stopPolling = () => {
@@ -1496,6 +1594,15 @@
             const data = await parseJsonSafely(response);
             if (!response.ok) {
               throw new Error(normalizeErrorMessage(data, 'Unable to check scan status.'));
+            }
+            if (data?.status) {
+              setActiveScanStatus(data.status);
+            }
+            const etaMsValue = data?.progress?.eta_ms;
+            if (Number.isFinite(etaMsValue)) {
+              setEtaMsFromServer(etaMsValue);
+            } else if (etaMsFromServer === null) {
+              updateProgressHelper(null);
             }
             pollFailureCount = 0;
             updatePollDelay();
@@ -1592,6 +1699,8 @@
             return false;
           }
           hasStopped = true;
+          stopEtaTick();
+          setActiveScanStatus(reason === 'completed' ? 'completed' : 'failed');
           const statusMessages = {
             completed: '✅ Manual scan completed.',
             timeout: 'Manual scan timed out. Please try again.',
@@ -1740,6 +1849,8 @@
           runButton.disabled = true;
           resetProgress();
           setProgress(0, 0, 'Starting scan…');
+          updateProgressHelper(null);
+          setActiveScanStatus('running');
           setStage(2, progressWrap || scanRoot);
           uiDebug('manual-scan:start', { playlistUrl });
           stopPolling();
@@ -1802,12 +1913,15 @@
                   return;
                 }
                 if (payload.type === 'progress') {
+                  setActiveScanStatus('running');
                   const signature = `${payload.step}|${payload.total}|${payload.message}`;
                   if (signature === lastProgressSignature) {
                     return;
                   }
                   lastProgressSignature = signature;
-                  setProgress(payload.step, payload.total, payload.message);
+                  setProgress(payload.step, payload.total, payload.message, {
+                    eta_ms: payload?.eta_ms,
+                  });
                   appendLog(payload.message);
                 }
                 if (payload.type === 'done') {
@@ -1926,6 +2040,8 @@
           stopEventSource();
           stopPolling();
           clearWatchdog();
+          stopEtaTick();
+          setActiveScanStatus(null);
           isCompleted = false;
           terminalState = null;
           activeScanId = null;
