@@ -31,6 +31,7 @@ from app.core.spotify import (
     search_playlists,
     start_scan_spotify_usage,
     spotify_get,
+    spotify_scan_context,
 )
 from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
 from app.models.tracked_playlist import TrackedPlaylist
@@ -321,326 +322,331 @@ def run_basic_scan(scan_id: str) -> None:
     keywords_count = 0
     ended_status = "error"
     scan_started_at: datetime | None = None
-    start_scan_spotify_usage(scan_id)
-    try:
-        log_scan_lifecycle("task_started", scan_id)
-        scan = db.get(BasicScan, scan_uuid)
-        if scan is None:
-            return
-        scan_started_at = scan.started_at
-        if scan.status != "running":
-            scan.status = "running"
-            scan.last_event_at = _now_utc()
-            db.add(scan)
-            db.commit()
-        if _check_cancel_requested(db, scan_uuid):
-            ended_status = "cancelled"
-            return
-        tracked_playlist_id = scan.tracked_playlist_id
-        tracked_playlist = db.get(TrackedPlaylist, scan.tracked_playlist_id)
-        if tracked_playlist is None:
-            log_scan_lifecycle(
-                "failed",
-                scan_id,
-                exc_type="tracked_playlist_missing",
-                exc_message_trunc="Tracked playlist not found.",
-            )
-            scan.status = "failed"
-            scan.error_message = "Tracked playlist not found."
-            scan.error_reason = "tracked_playlist_missing"
-            scan.finished_at = _now_utc()
-            scan.last_event_at = scan.finished_at
-            db.add(scan)
-            db.commit()
-            scan_event_manager.publish(scan_id, {"type": "error", "message": scan.error_message})
-            return
-
-        scan_id_value = scan.id
-        tracked_playlist_playlist_id = tracked_playlist.playlist_id
-        tracked_playlist_followers_total = tracked_playlist.followers_total
-        countries = list(scan.scanned_countries or [])
-        keywords = list(scan.scanned_keywords or [])
-        countries_count = len(countries)
-        keywords_count = len(keywords)
-        total_steps = max(len(countries) * len(keywords), 1)
-        log_scan_start(
-            scan_id=scan_id,
-            playlist_id=str(tracked_playlist_id) if tracked_playlist_id else None,
-            countries=countries,
-            keywords=keywords,
-        )
-        _persist_scan_progress(
-            db,
-            scan_uuid,
-            completed_units=0,
-            total_units=total_steps,
-            started_at=scan.started_at,
-        )
-
-        if _check_cancel_requested(db, scan_uuid):
-            ended_status = "cancelled"
-            return
-
-        # Release the initial SELECT transaction before long-running Spotify requests.
-        db.rollback()
-
-        token = get_access_token(scan_id=scan_id)
-        follower_snapshot = _resolve_follower_snapshot(
-            tracked_playlist_playlist_id,
-            tracked_playlist_followers_total,
-            token,
-        )
-        scan = db.get(BasicScan, scan_id_value)
-        if scan is None:
-            return
-        scan.follower_snapshot = follower_snapshot
-        scan.last_event_at = _now_utc()
-        db.add(scan)
-        db.commit()
-
-        playlist_meta_cache: dict[str, dict] = {}
-        total_playlist_occurrences = 0
-        unique_playlists_fetched = 0
-        total_results_count = 0
-        skipped_iterations = 0
-        first_spotify_call_logged = False
-        first_sse_event_logged = False
-
-        step = 0
-        for country in countries:
-            for keyword in keywords:
-                if _check_cancel_requested(db, scan_uuid):
-                    ended_status = "cancelled"
-                    return
-                step += 1
-                iteration_started = time.monotonic()
-                if not first_sse_event_logged:
-                    log_scan_lifecycle("first_sse_event", scan_id)
-                    first_sse_event_logged = True
-                progress_payload = _persist_scan_progress(
-                    db,
-                    scan_uuid,
-                    completed_units=step,
-                    total_units=total_steps,
-                    started_at=scan.started_at,
-                )
-                scan_event_manager.publish(
-                    scan_id,
-                    {
-                        "type": "progress",
-                        "country": country,
-                        "keyword": keyword,
-                        "message": f"Scanning {_market_label(country)} for '{keyword}'...",
-                        "step": step,
-                        "total": total_steps,
-                        "completed_units": step,
-                        "total_units": total_steps,
-                        "progress_pct": progress_payload.get("progress_pct"),
-                        "eta_ms": progress_payload.get("eta_ms"),
-                        "eta_human": progress_payload.get("eta_human"),
-                    },
-                )
-                _log_iteration_event(
-                    "spotify_iteration_start",
-                    scan_id=scan_id,
-                    country=country,
-                    keyword=keyword,
-                )
-                try:
-                    searched_at = _now_utc()
-                    if not first_spotify_call_logged:
-                        log_scan_lifecycle(
-                            "first_spotify_call",
-                            scan_id,
-                            endpoint=SEARCH_URL,
-                        )
-                        first_spotify_call_logged = True
-                    items = search_playlists(keyword, country, token, limit=35, offset=0)[:20]
-                    if _check_cancel_requested(db, scan_uuid):
-                        ended_status = "cancelled"
-                        return
-                    _enforce_keyword_timeout(
-                        started_monotonic=iteration_started,
-                        scan_id=scan_id,
-                        country=country,
-                        keyword=keyword,
-                    )
-
-                    playlist_ids_to_fetch = [
-                        item.get("id")
-                        for item in items
-                        if item.get("id") and not item.get("placeholder")
-                    ]
-                    total_playlist_occurrences += len(playlist_ids_to_fetch)
-                    unique_playlists_fetched += _prefetch_playlist_metadata(
-                        playlist_ids_to_fetch, token, playlist_meta_cache
-                    )
-                    if _check_cancel_requested(db, scan_uuid):
-                        ended_status = "cancelled"
-                        return
-                    _enforce_keyword_timeout(
-                        started_monotonic=iteration_started,
-                        scan_id=scan_id,
-                        country=country,
-                        keyword=keyword,
-                    )
-
-                    tracked_rank = None
-                    query = BasicScanQuery(
-                        basic_scan_id=scan_id_value,
-                        country_code=country,
-                        keyword=keyword,
-                        searched_at=searched_at,
-                        tracked_rank=None,
-                        tracked_found_in_top20=False,
-                    )
-                    db.add(query)
-                    db.flush()
-
-                    results: list[BasicScanResult] = []
-                    for index, item in enumerate(items, start=1):
-                        playlist_id = item.get("id")
-                        is_placeholder = item.get("placeholder")
-                        meta = playlist_meta_cache.get(playlist_id or "") if playlist_id else {}
-                        playlist_name = meta.get("playlist_name") or item.get("name")
-                        playlist_owner = meta.get("playlist_owner") or _extract_owner(item)
-                        playlist_followers = (
-                            None if is_placeholder else meta.get("playlist_followers")
-                        )
-                        tracks_total = (item.get("tracks") or {}).get("total")
-                        songs_count = (
-                            meta.get("songs_count")
-                            if meta.get("songs_count") is not None
-                            else tracks_total
-                        )
-                        playlist_last_added_track_at = None
-                        playlist_description = meta.get("playlist_description") or item.get(
-                            "description"
-                        )
-                        playlist_url = meta.get("playlist_url") or (
-                            item.get("external_urls") or {}
-                        ).get("spotify")
-
-                        is_tracked = playlist_id == tracked_playlist_playlist_id
-                        if is_tracked and tracked_rank is None:
-                            tracked_rank = index
-                        results.append(
-                            BasicScanResult(
-                                basic_scan_query_id=query.id,
-                                rank=index,
-                                playlist_id=playlist_id,
-                                playlist_name=playlist_name,
-                                playlist_owner=playlist_owner,
-                                playlist_followers=playlist_followers,
-                                songs_count=songs_count,
-                                playlist_last_added_track_at=playlist_last_added_track_at,
-                                playlist_description=playlist_description,
-                                playlist_url=playlist_url,
-                                is_tracked_playlist=is_tracked,
-                            )
-                        )
-
-                    query.tracked_rank = tracked_rank
-                    query.tracked_found_in_top20 = tracked_rank is not None
-                    db.add_all(results)
-                    db.add(query)
-                    db.commit()
-                    _enforce_keyword_timeout(
-                        started_monotonic=iteration_started,
-                        scan_id=scan_id,
-                        country=country,
-                        keyword=keyword,
-                    )
-                    total_results_count += len(results)
-                    _log_iteration_event(
-                        "spotify_iteration_success",
-                        scan_id=scan_id,
-                        country=country,
-                        keyword=keyword,
-                    )
-                except requests.RequestException as exc:
-                    db.rollback()
-                    skipped_iterations += 1
-                    reason = _classify_spotify_error(exc)
-                    _log_iteration_event(
-                        "spotify_iteration_skipped",
-                        scan_id=scan_id,
-                        country=country,
-                        keyword=keyword,
-                        reason=reason,
-                    )
-                    continue
-
-        scan.status = "completed"
-        scan.finished_at = _now_utc()
-        scan.last_event_at = scan.finished_at
-        db.add(scan)
-        db.commit()
-        log_scan_lifecycle("completed", scan_id, results_count=total_results_count)
-        ended_status = (
-            "completed_partial" if skipped_iterations and total_results_count else "completed"
-        )
-        if skipped_iterations and total_results_count:
-            logger.info(
-                "scan_completed_partial",
-                extra={
-                    "scan_id": scan_id,
-                    "skipped_iterations": skipped_iterations,
-                    "total_results": total_results_count,
-                },
-            )
-        logger.info(
-            "Basic scan playlist metadata fetch stats",
-            extra={
-                "scan_id": scan_id,
-                "unique_playlists_fetched": unique_playlists_fetched,
-                "total_playlist_occurrences": total_playlist_occurrences,
-                "playlist_meta_cache_size": len(playlist_meta_cache),
-            },
-        )
-        completion_type = "completed_partial" if skipped_iterations and total_results_count else "done"
-        scan_event_manager.publish(
-            scan_id,
-            {
-                "type": completion_type,
-                "scan_id": scan_id,
-                "results": fetch_scan_details(db, scan_id),
-            },
-        )
-    except Exception as exc:
-        log_scan_failure(scan_id, exc)
-        logger.exception("Basic scan failed")
-        ended_status = "error"
+    with spotify_scan_context(scan_id):
+        start_scan_spotify_usage(scan_id)
         try:
+            log_scan_lifecycle("task_started", scan_id)
             scan = db.get(BasicScan, scan_uuid)
-            if scan:
+            if scan is None:
+                return
+            scan_started_at = scan.started_at
+            if scan.status != "running":
+                scan.status = "running"
+                scan.last_event_at = _now_utc()
+                db.add(scan)
+                db.commit()
+            if _check_cancel_requested(db, scan_uuid):
+                ended_status = "cancelled"
+                return
+            tracked_playlist_id = scan.tracked_playlist_id
+            tracked_playlist = db.get(TrackedPlaylist, scan.tracked_playlist_id)
+            if tracked_playlist is None:
+                log_scan_lifecycle(
+                    "failed",
+                    scan_id,
+                    exc_type="tracked_playlist_missing",
+                    exc_message_trunc="Tracked playlist not found.",
+                )
                 scan.status = "failed"
-                scan.error_message = str(exc)
-                scan.error_reason = "exception"
+                scan.error_message = "Tracked playlist not found."
+                scan.error_reason = "tracked_playlist_missing"
                 scan.finished_at = _now_utc()
                 scan.last_event_at = scan.finished_at
                 db.add(scan)
                 db.commit()
-        except Exception:
+                scan_event_manager.publish(scan_id, {"type": "error", "message": scan.error_message})
+                return
+
+            scan_id_value = scan.id
+            tracked_playlist_playlist_id = tracked_playlist.playlist_id
+            tracked_playlist_followers_total = tracked_playlist.followers_total
+            countries = list(scan.scanned_countries or [])
+            keywords = list(scan.scanned_keywords or [])
+            countries_count = len(countries)
+            keywords_count = len(keywords)
+            total_steps = max(len(countries) * len(keywords), 1)
+            log_scan_start(
+                scan_id=scan_id,
+                playlist_id=str(tracked_playlist_id) if tracked_playlist_id else None,
+                countries=countries,
+                keywords=keywords,
+            )
+            _persist_scan_progress(
+                db,
+                scan_uuid,
+                completed_units=0,
+                total_units=total_steps,
+                started_at=scan.started_at,
+            )
+
+            if _check_cancel_requested(db, scan_uuid):
+                ended_status = "cancelled"
+                return
+
+            # Release the initial SELECT transaction before long-running Spotify requests.
             db.rollback()
-        scan_event_manager.publish(scan_id, {"type": "error", "message": str(exc)})
-    finally:
-        ended_at = _now_utc()
-        log_scan_spotify_usage(
-            scan_id=scan_id,
-            scan_kind=scan_kind,
-            tracked_playlist_id=tracked_playlist_id,
-            countries_count=countries_count,
-            keywords_count=keywords_count,
-            ended_status=ended_status,
-        )
-        log_scan_end(
-            scan_id=scan_id,
-            status=ended_status,
-            duration_ms=_duration_ms(scan_started_at, ended_at),
-        )
-        log_basic_scan_end(scan_id=scan_id)
-        db.close()
+
+            token = get_access_token(scan_id=scan_id)
+            follower_snapshot = _resolve_follower_snapshot(
+                tracked_playlist_playlist_id,
+                tracked_playlist_followers_total,
+                token,
+            )
+            scan = db.get(BasicScan, scan_id_value)
+            if scan is None:
+                return
+            scan.follower_snapshot = follower_snapshot
+            scan.last_event_at = _now_utc()
+            db.add(scan)
+            db.commit()
+
+            playlist_meta_cache: dict[str, dict] = {}
+            total_playlist_occurrences = 0
+            unique_playlists_fetched = 0
+            total_results_count = 0
+            skipped_iterations = 0
+            first_spotify_call_logged = False
+            first_sse_event_logged = False
+
+            step = 0
+            for country in countries:
+                for keyword in keywords:
+                    if _check_cancel_requested(db, scan_uuid):
+                        ended_status = "cancelled"
+                        return
+                    step += 1
+                    iteration_started = time.monotonic()
+                    if not first_sse_event_logged:
+                        log_scan_lifecycle("first_sse_event", scan_id)
+                        first_sse_event_logged = True
+                    progress_payload = _persist_scan_progress(
+                        db,
+                        scan_uuid,
+                        completed_units=step,
+                        total_units=total_steps,
+                        started_at=scan.started_at,
+                    )
+                    scan_event_manager.publish(
+                        scan_id,
+                        {
+                            "type": "progress",
+                            "country": country,
+                            "keyword": keyword,
+                            "message": f"Scanning {_market_label(country)} for '{keyword}'...",
+                            "step": step,
+                            "total": total_steps,
+                            "completed_units": step,
+                            "total_units": total_steps,
+                            "progress_pct": progress_payload.get("progress_pct"),
+                            "eta_ms": progress_payload.get("eta_ms"),
+                            "eta_human": progress_payload.get("eta_human"),
+                        },
+                    )
+                    _log_iteration_event(
+                        "spotify_iteration_start",
+                        scan_id=scan_id,
+                        country=country,
+                        keyword=keyword,
+                    )
+                    try:
+                        searched_at = _now_utc()
+                        if not first_spotify_call_logged:
+                            log_scan_lifecycle(
+                                "first_spotify_call",
+                                scan_id,
+                                endpoint=SEARCH_URL,
+                            )
+                            first_spotify_call_logged = True
+                        items = search_playlists(keyword, country, token, limit=35, offset=0)[:20]
+                        if _check_cancel_requested(db, scan_uuid):
+                            ended_status = "cancelled"
+                            return
+                        _enforce_keyword_timeout(
+                            started_monotonic=iteration_started,
+                            scan_id=scan_id,
+                            country=country,
+                            keyword=keyword,
+                        )
+
+                        playlist_ids_to_fetch = [
+                            item.get("id")
+                            for item in items
+                            if item.get("id") and not item.get("placeholder")
+                        ]
+                        total_playlist_occurrences += len(playlist_ids_to_fetch)
+                        unique_playlists_fetched += _prefetch_playlist_metadata(
+                            playlist_ids_to_fetch, token, playlist_meta_cache
+                        )
+                        if _check_cancel_requested(db, scan_uuid):
+                            ended_status = "cancelled"
+                            return
+                        _enforce_keyword_timeout(
+                            started_monotonic=iteration_started,
+                            scan_id=scan_id,
+                            country=country,
+                            keyword=keyword,
+                        )
+
+                        tracked_rank = None
+                        query = BasicScanQuery(
+                            basic_scan_id=scan_id_value,
+                            country_code=country,
+                            keyword=keyword,
+                            searched_at=searched_at,
+                            tracked_rank=None,
+                            tracked_found_in_top20=False,
+                        )
+                        db.add(query)
+                        db.flush()
+
+                        results: list[BasicScanResult] = []
+                        for index, item in enumerate(items, start=1):
+                            playlist_id = item.get("id")
+                            is_placeholder = item.get("placeholder")
+                            meta = (
+                                playlist_meta_cache.get(playlist_id or "") if playlist_id else {}
+                            )
+                            playlist_name = meta.get("playlist_name") or item.get("name")
+                            playlist_owner = meta.get("playlist_owner") or _extract_owner(item)
+                            playlist_followers = (
+                                None if is_placeholder else meta.get("playlist_followers")
+                            )
+                            tracks_total = (item.get("tracks") or {}).get("total")
+                            songs_count = (
+                                meta.get("songs_count")
+                                if meta.get("songs_count") is not None
+                                else tracks_total
+                            )
+                            playlist_last_added_track_at = None
+                            playlist_description = meta.get("playlist_description") or item.get(
+                                "description"
+                            )
+                            playlist_url = meta.get("playlist_url") or (
+                                item.get("external_urls") or {}
+                            ).get("spotify")
+
+                            is_tracked = playlist_id == tracked_playlist_playlist_id
+                            if is_tracked and tracked_rank is None:
+                                tracked_rank = index
+                            results.append(
+                                BasicScanResult(
+                                    basic_scan_query_id=query.id,
+                                    rank=index,
+                                    playlist_id=playlist_id,
+                                    playlist_name=playlist_name,
+                                    playlist_owner=playlist_owner,
+                                    playlist_followers=playlist_followers,
+                                    songs_count=songs_count,
+                                    playlist_last_added_track_at=playlist_last_added_track_at,
+                                    playlist_description=playlist_description,
+                                    playlist_url=playlist_url,
+                                    is_tracked_playlist=is_tracked,
+                                )
+                            )
+
+                        query.tracked_rank = tracked_rank
+                        query.tracked_found_in_top20 = tracked_rank is not None
+                        db.add_all(results)
+                        db.add(query)
+                        db.commit()
+                        _enforce_keyword_timeout(
+                            started_monotonic=iteration_started,
+                            scan_id=scan_id,
+                            country=country,
+                            keyword=keyword,
+                        )
+                        total_results_count += len(results)
+                        _log_iteration_event(
+                            "spotify_iteration_success",
+                            scan_id=scan_id,
+                            country=country,
+                            keyword=keyword,
+                        )
+                    except requests.RequestException as exc:
+                        db.rollback()
+                        skipped_iterations += 1
+                        reason = _classify_spotify_error(exc)
+                        _log_iteration_event(
+                            "spotify_iteration_skipped",
+                            scan_id=scan_id,
+                            country=country,
+                            keyword=keyword,
+                            reason=reason,
+                        )
+                        continue
+
+            scan.status = "completed"
+            scan.finished_at = _now_utc()
+            scan.last_event_at = scan.finished_at
+            db.add(scan)
+            db.commit()
+            log_scan_lifecycle("completed", scan_id, results_count=total_results_count)
+            ended_status = (
+                "completed_partial" if skipped_iterations and total_results_count else "completed"
+            )
+            if skipped_iterations and total_results_count:
+                logger.info(
+                    "scan_completed_partial",
+                    extra={
+                        "scan_id": scan_id,
+                        "skipped_iterations": skipped_iterations,
+                        "total_results": total_results_count,
+                    },
+                )
+            logger.info(
+                "Basic scan playlist metadata fetch stats",
+                extra={
+                    "scan_id": scan_id,
+                    "unique_playlists_fetched": unique_playlists_fetched,
+                    "total_playlist_occurrences": total_playlist_occurrences,
+                    "playlist_meta_cache_size": len(playlist_meta_cache),
+                },
+            )
+            completion_type = (
+                "completed_partial" if skipped_iterations and total_results_count else "done"
+            )
+            scan_event_manager.publish(
+                scan_id,
+                {
+                    "type": completion_type,
+                    "scan_id": scan_id,
+                    "results": fetch_scan_details(db, scan_id),
+                },
+            )
+        except Exception as exc:
+            log_scan_failure(scan_id, exc)
+            logger.exception("Basic scan failed")
+            ended_status = "error"
+            try:
+                scan = db.get(BasicScan, scan_uuid)
+                if scan:
+                    scan.status = "failed"
+                    scan.error_message = str(exc)
+                    scan.error_reason = "exception"
+                    scan.finished_at = _now_utc()
+                    scan.last_event_at = scan.finished_at
+                    db.add(scan)
+                    db.commit()
+            except Exception:
+                db.rollback()
+            scan_event_manager.publish(scan_id, {"type": "error", "message": str(exc)})
+        finally:
+            ended_at = _now_utc()
+            log_scan_spotify_usage(
+                scan_id=scan_id,
+                scan_kind=scan_kind,
+                tracked_playlist_id=tracked_playlist_id,
+                countries_count=countries_count,
+                keywords_count=keywords_count,
+                ended_status=ended_status,
+            )
+            log_scan_end(
+                scan_id=scan_id,
+                status=ended_status,
+                duration_ms=_duration_ms(scan_started_at, ended_at),
+            )
+            log_basic_scan_end(scan_id=scan_id)
+            db.close()
 
 
 def fetch_scan_details(db: Session, scan_id: str | uuid.UUID) -> dict | None:
