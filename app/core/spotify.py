@@ -171,6 +171,8 @@ _SCAN_USAGE_TTL_SECONDS = 60 * 60
 
 
 class SpotifyScanUsageTracker:
+    _peak_window_seconds = 5.0
+
     def __init__(self, ttl_seconds: int) -> None:
         self._ttl_seconds = ttl_seconds
         self._entries: dict[str, dict] = {}
@@ -188,11 +190,17 @@ class SpotifyScanUsageTracker:
                     "last_seen": now_wall,
                     "count": 0,
                     "endpoints": Counter(),
+                    "first_start_monotonic": None,
+                    "last_start_monotonic": None,
+                    "min_inter_start_s": None,
+                    "recent_start_times": deque(),
+                    "peak_rps_est": 0.0,
+                    "any_429_count": 0,
                 }
             else:
                 entry["last_seen"] = now_wall
 
-    def record(self, scan_id: str | None, endpoint: str | None) -> None:
+    def record_start(self, scan_id: str | None, endpoint: str | None) -> None:
         if not scan_id:
             return
         now_wall = time.time()
@@ -206,21 +214,91 @@ class SpotifyScanUsageTracker:
                     "last_seen": now_wall,
                     "count": 0,
                     "endpoints": Counter(),
+                    "first_start_monotonic": None,
+                    "last_start_monotonic": None,
+                    "min_inter_start_s": None,
+                    "recent_start_times": deque(),
+                    "peak_rps_est": 0.0,
+                    "any_429_count": 0,
                 }
                 self._entries[scan_id] = entry
             entry["last_seen"] = now_wall
             entry["count"] += 1
             if endpoint:
                 entry["endpoints"][endpoint] += 1
+            if entry["first_start_monotonic"] is None:
+                entry["first_start_monotonic"] = now_monotonic
+            last_start = entry["last_start_monotonic"]
+            if last_start is not None:
+                interval = max(now_monotonic - last_start, 0.0)
+                min_interval = entry["min_inter_start_s"]
+                if min_interval is None or interval < min_interval:
+                    entry["min_inter_start_s"] = interval
+            entry["last_start_monotonic"] = now_monotonic
+            recent: deque[float] = entry["recent_start_times"]
+            recent.append(now_monotonic)
+            cutoff = now_monotonic - self._peak_window_seconds
+            while recent and recent[0] < cutoff:
+                recent.popleft()
+            window_cutoff = now_monotonic - 1.0
+            count_last_second = 0
+            for ts in reversed(recent):
+                if ts < window_cutoff:
+                    break
+                count_last_second += 1
+            entry["peak_rps_est"] = max(entry["peak_rps_est"], float(count_last_second))
+
+    def record_response(self, scan_id: str | None, status_code: int | None) -> None:
+        if not scan_id or status_code is None:
+            return
+        if status_code != 429:
+            return
+        now_wall = time.time()
+        with self._lock:
+            self._prune_locked(now_wall)
+            entry = self._entries.get(scan_id)
+            if entry is None:
+                return
+            entry["last_seen"] = now_wall
+            entry["any_429_count"] += 1
+
+    def snapshot(self, scan_id: str) -> dict | None:
+        now_wall = time.time()
+        with self._lock:
+            self._prune_locked(now_wall)
+            entry = self._entries.get(scan_id)
+            if entry is None:
+                return None
+            total_calls = entry["count"]
+            first_start = entry["first_start_monotonic"]
+            last_start = entry["last_start_monotonic"]
+            duration = None
+            if first_start is not None and last_start is not None:
+                duration = max(last_start - first_start, 0.0)
+            avg_rps = None
+            if duration is not None:
+                avg_rps = round(total_calls / max(duration, 0.001), 3)
+            return {
+                "spotify_total_calls": total_calls,
+                "peak_rps": round(entry["peak_rps_est"], 3),
+                "avg_rps": avg_rps,
+                "min_inter_start_s": (
+                    round(entry["min_inter_start_s"], 4)
+                    if entry["min_inter_start_s"] is not None
+                    else None
+                ),
+                "any_429_count": entry["any_429_count"],
+            }
 
     def finalize(self, scan_id: str) -> dict | None:
         now_wall = time.time()
         now_monotonic = time.monotonic()
         with self._lock:
             self._prune_locked(now_wall)
-            entry = self._entries.pop(scan_id, None)
-        if entry is None:
-            return None
+            entry = self._entries.get(scan_id)
+            if entry is None:
+                return None
+            entry["last_seen"] = now_wall
         duration_ms = round((now_monotonic - entry["start_monotonic"]) * 1000, 2)
         return {
             "total": entry["count"],
@@ -240,6 +318,10 @@ _spotify_scan_usage = SpotifyScanUsageTracker(_SCAN_USAGE_TTL_SECONDS)
 
 def get_spotify_metrics_snapshot() -> dict:
     return _spotify_metrics.snapshot()
+
+
+def get_scan_spotify_metrics(scan_id: str) -> dict | None:
+    return _spotify_scan_usage.snapshot(scan_id)
 
 
 def _log_event(event: str, **fields: object) -> None:
@@ -545,7 +627,7 @@ def _spotify_request_with_meta(
 
     while True:
         attempt += 1
-        _spotify_scan_usage.record(scan_id, path)
+        _spotify_scan_usage.record_start(scan_id, path)
         warnings, pacings = _spotify_budget.record(scan_id)
         for warning in warnings:
             _log_budget_warning(
@@ -667,6 +749,7 @@ def _spotify_request_with_meta(
         body_preview = _redact_body_preview(response.text)
         response_size = len(response.content or b"")
         _spotify_metrics.record(response.status_code, duration_ms)
+        _spotify_scan_usage.record_response(scan_id, response.status_code)
         phase = "success" if 200 <= response.status_code < 300 else "error"
         if response.status_code == 429:
             phase = "rate_limited"

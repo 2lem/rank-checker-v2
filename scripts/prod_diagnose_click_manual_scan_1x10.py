@@ -49,49 +49,6 @@ def _request_json_allow_404(method: str, url: str, **kwargs: Any) -> Any:
     return None
 
 
-def _spotify_metrics(base_url: str, debug_token: str | None) -> dict[str, Any]:
-    headers = {}
-    if debug_token:
-        headers["X-Debug-Token"] = debug_token
-    return _request_json("GET", f"{base_url}/api/debug/spotify-metrics", headers=headers)
-
-
-def _window_peak_rps(start_times: list[float]) -> float:
-    if not start_times:
-        return 0.0
-    start_times.sort()
-    peak = 1
-    left = 0
-    for right in range(len(start_times)):
-        while start_times[right] - start_times[left] > 1.0:
-            left += 1
-        peak = max(peak, right - left + 1)
-    return float(peak)
-
-
-def _min_interval_ms(start_times: list[float]) -> float | None:
-    if len(start_times) < 2:
-        return None
-    start_times.sort()
-    min_interval = min(
-        start_times[idx] - start_times[idx - 1] for idx in range(1, len(start_times))
-    )
-    return round(min_interval * 1000, 2)
-
-
-def _throttled_wait_ms_total(start_times: list[float], expected_rps: float) -> float:
-    if len(start_times) < 2 or expected_rps <= 0:
-        return 0.0
-    start_times.sort()
-    min_interval = 1.0 / expected_rps
-    total_wait = 0.0
-    for idx in range(1, len(start_times)):
-        interval = start_times[idx] - start_times[idx - 1]
-        if interval > min_interval:
-            total_wait += interval - min_interval
-    return round(total_wait * 1000, 2)
-
-
 def _finalize(payload: dict[str, Any], *, exit_code: int) -> int:
     ARTIFACT_PATH.parent.mkdir(parents=True, exist_ok=True)
     ARTIFACT_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True))
@@ -110,7 +67,6 @@ def main() -> int:
     tracked_playlist_id = os.getenv(
         "DIAG_TRACKED_PLAYLIST_ID", DEFAULT_TRACKED_PLAYLIST_ID
     ).strip()
-    debug_token = os.getenv("DEBUG_TOKEN")
     expected_rps = float(os.getenv("SPOTIFY_GLOBAL_RPS", "2.0"))
 
     payload: dict[str, Any] = {
@@ -148,16 +104,6 @@ def main() -> int:
             payload["any_429_count"] = 0
             return _finalize(payload, exit_code=1)
 
-        try:
-            metrics_snapshot = _spotify_metrics(base_url, debug_token)
-        except Exception as exc:
-            raise RuntimeError("spotify metrics unavailable; check DEBUG_TOKEN/DEBUG_TOOLS") from exc
-
-        if not isinstance(metrics_snapshot, dict):
-            raise RuntimeError("Unexpected spotify metrics payload")
-        baseline_total = int(metrics_snapshot.get("total_requests", 0))
-        baseline_429 = int(metrics_snapshot.get("status_429_count", 0))
-
         post_start = time.perf_counter()
         scan_response = _request_json(
             "POST",
@@ -178,20 +124,12 @@ def main() -> int:
 
         deadline = time.monotonic() + TIMEOUT_SECONDS
         poll_interval = 5.0
-        metrics_interval = 1.0
         status = None
         next_status_poll = 0.0
-        next_metrics_poll = 0.0
-        samples: list[tuple[float, int, int]] = []
         started_at = time.monotonic()
+        scan_payload: dict[str, Any] | None = None
         while time.monotonic() < deadline:
             now = time.monotonic()
-            if now >= next_metrics_poll:
-                metrics_snapshot = _spotify_metrics(base_url, debug_token)
-                total_requests = int(metrics_snapshot.get("total_requests", 0))
-                status_429 = int(metrics_snapshot.get("status_429_count", 0))
-                samples.append((now, total_requests, status_429))
-                next_metrics_poll = now + metrics_interval
             if now >= next_status_poll:
                 scan_payload = _request_json(
                     "GET",
@@ -204,7 +142,7 @@ def main() -> int:
                 next_status_poll = now + poll_interval
                 poll_interval = min(poll_interval + 5, 20)
 
-            sleep_for = min(next_metrics_poll, next_status_poll) - time.monotonic()
+            sleep_for = next_status_poll - time.monotonic()
             if sleep_for > 0:
                 time.sleep(min(sleep_for, 1.0))
 
@@ -216,53 +154,35 @@ def main() -> int:
             payload["safety_verdict"] = "NOT SAFE"
             return _finalize(payload, exit_code=1)
 
-        if not samples:
-            raise RuntimeError("No spotify metrics samples collected")
+        if isinstance(scan_payload, dict):
+            payload["spotify_total_calls"] = scan_payload.get("spotify_total_calls")
+            payload["peak_rps"] = scan_payload.get("peak_rps")
+            payload["avg_rps"] = scan_payload.get("avg_rps")
+            payload["min_inter_start_s"] = scan_payload.get("min_inter_start_s")
+            payload["any_429_count"] = scan_payload.get("any_429_count")
 
-        samples.sort(key=lambda entry: entry[0])
-        last_total = samples[-1][1]
-        last_429 = samples[-1][2]
-        spotify_total_calls = max(0, last_total - baseline_total)
-        any_429_count = max(0, last_429 - baseline_429)
-        payload["spotify_total_calls"] = spotify_total_calls
-        payload["any_429_count"] = any_429_count
+        peak_rps = payload.get("peak_rps")
+        avg_rps = payload.get("avg_rps")
+        min_inter_start_s = payload.get("min_inter_start_s")
 
-        start_times: list[float] = []
-        for idx in range(1, len(samples)):
-            _, total_prev, _ = samples[idx - 1]
-            current_time, total_current, _ = samples[idx]
-            delta = max(0, total_current - total_prev)
-            if delta:
-                start_times.extend([current_time] * delta)
+        min_expected_interval = 1.0 / expected_rps if expected_rps > 0 else 0.0
 
-        if start_times:
-            start_times.sort()
-            duration_seconds = max(start_times[-1] - start_times[0], 0.001)
-        else:
-            duration_seconds = max(payload["scan_total_duration_s"] or 0.0, 0.001)
-
-        peak_rps = _window_peak_rps(start_times)
-        avg_rps = round(spotify_total_calls / duration_seconds, 3) if duration_seconds else 0.0
-        payload["peak_rps"] = round(peak_rps, 3)
-        payload["avg_rps"] = avg_rps
-
-        min_interval_ms = _min_interval_ms(start_times)
-        payload["min_inter_start_s"] = (
-            round(min_interval_ms / 1000, 4) if min_interval_ms is not None else None
-        )
-        _throttled_wait_ms_total(start_times, expected_rps)
-
-        if payload["peak_rps"] <= expected_rps and payload["avg_rps"] <= expected_rps:
+        if peak_rps is None or min_inter_start_s is None:
+            limiter_verdict = "PARTIAL"
+        elif peak_rps <= expected_rps and min_inter_start_s >= min_expected_interval:
             limiter_verdict = "ACTIVE"
-        elif payload["peak_rps"] <= expected_rps * 1.5 and payload["avg_rps"] <= expected_rps * 1.2:
+        elif peak_rps <= expected_rps * 1.5:
             limiter_verdict = "PARTIAL"
         else:
             limiter_verdict = "NOT ACTIVE"
         payload["limiter_verdict"] = limiter_verdict
 
-        if payload["peak_rps"] <= 2.0 and payload["avg_rps"] <= 2.0 and any_429_count == 0:
+        any_429_count = payload.get("any_429_count")
+        if peak_rps is None or avg_rps is None or any_429_count is None:
+            safety_verdict = "NOT SAFE"
+        elif peak_rps <= 2.0 and avg_rps <= 2.0 and any_429_count == 0:
             safety_verdict = "SAFE"
-        elif payload["peak_rps"] <= 2.2 and payload["avg_rps"] <= 2.2 and any_429_count == 0:
+        elif peak_rps <= 2.2 and avg_rps <= 2.2 and any_429_count == 0:
             safety_verdict = "BORDERLINE"
         else:
             safety_verdict = "NOT SAFE"
@@ -275,9 +195,9 @@ def main() -> int:
 
         if payload["post_duration_ms"] is None or payload["post_duration_ms"] >= 1000:
             return _finalize(payload, exit_code=1)
-        if any_429_count > 0:
+        if any_429_count and any_429_count > 0:
             return _finalize(payload, exit_code=1)
-        if payload["peak_rps"] > 2.0 or payload["avg_rps"] > 2.0:
+        if safety_verdict == "NOT SAFE":
             return _finalize(payload, exit_code=1)
 
         return _finalize(payload, exit_code=0)
