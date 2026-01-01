@@ -142,6 +142,16 @@ test('manual scan 1x10 no playlist', async ({ page }) => {
 
   const scanTotalDurationS = Math.round((scanEndAt - scanStartAt) / 1000);
 
+  if (
+    statusPayload.spotify_total_calls == null ||
+    statusPayload.peak_rps == null ||
+    statusPayload.avg_rps == null ||
+    statusPayload.min_inter_start_s == null ||
+    statusPayload.any_429_count == null
+  ) {
+    throw new Error('Scan status did not include required Spotify metrics.');
+  }
+
   const spotifyTotalCalls = Number(statusPayload.spotify_total_calls);
   const peakRps = Number(statusPayload.peak_rps);
   const avgRps = Number(statusPayload.avg_rps);
@@ -155,26 +165,23 @@ test('manual scan 1x10 no playlist', async ({ page }) => {
     Number.isNaN(minInterStartS) ||
     Number.isNaN(any429Count)
   ) {
-    throw new Error('Scan status did not include required Spotify metrics.');
+    throw new Error('Scan status metrics were not numeric.');
   }
 
   const timeoutVerdict = postDurationMs < 1000 ? 'CONFIRMED' : 'NOT CONFIRMED';
   let limiterVerdict: 'ACTIVE' | 'PARTIAL' | 'NOT ACTIVE' = 'NOT ACTIVE';
-  if (peakRps <= 2.0 && minInterStartS >= 0.5 && any429Count === 0) {
+  if (peakRps <= 2.0 && avgRps <= 2.0 && minInterStartS >= 0.5 && any429Count === 0) {
     limiterVerdict = 'ACTIVE';
-  } else if (avgRps <= 2 && peakRps > 2 && any429Count === 0) {
+  } else if (avgRps <= 2.0 && any429Count === 0 && (peakRps > 2.0 || minInterStartS < 0.5)) {
     limiterVerdict = 'PARTIAL';
   }
 
   let safetyVerdict: 'SAFE' | 'BORDERLINE' | 'NOT SAFE' = 'NOT SAFE';
-  if (peakRps <= 2 && avgRps <= 2 && any429Count === 0) {
+  if (any429Count > 0 || peakRps > 2.3 || avgRps > 2.1) {
+    safetyVerdict = 'NOT SAFE';
+  } else if (peakRps <= 2 && avgRps <= 2 && any429Count === 0) {
     safetyVerdict = 'SAFE';
-  } else if (
-    any429Count === 0 &&
-    peakRps <= 2.5 &&
-    avgRps <= 2.5 &&
-    (peakRps > 2 || avgRps > 2)
-  ) {
+  } else {
     safetyVerdict = 'BORDERLINE';
   }
 

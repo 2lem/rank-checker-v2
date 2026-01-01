@@ -11,6 +11,7 @@ from collections import Counter, deque
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from threading import Event, Lock, Thread
 from urllib.parse import urlparse
@@ -168,11 +169,10 @@ class SpotifyMetrics:
 
 _spotify_metrics = SpotifyMetrics(_METRICS_WINDOW_SECONDS)
 _SCAN_USAGE_TTL_SECONDS = 60 * 60
+_current_scan_id: ContextVar[str | None] = ContextVar("spotify_scan_id", default=None)
 
 
 class SpotifyScanUsageTracker:
-    _peak_window_seconds = 5.0
-
     def __init__(self, ttl_seconds: int) -> None:
         self._ttl_seconds = ttl_seconds
         self._entries: dict[str, dict] = {}
@@ -193,18 +193,22 @@ class SpotifyScanUsageTracker:
                     "first_start_monotonic": None,
                     "last_start_monotonic": None,
                     "min_inter_start_s": None,
-                    "recent_start_times": deque(),
-                    "peak_rps_est": 0.0,
+                    "start_times": [],
                     "any_429_count": 0,
                 }
             else:
                 entry["last_seen"] = now_wall
 
-    def record_start(self, scan_id: str | None, endpoint: str | None) -> None:
+    def record_start(
+        self,
+        scan_id: str | None,
+        endpoint: str | None,
+        start_monotonic: float | None = None,
+    ) -> None:
         if not scan_id:
             return
         now_wall = time.time()
-        now_monotonic = time.monotonic()
+        now_monotonic = start_monotonic if start_monotonic is not None else time.monotonic()
         with self._lock:
             self._prune_locked(now_wall)
             entry = self._entries.get(scan_id)
@@ -217,8 +221,7 @@ class SpotifyScanUsageTracker:
                     "first_start_monotonic": None,
                     "last_start_monotonic": None,
                     "min_inter_start_s": None,
-                    "recent_start_times": deque(),
-                    "peak_rps_est": 0.0,
+                    "start_times": [],
                     "any_429_count": 0,
                 }
                 self._entries[scan_id] = entry
@@ -235,18 +238,7 @@ class SpotifyScanUsageTracker:
                 if min_interval is None or interval < min_interval:
                     entry["min_inter_start_s"] = interval
             entry["last_start_monotonic"] = now_monotonic
-            recent: deque[float] = entry["recent_start_times"]
-            recent.append(now_monotonic)
-            cutoff = now_monotonic - self._peak_window_seconds
-            while recent and recent[0] < cutoff:
-                recent.popleft()
-            window_cutoff = now_monotonic - 1.0
-            count_last_second = 0
-            for ts in reversed(recent):
-                if ts < window_cutoff:
-                    break
-                count_last_second += 1
-            entry["peak_rps_est"] = max(entry["peak_rps_est"], float(count_last_second))
+            entry["start_times"].append(now_monotonic)
 
     def record_response(self, scan_id: str | None, status_code: int | None) -> None:
         if not scan_id or status_code is None:
@@ -269,6 +261,7 @@ class SpotifyScanUsageTracker:
             entry = self._entries.get(scan_id)
             if entry is None:
                 return None
+            start_times = list(entry["start_times"])
             total_calls = entry["count"]
             first_start = entry["first_start_monotonic"]
             last_start = entry["last_start_monotonic"]
@@ -277,11 +270,11 @@ class SpotifyScanUsageTracker:
                 duration = max(last_start - first_start, 0.0)
             avg_rps = None
             if duration is not None:
-                effective_duration = max(duration, 1.0)
+                effective_duration = max(duration, 1e-6)
                 avg_rps = round(total_calls / effective_duration, 3)
             return {
                 "spotify_total_calls": total_calls,
-                "peak_rps": round(entry["peak_rps_est"], 3),
+                "peak_rps": round(self._compute_peak_rps(start_times), 3),
                 "avg_rps": avg_rps,
                 "min_inter_start_s": (
                     round(entry["min_inter_start_s"], 4)
@@ -313,6 +306,16 @@ class SpotifyScanUsageTracker:
         for scan_id in stale_ids:
             self._entries.pop(scan_id, None)
 
+    @staticmethod
+    def _compute_peak_rps(start_times: list[float]) -> float:
+        peak = 0
+        left = 0
+        for right, ts in enumerate(start_times):
+            while ts - start_times[left] > 1.0:
+                left += 1
+            peak = max(peak, right - left + 1)
+        return float(peak)
+
 
 _spotify_scan_usage = SpotifyScanUsageTracker(_SCAN_USAGE_TTL_SECONDS)
 
@@ -323,6 +326,19 @@ def get_spotify_metrics_snapshot() -> dict:
 
 def get_scan_spotify_metrics(scan_id: str) -> dict | None:
     return _spotify_scan_usage.snapshot(scan_id)
+
+
+@contextmanager
+def spotify_scan_context(scan_id: str | None) -> Iterator[None]:
+    token = _current_scan_id.set(scan_id)
+    try:
+        yield
+    finally:
+        _current_scan_id.reset(token)
+
+
+def _resolve_scan_id(scan_id: str | None) -> str | None:
+    return scan_id or _current_scan_id.get()
 
 
 def _log_event(event: str, **fields: object) -> None:
@@ -625,11 +641,11 @@ def _spotify_request_with_meta(
     base_headers = dict(headers or {})
     if token:
         base_headers["Authorization"] = f"Bearer {token}"
+    resolved_scan_id = _resolve_scan_id(scan_id)
 
     while True:
         attempt += 1
-        _spotify_scan_usage.record_start(scan_id, path)
-        warnings, pacings = _spotify_budget.record(scan_id)
+        warnings, pacings = _spotify_budget.record(resolved_scan_id)
         for warning in warnings:
             _log_budget_warning(
                 scope=warning["scope"],
@@ -664,6 +680,7 @@ def _spotify_request_with_meta(
             with _spotify_concurrency_guard():
                 started_at = datetime.now(timezone.utc).isoformat()
                 start_monotonic = time.monotonic()
+                _spotify_scan_usage.record_start(resolved_scan_id, path, start_monotonic)
                 log_spotify_call(path)
                 _log_spotify_call(
                     phase="start",
@@ -672,7 +689,7 @@ def _spotify_request_with_meta(
                     status_code=None,
                     duration_ms=None,
                     retry_after_sec=None,
-                    scan_id=scan_id,
+                    scan_id=resolved_scan_id,
                     playlist_id=playlist_id,
                     country=country,
                     keyword=keyword,
@@ -680,7 +697,7 @@ def _spotify_request_with_meta(
                 _log_event(
                     "spotify_api_request",
                     request_id=request_id,
-                    scan_id=scan_id,
+                    scan_id=resolved_scan_id,
                     job_id=job_id,
                     method=method,
                     path=path,
@@ -705,7 +722,7 @@ def _spotify_request_with_meta(
                 status_code=None,
                 duration_ms=duration_ms,
                 retry_after_sec=None,
-                scan_id=scan_id,
+                scan_id=resolved_scan_id,
                 playlist_id=playlist_id,
                 country=country,
                 keyword=keyword,
@@ -713,7 +730,7 @@ def _spotify_request_with_meta(
             _log_event(
                 "spotify_api_error",
                 request_id=request_id,
-                scan_id=scan_id,
+                scan_id=resolved_scan_id,
                 job_id=job_id,
                 method=method,
                 path=path,
@@ -727,7 +744,7 @@ def _spotify_request_with_meta(
                 _log_event(
                     "spotify_api_retry",
                     request_id=request_id,
-                    scan_id=scan_id,
+                    scan_id=resolved_scan_id,
                     job_id=job_id,
                     method=method,
                     path=path,
@@ -750,7 +767,7 @@ def _spotify_request_with_meta(
         body_preview = _redact_body_preview(response.text)
         response_size = len(response.content or b"")
         _spotify_metrics.record(response.status_code, duration_ms)
-        _spotify_scan_usage.record_response(scan_id, response.status_code)
+        _spotify_scan_usage.record_response(resolved_scan_id, response.status_code)
         phase = "success" if 200 <= response.status_code < 300 else "error"
         if response.status_code == 429:
             phase = "rate_limited"
@@ -761,7 +778,7 @@ def _spotify_request_with_meta(
             status_code=response.status_code,
             duration_ms=duration_ms,
             retry_after_sec=retry_after_sec,
-            scan_id=scan_id,
+            scan_id=resolved_scan_id,
             playlist_id=playlist_id,
             country=country,
             keyword=keyword,
@@ -769,7 +786,7 @@ def _spotify_request_with_meta(
         _log_event(
             "spotify_api_response",
             request_id=request_id,
-            scan_id=scan_id,
+            scan_id=resolved_scan_id,
             job_id=job_id,
             method=method,
             path=path,
@@ -786,7 +803,7 @@ def _spotify_request_with_meta(
                 _log_event(
                     "spotify_api_error",
                     request_id=request_id,
-                    scan_id=scan_id,
+                    scan_id=resolved_scan_id,
                     job_id=job_id,
                     method=method,
                     path=path,
@@ -806,7 +823,7 @@ def _spotify_request_with_meta(
             _log_event(
                 "spotify_api_retry",
                 request_id=request_id,
-                scan_id=scan_id,
+                scan_id=resolved_scan_id,
                 job_id=job_id,
                 method=method,
                 path=path,
@@ -825,7 +842,7 @@ def _spotify_request_with_meta(
                 _log_event(
                     "spotify_api_retry",
                     request_id=request_id,
-                    scan_id=scan_id,
+                    scan_id=resolved_scan_id,
                     job_id=job_id,
                     method=method,
                     path=path,
@@ -838,7 +855,7 @@ def _spotify_request_with_meta(
             _log_event(
                 "spotify_api_error",
                 request_id=request_id,
-                scan_id=scan_id,
+                scan_id=resolved_scan_id,
                 job_id=job_id,
                 method=method,
                 path=path,
@@ -852,7 +869,7 @@ def _spotify_request_with_meta(
             _log_event(
                 "spotify_api_error",
                 request_id=request_id,
-                scan_id=scan_id,
+                scan_id=resolved_scan_id,
                 job_id=job_id,
                 method=method,
                 path=path,

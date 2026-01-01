@@ -293,4 +293,92 @@ def test_scan_spotify_usage_metrics_snapshot_guards_short_duration(
     snapshot = tracker.snapshot(scan_id)
     assert snapshot is not None
     assert snapshot["spotify_total_calls"] == 2
-    assert snapshot["avg_rps"] == 2.0
+    assert snapshot["avg_rps"] == 10.0
+
+
+def test_scan_spotify_usage_metrics_peak_rps_uses_sliding_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _FakeClock()
+    tracker = spotify.SpotifyScanUsageTracker(ttl_seconds=60)
+    monkeypatch.setattr(spotify.time, "time", clock.time)
+    monkeypatch.setattr(spotify.time, "monotonic", clock.monotonic)
+
+    scan_id = "scan-usage-4"
+    tracker.start(scan_id)
+    tracker.record_start(scan_id, "/v1/search")
+    clock.advance(0.2)
+    tracker.record_start(scan_id, "/v1/search")
+    clock.advance(0.2)
+    tracker.record_start(scan_id, "/v1/search")
+    clock.advance(1.1)
+    tracker.record_start(scan_id, "/v1/search")
+
+    snapshot = tracker.snapshot(scan_id)
+    assert snapshot is not None
+    assert snapshot["peak_rps"] == 3.0
+    assert snapshot["min_inter_start_s"] == 0.2
+
+
+def test_spotify_request_wrapper_increments_scan_call_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = spotify.SpotifyScanUsageTracker(ttl_seconds=60)
+    monkeypatch.setattr(spotify, "_spotify_scan_usage", tracker)
+
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.headers = {}
+    mock_response.text = "{}"
+    mock_response.content = b"{}"
+    mock_response.json.return_value = {}
+    mock_response.url = "https://api.spotify.com/v1/search"
+    monkeypatch.setattr(spotify.requests, "request", Mock(return_value=mock_response))
+
+    scan_id = "scan-wrapper-1"
+    spotify.start_scan_spotify_usage(scan_id)
+    spotify.spotify_get("https://api.spotify.com/v1/search", token="token", scan_id=scan_id)
+    spotify.spotify_get("https://api.spotify.com/v1/search", token="token", scan_id=scan_id)
+
+    snapshot = tracker.snapshot(scan_id)
+    assert snapshot is not None
+    assert snapshot["spotify_total_calls"] == 2
+
+
+def test_spotify_request_wrapper_tracks_429_responses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = spotify.SpotifyScanUsageTracker(ttl_seconds=60)
+    monkeypatch.setattr(spotify, "_spotify_scan_usage", tracker)
+    monkeypatch.setattr(spotify.random, "uniform", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(spotify.time, "sleep", Mock())
+
+    response_429 = Mock()
+    response_429.status_code = 429
+    response_429.headers = {"Retry-After": "0"}
+    response_429.text = "{}"
+    response_429.content = b"{}"
+    response_429.json.return_value = {}
+    response_429.url = "https://api.spotify.com/v1/search"
+
+    response_ok = Mock()
+    response_ok.status_code = 200
+    response_ok.headers = {}
+    response_ok.text = "{}"
+    response_ok.content = b"{}"
+    response_ok.json.return_value = {}
+    response_ok.url = "https://api.spotify.com/v1/search"
+
+    monkeypatch.setattr(
+        spotify.requests,
+        "request",
+        Mock(side_effect=[response_429, response_ok]),
+    )
+
+    scan_id = "scan-wrapper-429"
+    spotify.start_scan_spotify_usage(scan_id)
+    spotify.spotify_get("https://api.spotify.com/v1/search", token="token", scan_id=scan_id)
+
+    snapshot = tracker.snapshot(scan_id)
+    assert snapshot is not None
+    assert snapshot["any_429_count"] == 1
