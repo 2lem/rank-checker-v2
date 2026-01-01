@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from datetime import datetime, timezone
 
 import requests
@@ -41,6 +42,20 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _ensure_aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _normalize_scan_id(scan_id: str | uuid.UUID) -> uuid.UUID:
+    if isinstance(scan_id, uuid.UUID):
+        return scan_id
+    return uuid.UUID(str(scan_id))
+
+
 def _format_eta_human(seconds_remaining: float) -> str:
     total_seconds = max(int(round(seconds_remaining)), 0)
     hours = total_seconds // 3600
@@ -58,7 +73,11 @@ def _calculate_eta(
 ) -> tuple[int | None, str | None]:
     if not started_at or completed_units <= 0 or total_units <= 0:
         return None, None
-    elapsed_seconds = (now - started_at).total_seconds()
+    started = _ensure_aware(started_at)
+    now_value = _ensure_aware(now)
+    if started is None or now_value is None:
+        return None, None
+    elapsed_seconds = (now_value - started).total_seconds()
     if elapsed_seconds <= 0:
         return None, None
     avg_seconds = elapsed_seconds / max(completed_units, 1)
@@ -70,13 +89,14 @@ def _calculate_eta(
 
 def _persist_scan_progress(
     db: Session,
-    scan_id: str,
+    scan_id: str | uuid.UUID,
     *,
     completed_units: int,
     total_units: int,
     started_at: datetime | None,
 ) -> dict[str, int | str | None]:
-    scan = db.get(BasicScan, scan_id)
+    normalized_scan_id = _normalize_scan_id(scan_id)
+    scan = db.get(BasicScan, normalized_scan_id)
     if scan is None:
         return {
             "completed_units": completed_units,
@@ -168,14 +188,17 @@ def _classify_spotify_error(exc: Exception) -> str:
 
 
 def _duration_ms(started_at: datetime | None, ended_at: datetime | None) -> int | None:
-    if not started_at or not ended_at:
+    start_value = _ensure_aware(started_at)
+    end_value = _ensure_aware(ended_at)
+    if not start_value or not end_value:
         return None
-    return int(max((ended_at - started_at).total_seconds() * 1000, 0))
+    return int(max((end_value - start_value).total_seconds() * 1000, 0))
 
 
-def _check_cancel_requested(db: Session, scan_id: str) -> bool:
+def _check_cancel_requested(db: Session, scan_id: str | uuid.UUID) -> bool:
     db.expire_all()
-    scan = db.get(BasicScan, scan_id)
+    normalized_scan_id = _normalize_scan_id(scan_id)
+    scan = db.get(BasicScan, normalized_scan_id)
     if scan is None:
         return True
     if scan.status == "cancelled":
@@ -290,6 +313,7 @@ def run_basic_scan(scan_id: str) -> None:
         return
 
     db = SessionLocal()
+    scan_uuid = _normalize_scan_id(scan_id)
     scan_kind = "basic"
     tracked_playlist_id: str | None = None
     countries_count = 0
@@ -299,7 +323,7 @@ def run_basic_scan(scan_id: str) -> None:
     start_scan_spotify_usage(scan_id)
     try:
         log_scan_lifecycle("task_started", scan_id)
-        scan = db.get(BasicScan, scan_id)
+        scan = db.get(BasicScan, scan_uuid)
         if scan is None:
             return
         scan_started_at = scan.started_at
@@ -308,7 +332,7 @@ def run_basic_scan(scan_id: str) -> None:
             scan.last_event_at = _now_utc()
             db.add(scan)
             db.commit()
-        if _check_cancel_requested(db, scan_id):
+        if _check_cancel_requested(db, scan_uuid):
             ended_status = "cancelled"
             return
         tracked_playlist_id = scan.tracked_playlist_id
@@ -346,13 +370,13 @@ def run_basic_scan(scan_id: str) -> None:
         )
         _persist_scan_progress(
             db,
-            scan_id,
+            scan_uuid,
             completed_units=0,
             total_units=total_steps,
             started_at=scan.started_at,
         )
 
-        if _check_cancel_requested(db, scan_id):
+        if _check_cancel_requested(db, scan_uuid):
             ended_status = "cancelled"
             return
 
@@ -384,7 +408,7 @@ def run_basic_scan(scan_id: str) -> None:
         step = 0
         for country in countries:
             for keyword in keywords:
-                if _check_cancel_requested(db, scan_id):
+                if _check_cancel_requested(db, scan_uuid):
                     ended_status = "cancelled"
                     return
                 step += 1
@@ -394,7 +418,7 @@ def run_basic_scan(scan_id: str) -> None:
                     first_sse_event_logged = True
                 progress_payload = _persist_scan_progress(
                     db,
-                    scan_id,
+                    scan_uuid,
                     completed_units=step,
                     total_units=total_steps,
                     started_at=scan.started_at,
@@ -431,7 +455,7 @@ def run_basic_scan(scan_id: str) -> None:
                         )
                         first_spotify_call_logged = True
                     items = search_playlists(keyword, country, token, limit=35, offset=0)[:20]
-                    if _check_cancel_requested(db, scan_id):
+                    if _check_cancel_requested(db, scan_uuid):
                         ended_status = "cancelled"
                         return
                     _enforce_keyword_timeout(
@@ -450,7 +474,7 @@ def run_basic_scan(scan_id: str) -> None:
                     unique_playlists_fetched += _prefetch_playlist_metadata(
                         playlist_ids_to_fetch, token, playlist_meta_cache
                     )
-                    if _check_cancel_requested(db, scan_id):
+                    if _check_cancel_requested(db, scan_uuid):
                         ended_status = "cancelled"
                         return
                     _enforce_keyword_timeout(
@@ -594,7 +618,7 @@ def run_basic_scan(scan_id: str) -> None:
         logger.exception("Basic scan failed")
         ended_status = "error"
         try:
-            scan = db.get(BasicScan, scan_id)
+            scan = db.get(BasicScan, scan_uuid)
             if scan:
                 scan.status = "failed"
                 scan.error_message = str(exc)
@@ -625,8 +649,9 @@ def run_basic_scan(scan_id: str) -> None:
         db.close()
 
 
-def fetch_scan_details(db: Session, scan_id: str) -> dict | None:
-    scan = db.get(BasicScan, scan_id)
+def fetch_scan_details(db: Session, scan_id: str | uuid.UUID) -> dict | None:
+    normalized_scan_id = _normalize_scan_id(scan_id)
+    scan = db.get(BasicScan, normalized_scan_id)
     if scan is None:
         return None
 
