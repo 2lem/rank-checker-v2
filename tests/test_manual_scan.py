@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.basic_rank_checker import manual_service
+from app.core import spotify
 from app.models.base import Base
 from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
 
@@ -79,3 +80,50 @@ def test_manual_scan_processes_multiple_keywords(monkeypatch, tmp_path) -> None:
 
     assert search_calls == [("lofi", "US"), ("focus", "US")]
     assert sorted({query.keyword for query in queries}) == ["focus", "lofi"]
+
+
+def test_manual_scan_uses_global_limiter(monkeypatch, tmp_path) -> None:
+    session_factory = _make_session_factory(tmp_path)
+    monkeypatch.setattr(manual_service, "SessionLocal", session_factory)
+    monkeypatch.setattr(manual_service.scan_event_manager, "publish", lambda *_, **__: None)
+    monkeypatch.setattr(manual_service, "start_scan_spotify_usage", lambda *_, **__: None)
+    monkeypatch.setattr(manual_service, "log_scan_spotify_usage", lambda *_, **__: None)
+    monkeypatch.setattr(manual_service, "get_access_token", lambda *_, **__: "token")
+    monkeypatch.setattr(manual_service.basic_service, "fetch_scan_details", lambda *_: {})
+
+    limiter_calls: list[float] = []
+
+    def fake_acquire(rps: float) -> None:
+        limiter_calls.append(rps)
+
+    monkeypatch.setattr(spotify._spotify_global_rps_limiter, "acquire", fake_acquire)
+
+    class FakeResponse:
+        status_code = 200
+        content = b"{}"
+        headers: dict[str, str] = {}
+        text = ""
+
+        def json(self):
+            return {"playlists": {"items": []}}
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_request(*_args, **_kwargs):
+        return FakeResponse()
+
+    monkeypatch.setattr(spotify.requests, "request", fake_request)
+
+    with session_factory() as session:
+        scan = manual_service.create_manual_scan(
+            session,
+            playlist_url=None,
+            target_keywords=["lofi", "focus"],
+            target_countries=["US"],
+        )
+        scan_id = scan.id
+
+    manual_service.run_manual_scan(scan_id)
+
+    assert len(limiter_calls) >= 2

@@ -1,0 +1,42 @@
+name: Prod Diagnose Manual Scan 1x10
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: prod-diagnose-manual-1x10
+  cancel-in-progress: true
+
+jobs:
+  prod-diagnose-manual-scan:
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: ${{ secrets.PROD_BASE_URL || 'https://rank-checker-v2-production.up.railway.app' }}
+      DIAG_TRACKED_PLAYLIST_ID: 6bc10d07-d549-49c7-aa0e-bdf0a1c085bb
+      DEBUG_TOKEN: ${{ secrets.PROD_DEBUG_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests
+
+      - name: Run prod diagnose manual scan 1x10
+        run: |
+          set -euo pipefail
+          python scripts/prod_diagnose_click_manual_scan_1x10.py
+
+      - name: Upload prod diagnose artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-diagnose-manual-1x10
+          path: artifacts/prod_diagnose_manual_1x10.json
+          if-no-files-found: error

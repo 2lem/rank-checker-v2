@@ -696,6 +696,9 @@
             return null;
           }
           const clampedMs = Math.max(0, etaMs);
+          if (clampedMs <= 0) {
+            return null;
+          }
           const minutes = Math.ceil(clampedMs / 60000);
           if (clampedMs > 0 && minutes < 1) {
             return 1;
@@ -712,7 +715,7 @@
             progressHelper.textContent = `Your scan is still in progress. Estimated time remaining: ${minutes} minutes. Refresh this page in ${minutes} minutes to see your scan results.`;
           } else {
             progressHelper.textContent =
-              'Your scan is still in progress. Estimating remaining time. Refresh this page soon to see your scan results.';
+              'Your scan is still in progress. Refresh this page in a few minutes to see your scan results.';
           }
         };
 
