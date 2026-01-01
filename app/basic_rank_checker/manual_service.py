@@ -279,14 +279,7 @@ def run_manual_scan(scan_id: str) -> None:
                             if meta.get("songs_count") is not None
                             else tracks_total
                         )
-                        playlist_last_added_track_at_raw = meta.get(
-                            "playlist_last_track_added_at"
-                        )
-                        playlist_last_added_track_at = (
-                            basic_service._parse_iso_datetime(playlist_last_added_track_at_raw)
-                            if isinstance(playlist_last_added_track_at_raw, str)
-                            else playlist_last_added_track_at_raw
-                        )
+                        playlist_last_added_track_at = None
                         playlist_description = meta.get("playlist_description") or item.get(
                             "description"
                         )

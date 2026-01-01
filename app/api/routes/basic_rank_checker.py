@@ -399,7 +399,6 @@ def export_detailed_csv(
             BasicScanResult.playlist_owner,
             BasicScanResult.playlist_followers,
             BasicScanResult.songs_count,
-            BasicScanResult.playlist_last_added_track_at,
             BasicScanResult.playlist_description,
             BasicScanResult.playlist_url,
         )
@@ -429,7 +428,6 @@ def export_detailed_csv(
                 row.playlist_owner,
                 row.playlist_followers,
                 row.songs_count,
-                _format_csv_datetime(row.playlist_last_added_track_at, tz),
                 row.playlist_description,
                 row.playlist_url,
             ]
@@ -448,7 +446,6 @@ def export_detailed_csv(
             "playlist_owner",
             "playlist_followers",
             "songs_count",
-            "playlist_last_added_track_at",
             "playlist_description",
             "playlist_url",
         ],

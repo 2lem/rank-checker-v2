@@ -10,7 +10,6 @@ from app.core.spotify import (
     PLAYLIST_URL,
     extract_playlist_id,
     get_access_token,
-    get_latest_track_added_at,
     normalize_spotify_playlist_url,
     spotify_get,
 )
@@ -30,7 +29,6 @@ from app.schemas.playlist import (
 )
 from app.services.playlist_metadata import (
     build_spotify_url,
-    parse_spotify_timestamp,
     raise_spotify_request_error,
     select_largest_image_url,
     select_smallest_image_url,
@@ -151,14 +149,7 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
     owner_name = owner_info.get("display_name") or owner_info.get("id")
     followers_total = (detail.get("followers") or {}).get("total")
     tracks_count = (detail.get("tracks") or {}).get("total")
-    snapshot_id = detail.get("snapshot_id")
     playlist_last_updated_at = None
-    if tracks_count and snapshot_id:
-        try:
-            last_track_added_at = get_latest_track_added_at(playlist_id, snapshot_id, token)
-            playlist_last_updated_at = parse_spotify_timestamp(last_track_added_at)
-        except Exception as exc:
-            logger.warning("Failed to fetch latest track added for %s: %s", playlist_id, exc)
     last_meta_refresh_at = datetime.now(timezone.utc)
 
     return create_tracked_playlist(
