@@ -82,7 +82,7 @@
             <h2>Insights</h2>
             <p>Follower trends and summary metrics for this playlist.</p>
           </div>
-          <div class="panel-body insights-body">
+          <div class="panel-body insights-body" id="insights-root">
             <section class="insights-block insights-graph">
               <div class="insights-block-header">
                 <div>
@@ -115,7 +115,7 @@
                   </button>
                 </div>
               </div>
-              <div class="insights-chart" data-insights-chart>
+              <div class="insights-chart" data-insights-chart id="follower-graph-root">
                 <p class="summary-note insights-empty" data-insights-chart-empty hidden>
                   Not enough follower snapshots to chart yet.
                 </p>
@@ -815,6 +815,9 @@
           if (pollResult.updated) {
             didUpdate = true;
             setStatus('✅ Playlist stats updated.', 'status-success');
+            if (typeof loadInsights === 'function') {
+              loadInsights();
+            }
           } else {
             setStatus(
               'Refresh completed, but UI update timed out. Please reload.',
@@ -930,6 +933,7 @@
       let insightsPayload = null;
       let activeInsightsRange = '7d';
       let insightsLoading = false;
+      let insightsReloadRequested = false;
 
       const parseSnapshotDate = (value) => {
         if (!value) {
@@ -1422,7 +1426,11 @@
       };
 
       loadInsights = async () => {
-        if (!playlistId || insightsLoading) {
+        if (!playlistId) {
+          return;
+        }
+        if (insightsLoading) {
+          insightsReloadRequested = true;
           return;
         }
         insightsLoading = true;
@@ -1442,6 +1450,10 @@
           }
         } finally {
           insightsLoading = false;
+          if (insightsReloadRequested) {
+            insightsReloadRequested = false;
+            await loadInsights();
+          }
         }
       };
 
