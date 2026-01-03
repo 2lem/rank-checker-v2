@@ -790,12 +790,43 @@
   text-align: left;
 }
 
+.scan-history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.scan-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.scan-history-compare-cell {
+  width: 40px;
+}
+
+.scan-history-checkbox {
+  cursor: pointer;
+}
+
 .scan-history-row {
   cursor: pointer;
 }
 
 .scan-history-row:hover td {
   background: #f7f7f7;
+}
+
+.scan-history-row.is-disabled {
+  cursor: default;
+}
+
+.scan-history-row.is-disabled:hover td {
+  background: transparent;
 }
 
 .tracked-highlight {
@@ -820,6 +851,63 @@
 .scan-history-detail-message.is-error {
   color: #a12222;
   font-weight: 600;
+}
+
+.scan-history-compare-panel {
+  margin-top: 16px;
+}
+
+.scan-history-compare-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+
+.scan-history-compare-message.is-error {
+  color: #a12222;
+  font-weight: 600;
+}
+
+.scan-history-compare-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.scan-history-compare-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.scan-history-compare-card h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.scan-history-compare-card dl {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.scan-history-compare-card dt {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.scan-history-compare-card dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.comparison-table {
+  min-width: 960px;
 }
 
 .btn-csv {
