@@ -161,9 +161,38 @@
         </section>
 
         <section class="panel scan-history-panel is-hidden" id="scan-history-section">
-          <div class="panel-header">
-            <h2>Scan History</h2>
-            <p>Recent scan runs for this playlist.</p>
+          <div class="panel-header scan-history-header">
+            <div>
+              <h2>Scan History</h2>
+              <p>Recent scan runs for this playlist.</p>
+            </div>
+            <div class="scan-history-actions">
+              <button
+                class="pill pill-primary"
+                type="button"
+                data-scan-history-compare-toggle
+                aria-pressed="false"
+              >
+                Compare Results
+              </button>
+              <button
+                class="pill pill-secondary"
+                type="button"
+                data-scan-history-compare-cancel
+                hidden
+              >
+                Cancel
+              </button>
+              <button
+                class="btn btn-secondary"
+                type="button"
+                data-scan-history-compare-run
+                disabled
+                hidden
+              >
+                Compare
+              </button>
+            </div>
           </div>
           <div class="panel-body">
             <div class="scan-history" data-scan-history data-tracked-playlist-id="{{ playlist.id }}">
@@ -178,6 +207,7 @@
                         <th>Scan date</th>
                         <th>Country</th>
                         <th>Keyword</th>
+                        <th data-scan-history-compare-column hidden></th>
                         <th>Status</th>
                       </tr>
                     </thead>
@@ -186,6 +216,37 @@
                 </div>
               </div>
             </div>
+            <section class="panel scan-history-compare-panel" data-scan-history-compare hidden>
+              <div class="panel-header">
+                <h2>Comparison Results</h2>
+                <p>Review the differences between two scans.</p>
+              </div>
+              <div class="panel-body">
+                <div class="scan-history-compare-actions">
+                  <button class="btn btn-secondary" type="button" data-scan-history-compare-back>
+                    Back to Scan History
+                  </button>
+                </div>
+                <p class="summary-note scan-history-compare-message" data-scan-history-compare-message hidden></p>
+                <div class="scan-history-compare-summary" data-scan-history-compare-summary></div>
+                <div class="table-scroll" data-scan-history-compare-table hidden>
+                  <table class="results-table comparison-table">
+                    <thead>
+                      <tr>
+                        <th>Country</th>
+                        <th>Keyword</th>
+                        <th>Rank A</th>
+                        <th>Rank B</th>
+                        <th>Δ (B-A)</th>
+                        <th>Found A</th>
+                        <th>Found B</th>
+                      </tr>
+                    </thead>
+                    <tbody data-scan-history-compare-body></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
             <section class="panel scan-history-detail-panel" data-scan-history-detail hidden>
               <div class="panel-header">
                 <h2>Scan Details</h2>
@@ -237,6 +298,7 @@
       let loadLatestScan = null;
       let loadScanHistory = null;
       let resetHistoryDetail = null;
+      let resetHistoryCompare = null;
       let lastTabScrollY = null;
       let activeScanStatus = null;
 
@@ -317,6 +379,9 @@
         }
         if (nextTab !== 'history' && typeof resetHistoryDetail === 'function') {
           resetHistoryDetail({ skipScroll: true });
+        }
+        if (nextTab !== 'history' && typeof resetHistoryCompare === 'function') {
+          resetHistoryCompare({ skipScroll: true });
         }
         lastTabScrollY = window.scrollY;
         activeSection = nextTab;
@@ -721,6 +786,18 @@
           empty: historyRoot?.querySelector('[data-scan-history-empty]'),
           list: historyRoot?.querySelector('[data-scan-history-list]'),
         };
+        const historyCompareElements = {
+          toggle: scanHistorySection?.querySelector('[data-scan-history-compare-toggle]'),
+          cancel: scanHistorySection?.querySelector('[data-scan-history-compare-cancel]'),
+          run: scanHistorySection?.querySelector('[data-scan-history-compare-run]'),
+          column: scanHistorySection?.querySelector('[data-scan-history-compare-column]'),
+          panel: scanHistorySection?.querySelector('[data-scan-history-compare]'),
+          back: scanHistorySection?.querySelector('[data-scan-history-compare-back]'),
+          message: scanHistorySection?.querySelector('[data-scan-history-compare-message]'),
+          summary: scanHistorySection?.querySelector('[data-scan-history-compare-summary]'),
+          table: scanHistorySection?.querySelector('[data-scan-history-compare-table]'),
+          body: scanHistorySection?.querySelector('[data-scan-history-compare-body]'),
+        };
         const historyDetailMessage = historyDetailPanel?.querySelector(
           '[data-scan-history-detail-message]'
         );
@@ -743,6 +820,13 @@
         let etaTickInterval = null;
         let selectedHistoryScanId = null;
         let historyDetailRequestId = 0;
+        let compareMode = false;
+        let selectedCompareScanIds = [];
+        let compareLoading = false;
+        let compareError = null;
+        let compareData = null;
+        let compareRequestId = 0;
+        let latestHistoryItems = [];
         const WATCHDOG_MS = 45000;
         const WATCHDOG_CHECK_MS = 5000;
 
@@ -1385,6 +1469,43 @@
           }
         };
 
+        const setHistoryCompareMessage = (message, { isError = false } = {}) => {
+          if (!historyCompareElements.message) {
+            return;
+          }
+          historyCompareElements.message.textContent = message || '';
+          historyCompareElements.message.hidden = !message;
+          historyCompareElements.message.classList.toggle('is-error', Boolean(message) && isError);
+        };
+
+        const clearHistoryCompareResults = () => {
+          if (historyCompareElements.summary) {
+            historyCompareElements.summary.innerHTML = '';
+          }
+          if (historyCompareElements.body) {
+            historyCompareElements.body.innerHTML = '';
+          }
+          if (historyCompareElements.table) {
+            historyCompareElements.table.hidden = true;
+          }
+        };
+
+        const showHistoryComparePanel = () => {
+          if (!historyCompareElements.panel) {
+            return;
+          }
+          historyCompareElements.panel.hidden = false;
+          historyCompareElements.panel.classList.add('is-active');
+        };
+
+        const hideHistoryComparePanel = () => {
+          if (!historyCompareElements.panel) {
+            return;
+          }
+          historyCompareElements.panel.classList.remove('is-active');
+          historyCompareElements.panel.hidden = true;
+        };
+
         const showHistoryDetailPanel = () => {
           if (!historyDetailPanel) {
             return;
@@ -1401,6 +1522,180 @@
           historyDetailPanel.hidden = true;
         };
 
+        const updateCompareControls = () => {
+          if (historyCompareElements.toggle) {
+            historyCompareElements.toggle.classList.toggle('is-active', compareMode);
+            historyCompareElements.toggle.setAttribute('aria-pressed', String(compareMode));
+          }
+          if (historyCompareElements.cancel) {
+            historyCompareElements.cancel.hidden = !compareMode;
+          }
+          if (historyCompareElements.run) {
+            historyCompareElements.run.hidden = !compareMode;
+            historyCompareElements.run.disabled = selectedCompareScanIds.length !== 2 || compareLoading;
+          }
+        };
+
+        const applyCompareSelectionState = () => {
+          if (!historyElements.body) {
+            return;
+          }
+          const limitReached = selectedCompareScanIds.length >= 2;
+          const checkboxes = historyElements.body.querySelectorAll('[data-scan-history-checkbox]');
+          checkboxes.forEach((checkbox) => {
+            const isSelected = selectedCompareScanIds.includes(checkbox.value);
+            checkbox.checked = isSelected;
+            checkbox.disabled = compareLoading || (!isSelected && limitReached);
+          });
+        };
+
+        const setCompareMode = (enabled, { skipScroll = false } = {}) => {
+          compareMode = enabled;
+          selectedCompareScanIds = [];
+          compareLoading = false;
+          compareError = null;
+          compareData = null;
+          compareRequestId += 1;
+          setHistoryCompareMessage('');
+          clearHistoryCompareResults();
+          hideHistoryComparePanel();
+          if (typeof resetHistoryDetail === 'function') {
+            resetHistoryDetail({ skipScroll: true, scrollTarget: scanHistorySection || historyRoot });
+          }
+          if (historyElements.list) {
+            showSection(historyElements.list);
+          }
+          if (historyCompareElements.column) {
+            historyCompareElements.column.hidden = !compareMode;
+          }
+          renderScanHistory(latestHistoryItems);
+          updateCompareControls();
+          applyCompareSelectionState();
+          if (!skipScroll) {
+            scrollSectionToCenter(scanHistorySection || historyRoot);
+          }
+        };
+
+        const renderCompareSummaryCard = (scan, label) => {
+          const scanDate = formatTimestamp(scan?.created_at || scan?.started_at || scan?.finished_at);
+          const statusLabel = formatScanHistoryStatus(scan?.status);
+          const countriesCount = Array.isArray(scan?.scanned_countries)
+            ? scan.scanned_countries.length
+            : '—';
+          const keywordsCount = Array.isArray(scan?.scanned_keywords)
+            ? scan.scanned_keywords.length
+            : '—';
+
+          return `
+            <div class="scan-history-compare-card">
+              <h4>Scan ${label}</h4>
+              <dl>
+                <div>
+                  <dt>Scan date</dt>
+                  <dd>${scanDate}</dd>
+                </div>
+                <div>
+                  <dt>Status</dt>
+                  <dd>${statusLabel}</dd>
+                </div>
+                <div>
+                  <dt>Countries</dt>
+                  <dd>${countriesCount}</dd>
+                </div>
+                <div>
+                  <dt>Keywords</dt>
+                  <dd>${keywordsCount}</dd>
+                </div>
+              </dl>
+            </div>
+          `;
+        };
+
+        const formatCompareRank = (value) => {
+          if (value === null || typeof value === 'undefined') {
+            return '—';
+          }
+          return Number.isFinite(value) ? value : '—';
+        };
+
+        const formatCompareFound = (value) => {
+          if (value === true) {
+            return 'Yes';
+          }
+          if (value === false) {
+            return 'No';
+          }
+          return '—';
+        };
+
+        const renderHistoryComparison = (scanA, scanB) => {
+          if (!historyCompareElements.summary || !historyCompareElements.body) {
+            return;
+          }
+          historyCompareElements.summary.innerHTML = `
+            ${renderCompareSummaryCard(scanA, 'A')}
+            ${renderCompareSummaryCard(scanB, 'B')}
+          `;
+
+          const comparisonMap = new Map();
+          const ingestSummary = (scan, label) => {
+            const summary = Array.isArray(scan?.summary) ? scan.summary : [];
+            summary.forEach((entry) => {
+              const countryCode = entry?.country || '—';
+              const keyword = entry?.keyword || '—';
+              const key = `${countryCode}|||${keyword}`;
+              if (!comparisonMap.has(key)) {
+                comparisonMap.set(key, { country: countryCode, keyword });
+              }
+              const row = comparisonMap.get(key);
+              row[`rank${label}`] = entry?.tracked_rank ?? null;
+              row[`found${label}`] = entry?.tracked_found_in_top20 ?? null;
+            });
+          };
+          ingestSummary(scanA, 'A');
+          ingestSummary(scanB, 'B');
+
+          const rows = Array.from(comparisonMap.values()).sort((first, second) => {
+            const countryA = resolveMarketLabel(first.country) || '';
+            const countryB = resolveMarketLabel(second.country) || '';
+            if (countryA !== countryB) {
+              return countryA.localeCompare(countryB);
+            }
+            return (first.keyword || '').localeCompare(second.keyword || '');
+          });
+
+          historyCompareElements.body.innerHTML = '';
+          if (!rows.length) {
+            setHistoryCompareMessage('No summary data available to compare.');
+            if (historyCompareElements.table) {
+              historyCompareElements.table.hidden = true;
+            }
+            return;
+          }
+
+          rows.forEach((row) => {
+            const rankA = Number.isFinite(row.rankA) ? row.rankA : null;
+            const rankB = Number.isFinite(row.rankB) ? row.rankB : null;
+            const delta =
+              Number.isFinite(rankA) && Number.isFinite(rankB) ? rankB - rankA : null;
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${resolveMarketLabel(row.country) || '—'}</td>
+              <td>${row.keyword || '—'}</td>
+              <td>${formatCompareRank(rankA)}</td>
+              <td>${formatCompareRank(rankB)}</td>
+              <td>${delta === null ? '—' : delta}</td>
+              <td>${formatCompareFound(row.foundA)}</td>
+              <td>${formatCompareFound(row.foundB)}</td>
+            `;
+            historyCompareElements.body.appendChild(tr);
+          });
+
+          if (historyCompareElements.table) {
+            historyCompareElements.table.hidden = false;
+          }
+        };
+
         resetHistoryDetail = ({ skipScroll = false, scrollTarget = null } = {}) => {
           selectedHistoryScanId = null;
           historyDetailRequestId += 1;
@@ -1413,6 +1708,10 @@
           if (!skipScroll) {
             scrollSectionToCenter(scrollTarget || scanHistorySection || historyRoot);
           }
+        };
+
+        resetHistoryCompare = ({ skipScroll = false } = {}) => {
+          setCompareMode(false, { skipScroll });
         };
 
         const connectEventStream = (scanId) => {
@@ -1711,12 +2010,63 @@
           }
         };
 
+        const openHistoryCompare = async () => {
+          if (selectedCompareScanIds.length !== 2) {
+            return;
+          }
+          compareLoading = true;
+          compareError = null;
+          compareRequestId += 1;
+          const requestId = compareRequestId;
+          updateCompareControls();
+          if (historyElements.list) {
+            hideSection(historyElements.list);
+          }
+          hideHistoryDetailPanel();
+          showHistoryComparePanel();
+          clearHistoryCompareResults();
+          setHistoryCompareMessage('Loading comparison results…');
+          if (historyCompareElements.panel) {
+            historyCompareElements.panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+
+          try {
+            const [scanA, scanB] = await Promise.all(
+              selectedCompareScanIds.map((scanId) => fetchScanDetail(scanId))
+            );
+            if (requestId !== compareRequestId) {
+              return;
+            }
+            compareData = { scanA, scanB };
+            renderHistoryComparison(scanA, scanB);
+            setHistoryCompareMessage('');
+          } catch (error) {
+            if (requestId !== compareRequestId) {
+              return;
+            }
+            compareError = error;
+            setHistoryCompareMessage(
+              normalizeErrorMessage(error, 'Unable to load comparison results.'),
+              { isError: true }
+            );
+          } finally {
+            if (requestId === compareRequestId) {
+              compareLoading = false;
+              updateCompareControls();
+              applyCompareSelectionState();
+            }
+          }
+        };
+
         const renderScanHistory = (items) => {
           if (!historyElements.body || !historyElements.table || !historyElements.empty) {
             return;
           }
+          latestHistoryItems = Array.isArray(items) ? items : [];
           historyElements.body.innerHTML = '';
-          if (!items.length) {
+          if (!latestHistoryItems.length) {
+            selectedCompareScanIds = [];
+            updateCompareControls();
             historyElements.empty.textContent = 'No scan history yet for this playlist.';
             showSection(historyElements.empty);
             hideSection(historyElements.table);
@@ -1724,7 +2074,10 @@
           }
           hideSection(historyElements.empty);
           showSection(historyElements.table);
-          items.forEach((item) => {
+          if (historyCompareElements.column) {
+            historyCompareElements.column.hidden = !compareMode;
+          }
+          latestHistoryItems.forEach((item) => {
             const row = document.createElement('tr');
             const countries = (item.countries || [])
               .map((country) => resolveMarketLabel(country))
@@ -1733,30 +2086,79 @@
             const scanDate = formatTimestamp(item.created_at || item.started_at || item.finished_at);
             const scanId = item.scan_id;
             row.classList.add('scan-history-row');
+            if (compareMode) {
+              row.classList.add('is-disabled');
+            }
             row.dataset.scanId = scanId || '';
-            row.setAttribute('role', 'button');
-            row.tabIndex = 0;
+            if (!compareMode) {
+              row.setAttribute('role', 'button');
+              row.tabIndex = 0;
+            }
+            const compareCell = compareMode
+              ? `
+                <td class="scan-history-compare-cell">
+                  <input
+                    type="checkbox"
+                    class="scan-history-checkbox"
+                    data-scan-history-checkbox
+                    value="${scanId || ''}"
+                  />
+                </td>
+              `
+              : '';
             row.innerHTML = `
               <td>${scanDate}</td>
               <td>${countries || '—'}</td>
               <td>${keywords || '—'}</td>
+              ${compareCell}
               <td>${formatScanHistoryStatus(item.status)}</td>
             `;
-            const activateRow = () => {
-              if (!scanId) {
-                return;
+            if (compareMode) {
+              const checkbox = row.querySelector('[data-scan-history-checkbox]');
+              if (checkbox) {
+                checkbox.addEventListener('change', (event) => {
+                  if (!scanId) {
+                    event.target.checked = false;
+                    return;
+                  }
+                  const isChecked = event.target.checked;
+                  const alreadySelected = selectedCompareScanIds.includes(scanId);
+                  if (isChecked) {
+                    if (alreadySelected) {
+                      return;
+                    }
+                    if (selectedCompareScanIds.length >= 2) {
+                      event.target.checked = false;
+                      return;
+                    }
+                    selectedCompareScanIds = [...selectedCompareScanIds, scanId];
+                  } else {
+                    selectedCompareScanIds = selectedCompareScanIds.filter(
+                      (value) => value !== scanId
+                    );
+                  }
+                  updateCompareControls();
+                  applyCompareSelectionState();
+                });
               }
-              openHistoryDetail(scanId);
-            };
-            row.addEventListener('click', activateRow);
-            row.addEventListener('keydown', (event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                activateRow();
-              }
-            });
+            } else {
+              const activateRow = () => {
+                if (!scanId || compareMode) {
+                  return;
+                }
+                openHistoryDetail(scanId);
+              };
+              row.addEventListener('click', activateRow);
+              row.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  activateRow();
+                }
+              });
+            }
             historyElements.body.appendChild(row);
           });
+          applyCompareSelectionState();
         };
 
         loadScanHistory = async () => {
@@ -1793,6 +2195,32 @@
         historyDetailBackButton?.addEventListener('click', (event) => {
           event.preventDefault();
           resetHistoryDetail({ scrollTarget: historyRoot || scanHistorySection });
+        });
+
+        historyCompareElements.toggle?.addEventListener('click', (event) => {
+          event.preventDefault();
+          if (compareMode) {
+            return;
+          }
+          setCompareMode(true, { skipScroll: true });
+        });
+
+        historyCompareElements.cancel?.addEventListener('click', (event) => {
+          event.preventDefault();
+          resetHistoryCompare({ skipScroll: true });
+        });
+
+        historyCompareElements.run?.addEventListener('click', (event) => {
+          event.preventDefault();
+          if (historyCompareElements.run?.disabled) {
+            return;
+          }
+          openHistoryCompare();
+        });
+
+        historyCompareElements.back?.addEventListener('click', (event) => {
+          event.preventDefault();
+          resetHistoryCompare({ skipScroll: true });
         });
 
         runButton?.addEventListener('click', (event) => {
