@@ -800,7 +800,7 @@
 }
 
 .insights-daily-dates {
-  margin: 0;
+  margin: revert;
   font-size: 12px;
   color: #555;
 }
