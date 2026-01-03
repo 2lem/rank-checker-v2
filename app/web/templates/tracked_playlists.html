@@ -245,8 +245,8 @@
             <h2>Tracked Playlists</h2>
             <div class="tracked-section-actions">
               <div class="tracked-order-status" data-order-status role="status" aria-live="polite"></div>
-              <button class="pill pill-secondary reorder-toggle" type="button" data-reorder-toggle aria-pressed="false">
-                Reorder
+              <button class="btn btn-secondary reorder-toggle" type="button" data-reorder-toggle aria-pressed="false">
+                Re-Order
               </button>
             </div>
           </div>
@@ -490,7 +490,7 @@
             isReorderActive = false;
             pageRoot.classList.remove('reorder-mode');
             if (reorderToggle) {
-              reorderToggle.textContent = 'Reorder';
+            reorderToggle.textContent = 'Re-Order';
               reorderToggle.setAttribute('aria-pressed', 'false');
             }
           } catch (error) {
@@ -549,7 +549,7 @@
             isReorderActive = true;
             currentOrder = getOrderedIds();
             pageRoot.classList.add('reorder-mode');
-            reorderToggle.textContent = 'Done';
+            reorderToggle.textContent = 'Save';
             reorderToggle.setAttribute('aria-pressed', 'true');
             updateReorderControls();
             return;

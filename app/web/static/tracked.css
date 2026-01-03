@@ -67,6 +67,21 @@
   color: #38598a;
 }
 
+.reorder-toggle {
+  box-shadow: none;
+}
+
+.reorder-mode .reorder-toggle {
+  background: #ff4c00;
+  color: #ffffff;
+  border-color: #ff4c00;
+  box-shadow: var(--shadow-md);
+}
+
+.reorder-mode .reorder-toggle:hover {
+  transform: translateY(-1px);
+}
+
 .reorder-controls {
   display: none;
   align-items: center;
