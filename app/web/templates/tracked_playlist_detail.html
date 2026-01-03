@@ -209,14 +209,18 @@
                   No scan history yet for this playlist.
                 </p>
                 <div class="table-scroll" data-scan-history-table hidden>
-                  <table class="results-table">
+                  <table class="results-table scan-history-table">
                     <thead>
                       <tr>
-                        <th>Scan date</th>
-                        <th>Country</th>
-                        <th>Keyword</th>
-                        <th data-scan-history-compare-column hidden></th>
-                        <th>Status</th>
+                        <th class="scan-history-col-country">Country</th>
+                        <th class="scan-history-col-keyword">Keyword</th>
+                        <th class="scan-history-col-status">Status</th>
+                        <th class="scan-history-col-date">Scan date</th>
+                        <th
+                          class="scan-history-compare-column"
+                          data-scan-history-compare-column
+                          hidden
+                        ></th>
                       </tr>
                     </thead>
                     <tbody data-scan-history-body></tbody>
@@ -245,17 +249,19 @@
                 <p class="summary-note scan-history-compare-message" data-scan-history-compare-message hidden></p>
                 <div class="scan-history-compare-summary" data-scan-history-compare-summary></div>
                 <div class="scan-history-compare-followers" data-scan-history-compare-followers hidden>
-                  <table class="results-table comparison-table comparison-followers-table">
-                    <thead>
-                      <tr>
-                        <th>Metric</th>
-                        <th>Scan A</th>
-                        <th>Scan B</th>
-                        <th>Change</th>
-                      </tr>
-                    </thead>
-                    <tbody data-scan-history-compare-followers-body></tbody>
-                  </table>
+                  <div class="comparison-metrics-table-wrap">
+                    <table class="results-table comparison-table comparison-followers-table">
+                      <thead>
+                        <tr>
+                          <th>Metric</th>
+                          <th>Scan A</th>
+                          <th>Scan B</th>
+                          <th>Change</th>
+                        </tr>
+                      </thead>
+                      <tbody data-scan-history-compare-followers-body></tbody>
+                    </table>
+                  </div>
                 </div>
                 <div class="table-scroll" data-scan-history-compare-table hidden>
                   <table class="results-table comparison-table">
@@ -861,6 +867,8 @@
         let latestHistoryItems = [];
         const WATCHDOG_MS = 45000;
         const WATCHDOG_CHECK_MS = 5000;
+        const compareColumnMediaQuery = window.matchMedia('(max-width: 640px)');
+        let compareColumnListener = null;
 
         const setStage = (stage, scrollTarget) => {
           currentStage = stage;
@@ -1568,6 +1576,72 @@
           element.style.display = isVisible ? '' : 'none';
         };
 
+        const createScanHistoryCell = (value, className = '') => {
+          const cell = document.createElement('td');
+          if (className) {
+            cell.classList.add(className);
+          }
+          cell.textContent = value || '—';
+          return cell;
+        };
+
+        const createScanHistoryEllipsisCell = (value, className = '') => {
+          const cell = document.createElement('td');
+          if (className) {
+            cell.classList.add(className);
+          }
+          const span = document.createElement('span');
+          span.classList.add('scan-history-ellipsis');
+          const textValue = value || '—';
+          span.textContent = textValue;
+          span.title = textValue;
+          cell.appendChild(span);
+          return cell;
+        };
+
+        const applyCompareColumnPlacement = () => {
+          if (!compareMode || !historyElements.body || !historyElements.table) {
+            return;
+          }
+          const headerRow = historyElements.table.querySelector('thead tr');
+          const compareHeader = historyCompareElements.column;
+          const isMobile = compareColumnMediaQuery.matches;
+          if (headerRow && compareHeader) {
+            if (isMobile) {
+              headerRow.prepend(compareHeader);
+            } else {
+              headerRow.appendChild(compareHeader);
+            }
+          }
+          historyElements.body.querySelectorAll('tr').forEach((row) => {
+            const compareCell = row.querySelector('.scan-history-compare-cell');
+            if (!compareCell) {
+              return;
+            }
+            if (isMobile) {
+              row.insertBefore(compareCell, row.firstElementChild);
+            } else {
+              row.appendChild(compareCell);
+            }
+          });
+        };
+
+        const enableCompareColumnListener = () => {
+          if (compareColumnListener) {
+            return;
+          }
+          compareColumnListener = () => applyCompareColumnPlacement();
+          compareColumnMediaQuery.addEventListener('change', compareColumnListener);
+        };
+
+        const disableCompareColumnListener = () => {
+          if (!compareColumnListener) {
+            return;
+          }
+          compareColumnMediaQuery.removeEventListener('change', compareColumnListener);
+          compareColumnListener = null;
+        };
+
         const renderCompareControls = () => {
           const compareReady = compareMode && selectedCompareScanIds.length === 2 && !compareLoading;
           if (historyCompareElements.toggle) {
@@ -1623,6 +1697,7 @@
           compareError = null;
           compareData = null;
           compareRequestId += 1;
+          disableCompareColumnListener();
           setHistoryCompareMessage('');
           clearHistoryCompareResults();
           hideHistoryComparePanel();
@@ -1648,6 +1723,7 @@
           compareError = null;
           compareData = null;
           compareRequestId += 1;
+          enableCompareColumnListener();
           setHistoryCompareMessage('');
           clearHistoryCompareResults();
           hideHistoryComparePanel();
@@ -2402,27 +2478,22 @@
               row.setAttribute('role', 'button');
               row.tabIndex = 0;
             }
-            const compareCell = compareMode
-              ? `
-                <td class="scan-history-compare-cell">
-                  <input
-                    type="checkbox"
-                    class="scan-history-checkbox"
-                    data-scan-history-checkbox
-                    value="${scanId || ''}"
-                  />
-                </td>
-              `
-              : '';
-            row.innerHTML = `
-              <td>${scanDate}</td>
-              <td>${countries || '—'}</td>
-              <td>${keywords || '—'}</td>
-              ${compareCell}
-              <td>${formatScanHistoryStatus(item.status)}</td>
-            `;
+            row.append(
+              createScanHistoryEllipsisCell(countries || '—', 'scan-history-col-country'),
+              createScanHistoryEllipsisCell(keywords || '—', 'scan-history-col-keyword'),
+              createScanHistoryCell(formatScanHistoryStatus(item.status), 'scan-history-col-status'),
+              createScanHistoryCell(scanDate, 'scan-history-col-date')
+            );
             if (compareMode) {
-              const checkbox = row.querySelector('[data-scan-history-checkbox]');
+              const compareCell = document.createElement('td');
+              compareCell.classList.add('scan-history-compare-cell');
+              const checkbox = document.createElement('input');
+              checkbox.type = 'checkbox';
+              checkbox.classList.add('scan-history-checkbox');
+              checkbox.setAttribute('data-scan-history-checkbox', '');
+              checkbox.value = scanId || '';
+              compareCell.appendChild(checkbox);
+              row.appendChild(compareCell);
               if (checkbox) {
                 checkbox.addEventListener('change', (event) => {
                   if (!scanId) {
@@ -2468,6 +2539,7 @@
           });
           renderCompareControls();
           applyCompareSelectionState();
+          applyCompareColumnPlacement();
         };
 
         loadScanHistory = async () => {
