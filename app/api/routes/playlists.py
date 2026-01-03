@@ -106,13 +106,18 @@ def reorder_playlists(payload: TrackedPlaylistReorder, db: Session = Depends(get
     if set(ordered_ids) != existing_id_strings:
         raise HTTPException(status_code=400, detail="ordered_ids must match tracked playlists.")
 
-    with db.begin():
+    try:
         for index, playlist_id in enumerate(ordered_uuid):
             db.execute(
                 update(TrackedPlaylist)
                 .where(TrackedPlaylist.id == playlist_id)
                 .values(sort_order=index)
             )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Failed to reorder tracked playlists.")
+        raise HTTPException(status_code=500, detail="Failed to reorder playlists.") from exc
 
     return {"ok": True}
 

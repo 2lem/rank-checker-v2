@@ -408,9 +408,6 @@
         }
       };
 
-      const arraysEqual = (first, second) =>
-        first.length === second.length && first.every((value, index) => value === second[index]);
-
       const getOrderedIds = () =>
         Array.from(cardList?.querySelectorAll('[data-tracked-card]') || [])
           .map((card) => card.dataset.playlistId)
@@ -440,11 +437,10 @@
           return;
         }
         let lastCommittedOrder = getOrderedIds();
-        let saveTimeout = null;
-        let saveRequestId = 0;
+        let currentOrder = [...lastCommittedOrder];
         let statusTimeout = null;
-        let revertOrder = lastCommittedOrder;
         let isReorderActive = false;
+        let isSaving = false;
 
         const updateReorderControls = () => {
           const cards = Array.from(cardList.querySelectorAll('[data-tracked-card]'));
@@ -460,23 +456,18 @@
               moveDown.disabled = !isReorderActive || card === lastCard;
             }
           });
-        };
-
-        const scheduleSave = (orderedIds) => {
-          setOrderStatus('Saving…', 'status-loading');
-          if (statusTimeout) {
-            window.clearTimeout(statusTimeout);
+          if (reorderToggle) {
+            reorderToggle.disabled = isSaving;
           }
-          if (saveTimeout) {
-            window.clearTimeout(saveTimeout);
-          }
-          saveTimeout = window.setTimeout(() => {
-            void commitOrder(orderedIds);
-          }, 500);
         };
 
         const commitOrder = async (orderedIds) => {
-          const requestId = (saveRequestId += 1);
+          if (isSaving) {
+            return;
+          }
+          isSaving = true;
+          updateReorderControls();
+          setOrderStatus('Saving…', 'status-loading');
           try {
             const response = await fetch('/api/playlists/reorder', {
               method: 'PATCH',
@@ -488,10 +479,7 @@
             if (!response.ok) {
               throw new Error('Unable to save order');
             }
-            if (requestId !== saveRequestId) {
-              return;
-            }
-            lastCommittedOrder = orderedIds;
+            lastCommittedOrder = [...orderedIds];
             setOrderStatus('Order saved.', 'status-success');
             if (statusTimeout) {
               window.clearTimeout(statusTimeout);
@@ -499,14 +487,44 @@
             statusTimeout = window.setTimeout(() => {
               setOrderStatus('');
             }, 1500);
-          } catch (error) {
-            if (requestId !== saveRequestId) {
-              return;
+            isReorderActive = false;
+            pageRoot.classList.remove('reorder-mode');
+            if (reorderToggle) {
+              reorderToggle.textContent = 'Reorder';
+              reorderToggle.setAttribute('aria-pressed', 'false');
             }
-            applyOrder(revertOrder);
-            updateReorderControls();
+          } catch (error) {
             setOrderStatus('Failed to save order.', 'status-error');
+          } finally {
+            isSaving = false;
+            updateReorderControls();
           }
+        };
+
+        const moveCard = (card, direction) => {
+          if (!isReorderActive || !card) {
+            return;
+          }
+          const cardId = card.dataset.playlistId;
+          if (!cardId) {
+            return;
+          }
+          const index = currentOrder.indexOf(cardId);
+          if (index === -1) {
+            return;
+          }
+          const targetIndex = direction === 'up' ? index - 1 : index + 1;
+          if (targetIndex < 0 || targetIndex >= currentOrder.length) {
+            return;
+          }
+          const updatedOrder = [...currentOrder];
+          [updatedOrder[index], updatedOrder[targetIndex]] = [
+            updatedOrder[targetIndex],
+            updatedOrder[index],
+          ];
+          currentOrder = updatedOrder;
+          applyOrder(currentOrder);
+          updateReorderControls();
         };
 
         const cards = Array.from(cardList.querySelectorAll('[data-tracked-card]'));
@@ -515,45 +533,28 @@
           const moveDown = card.querySelector('[data-move-down]');
 
           moveUp?.addEventListener('click', () => {
-            if (!isReorderActive) {
-              return;
-            }
-            const prev = card.previousElementSibling;
-            if (!prev) {
-              return;
-            }
-            revertOrder = getOrderedIds();
-            cardList.insertBefore(card, prev);
-            updateReorderControls();
-            const orderedIds = getOrderedIds();
-            if (!arraysEqual(orderedIds, lastCommittedOrder)) {
-              scheduleSave(orderedIds);
-            }
+            moveCard(card, 'up');
           });
 
           moveDown?.addEventListener('click', () => {
-            if (!isReorderActive) {
-              return;
-            }
-            const next = card.nextElementSibling;
-            if (!next) {
-              return;
-            }
-            revertOrder = getOrderedIds();
-            cardList.insertBefore(card, next.nextSibling);
-            updateReorderControls();
-            const orderedIds = getOrderedIds();
-            if (!arraysEqual(orderedIds, lastCommittedOrder)) {
-              scheduleSave(orderedIds);
-            }
+            moveCard(card, 'down');
           });
         });
 
         reorderToggle?.addEventListener('click', () => {
-          isReorderActive = pageRoot.classList.toggle('reorder-mode');
-          reorderToggle.textContent = isReorderActive ? 'Done' : 'Reorder';
-          reorderToggle.setAttribute('aria-pressed', String(isReorderActive));
-          updateReorderControls();
+          if (isSaving) {
+            return;
+          }
+          if (!isReorderActive) {
+            isReorderActive = true;
+            currentOrder = getOrderedIds();
+            pageRoot.classList.add('reorder-mode');
+            reorderToggle.textContent = 'Done';
+            reorderToggle.setAttribute('aria-pressed', 'true');
+            updateReorderControls();
+            return;
+          }
+          void commitOrder(currentOrder);
         });
 
         updateReorderControls();
