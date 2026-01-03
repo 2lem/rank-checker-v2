@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.tracked_playlist import TrackedPlaylist
@@ -17,7 +17,13 @@ def get_tracked_playlist_by_id(db: Session, tracked_playlist_id: str) -> Tracked
 
 
 def list_tracked_playlists(db: Session) -> list[TrackedPlaylist]:
-    return db.execute(select(TrackedPlaylist).order_by(TrackedPlaylist.created_at.desc())).scalars().all()
+    return (
+        db.execute(
+            select(TrackedPlaylist).order_by(TrackedPlaylist.sort_order.asc(), TrackedPlaylist.created_at.asc())
+        )
+        .scalars()
+        .all()
+    )
 
 
 def create_tracked_playlist(
@@ -38,6 +44,8 @@ def create_tracked_playlist(
     target_countries: list[str] | None,
     target_keywords: list[str] | None,
 ) -> TrackedPlaylist:
+    max_sort_order = db.execute(select(func.max(TrackedPlaylist.sort_order))).scalar_one()
+    next_sort_order = (max_sort_order if max_sort_order is not None else -1) + 1
     tracked = TrackedPlaylist(
         playlist_id=playlist_id,
         playlist_url=playlist_url,
@@ -51,6 +59,7 @@ def create_tracked_playlist(
         last_meta_scan_at=last_meta_scan_at,
         last_meta_refresh_at=last_meta_refresh_at,
         playlist_last_updated_at=playlist_last_updated_at,
+        sort_order=next_sort_order,
         target_countries=target_countries or [],
         target_keywords=target_keywords or [],
     )

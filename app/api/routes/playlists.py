@@ -4,6 +4,7 @@ from uuid import UUID
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.spotify import (
@@ -25,8 +26,10 @@ from app.schemas.playlist import (
     RefreshPlaylistResponse,
     TrackedPlaylistCreate,
     TrackedPlaylistOut,
+    TrackedPlaylistReorder,
     TrackedPlaylistTargetsUpdate,
 )
+from app.models.tracked_playlist import TrackedPlaylist
 from app.services.playlist_metadata import (
     build_spotify_url,
     raise_spotify_request_error,
@@ -85,6 +88,33 @@ def get_playlist(tracked_playlist_id: UUID, db: Session = Depends(get_db)):
     if not tracked:
         raise HTTPException(status_code=404, detail="Tracked playlist not found.")
     return _serialize_tracked_playlist(db, tracked)
+
+
+@router.patch("/reorder")
+def reorder_playlists(payload: TrackedPlaylistReorder, db: Session = Depends(get_db)):
+    ordered_ids = [str(entry) for entry in (payload.ordered_ids or [])]
+    if len(set(ordered_ids)) != len(ordered_ids):
+        raise HTTPException(status_code=400, detail="ordered_ids must be unique.")
+
+    try:
+        ordered_uuid = [UUID(str(entry)) for entry in ordered_ids]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid playlist id.") from exc
+
+    existing_ids = db.execute(select(TrackedPlaylist.id)).scalars().all()
+    existing_id_strings = {str(entry) for entry in existing_ids}
+    if set(ordered_ids) != existing_id_strings:
+        raise HTTPException(status_code=400, detail="ordered_ids must match tracked playlists.")
+
+    with db.begin():
+        for index, playlist_id in enumerate(ordered_uuid):
+            db.execute(
+                update(TrackedPlaylist)
+                .where(TrackedPlaylist.id == playlist_id)
+                .values(sort_order=index)
+            )
+
+    return {"ok": True}
 
 
 @router.post("", response_model=TrackedPlaylistOut, status_code=status.HTTP_201_CREATED)

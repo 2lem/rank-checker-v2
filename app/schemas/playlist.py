@@ -38,6 +38,10 @@ class TrackedPlaylistTargetsUpdate(BaseModel):
     target_keywords: list[str] | None = None
 
 
+class TrackedPlaylistReorder(BaseModel):
+    ordered_ids: list[str]
+
+
 class RefreshPlaylistResponse(BaseModel):
     ok: bool
     job_id: str | None = None
