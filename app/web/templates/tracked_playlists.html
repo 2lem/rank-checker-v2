@@ -241,10 +241,18 @@
 
       <section class="tracked-section">
         <div class="section-header">
-          <h2>Tracked Playlists</h2>
+          <div class="tracked-section-header-row">
+            <h2>Tracked Playlists</h2>
+            <button class="pill pill-secondary reorder-toggle" type="button" data-reorder-toggle>
+              Reorder
+            </button>
+          </div>
           <p class="section-subtitle">Click Manage to view details for a playlist.</p>
+          <div class="tracked-order-status" data-order-status role="status" aria-live="polite">
+            Ready.
+          </div>
         </div>
-        <div class="tracked-card-list">
+        <div class="tracked-card-list" data-tracked-card-list>
           {% if playlists %}
             {% for playlist in playlists %}
               {% set variant = 'list' %}
@@ -288,6 +296,9 @@
         const manualScanSection = document.getElementById('manual-scan-section');
         const playlistControls = document.getElementById('playlist-controls');
         const manualScanCloseButton = manualScanSection?.querySelector('[data-manual-scan-close]');
+        const orderStatus = pageRoot.querySelector('[data-order-status]');
+        const reorderToggle = pageRoot.querySelector('[data-reorder-toggle]');
+        const cardList = pageRoot.querySelector('[data-tracked-card-list]');
 
         const availableMarkets = {{ available_markets | tojson }};
         const marketLabelMap = new Map(
@@ -384,6 +395,195 @@
         if (variant) {
           statusArea.classList.add(variant);
         }
+      };
+
+      const setOrderStatus = (message, variant) => {
+        if (!orderStatus) {
+          return;
+        }
+        orderStatus.textContent = message;
+        orderStatus.classList.remove('status-success', 'status-error', 'status-loading');
+        if (variant) {
+          orderStatus.classList.add(variant);
+        }
+      };
+
+      const arraysEqual = (first, second) =>
+        first.length === second.length && first.every((value, index) => value === second[index]);
+
+      const getOrderedIds = () =>
+        Array.from(cardList?.querySelectorAll('[data-tracked-card]') || [])
+          .map((card) => card.dataset.playlistId)
+          .filter(Boolean);
+
+      const applyOrder = (orderedIds) => {
+        if (!cardList) {
+          return;
+        }
+        const cardMap = new Map();
+        getOrderedIds().forEach((id) => {
+          const card = cardList.querySelector(`[data-tracked-card][data-playlist-id="${id}"]`);
+          if (card) {
+            cardMap.set(id, card);
+          }
+        });
+        orderedIds.forEach((id) => {
+          const card = cardMap.get(id);
+          if (card) {
+            cardList.appendChild(card);
+          }
+        });
+      };
+
+      const setupReorder = () => {
+        if (!cardList) {
+          return;
+        }
+        let dragSource = null;
+        let lastCommittedOrder = getOrderedIds();
+        let saveTimeout = null;
+        let saveRequestId = 0;
+
+        const scheduleSave = (orderedIds) => {
+          setOrderStatus('Saving order...', 'status-loading');
+          if (saveTimeout) {
+            window.clearTimeout(saveTimeout);
+          }
+          saveTimeout = window.setTimeout(() => {
+            void commitOrder(orderedIds);
+          }, 500);
+        };
+
+        const commitOrder = async (orderedIds) => {
+          const requestId = (saveRequestId += 1);
+          try {
+            const response = await fetch('/api/playlists/reorder', {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ ordered_ids: orderedIds }),
+            });
+            if (!response.ok) {
+              throw new Error('Unable to save order');
+            }
+            if (requestId !== saveRequestId) {
+              return;
+            }
+            lastCommittedOrder = orderedIds;
+            setOrderStatus('Order saved.', 'status-success');
+          } catch (error) {
+            if (requestId !== saveRequestId) {
+              return;
+            }
+            applyOrder(lastCommittedOrder);
+            setOrderStatus('Failed to save order.', 'status-error');
+          }
+        };
+
+        const getDragAfterElement = (container, y) => {
+          const draggableElements = [
+            ...container.querySelectorAll('[data-tracked-card]:not(.is-dragging)'),
+          ];
+          return draggableElements.reduce(
+            (closest, child) => {
+              const box = child.getBoundingClientRect();
+              const offset = y - box.top - box.height / 2;
+              if (offset < 0 && offset > closest.offset) {
+                return { offset, element: child };
+              }
+              return closest;
+            },
+            { offset: Number.NEGATIVE_INFINITY, element: null }
+          ).element;
+        };
+
+        const cards = Array.from(cardList.querySelectorAll('[data-tracked-card]'));
+        cards.forEach((card) => {
+          const handle = card.querySelector('[data-drag-handle]');
+          const moveUp = card.querySelector('[data-move-up]');
+          const moveDown = card.querySelector('[data-move-down]');
+          if (!handle) {
+            return;
+          }
+
+          handle.addEventListener('pointerdown', () => {
+            card.setAttribute('draggable', 'true');
+            card.classList.add('is-drag-ready');
+          });
+
+          handle.addEventListener('pointerup', () => {
+            if (!card.classList.contains('is-dragging')) {
+              card.removeAttribute('draggable');
+              card.classList.remove('is-drag-ready');
+            }
+          });
+
+          handle.addEventListener('pointerleave', () => {
+            if (!card.classList.contains('is-dragging')) {
+              card.removeAttribute('draggable');
+              card.classList.remove('is-drag-ready');
+            }
+          });
+
+          card.addEventListener('dragstart', (event) => {
+            if (!card.hasAttribute('draggable')) {
+              event.preventDefault();
+              return;
+            }
+            dragSource = card;
+            card.classList.add('is-dragging');
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', card.dataset.playlistId || '');
+          });
+
+          card.addEventListener('dragend', () => {
+            card.classList.remove('is-dragging');
+            card.removeAttribute('draggable');
+            card.classList.remove('is-drag-ready');
+            dragSource = null;
+            const newOrder = getOrderedIds();
+            if (!arraysEqual(newOrder, lastCommittedOrder)) {
+              scheduleSave(newOrder);
+            }
+          });
+
+          moveUp?.addEventListener('click', () => {
+            const prev = card.previousElementSibling;
+            if (!prev) {
+              return;
+            }
+            cardList.insertBefore(card, prev);
+            scheduleSave(getOrderedIds());
+          });
+
+          moveDown?.addEventListener('click', () => {
+            const next = card.nextElementSibling;
+            if (!next) {
+              return;
+            }
+            cardList.insertBefore(card, next.nextSibling);
+            scheduleSave(getOrderedIds());
+          });
+        });
+
+        cardList.addEventListener('dragover', (event) => {
+          if (!dragSource) {
+            return;
+          }
+          event.preventDefault();
+          const afterElement = getDragAfterElement(cardList, event.clientY);
+          if (!afterElement) {
+            cardList.appendChild(dragSource);
+          } else if (afterElement !== dragSource) {
+            cardList.insertBefore(dragSource, afterElement);
+          }
+        });
+
+        reorderToggle?.addEventListener('click', () => {
+          const isActive = pageRoot.classList.toggle('reorder-mode');
+          reorderToggle.textContent = isActive ? 'Done' : 'Reorder';
+        });
       };
 
       const readErrorPayload = async (response) => {
@@ -2119,6 +2319,7 @@
 
       setupAddPanel();
       setupManagePanels();
+      setupReorder();
       setupManualScanSection();
       };
 

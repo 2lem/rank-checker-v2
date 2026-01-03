@@ -37,6 +37,100 @@
   gap: var(--tracked-card-inner-gap);
 }
 
+.tracked-section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tracked-order-status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #5a5a5a;
+}
+
+.tracked-order-status.status-success {
+  color: #207546;
+}
+
+.tracked-order-status.status-error {
+  color: #a11c1c;
+}
+
+.tracked-order-status.status-loading {
+  color: #38598a;
+}
+
+.tracked-reorder-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.drag-handle {
+  width: 28px;
+  height: 48px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #f8f8f8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.drag-grip {
+  width: 10px;
+  height: 20px;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.4),
+    rgba(0, 0, 0, 0.4) 2px,
+    transparent 2px,
+    transparent 5px
+  );
+  border-radius: 4px;
+}
+
+.tracked-card.is-dragging {
+  opacity: 0.6;
+}
+
+.reorder-controls {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reorder-mode .reorder-controls {
+  display: flex;
+}
+
+.reorder-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #ffffff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.reorder-btn:active {
+  transform: translateY(1px);
+}
+
+.reorder-toggle {
+  display: none;
+}
+
 .tracked-thumb {
   width: var(--tracked-thumb-size);
   height: var(--tracked-thumb-size);
@@ -1237,6 +1331,10 @@
 
   .tracked-card-inner {
     flex-direction: column;
+  }
+
+  .reorder-toggle {
+    display: inline-flex;
   }
 
   .tracked-card-actions {

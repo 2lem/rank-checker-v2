@@ -26,6 +26,7 @@ class TrackedPlaylist(Base):
     owner_name: Mapped[str | None] = mapped_column(String, nullable=True)
     followers_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tracks_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     last_meta_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_meta_refresh_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     playlist_last_updated_at: Mapped[datetime | None] = mapped_column(
