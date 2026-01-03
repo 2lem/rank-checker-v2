@@ -167,23 +167,48 @@
           </div>
           <div class="panel-body">
             <div class="scan-history" data-scan-history data-tracked-playlist-id="{{ playlist.id }}">
-              <p class="summary-note" data-scan-history-empty hidden>
-                No scan history yet for this playlist.
-              </p>
-              <div class="table-scroll" data-scan-history-table hidden>
-                <table class="results-table">
-                  <thead>
-                    <tr>
-                      <th>Scan date</th>
-                      <th>Country</th>
-                      <th>Keyword</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody data-scan-history-body></tbody>
-                </table>
+              <div class="scan-history-list" data-scan-history-list>
+                <p class="summary-note" data-scan-history-empty hidden>
+                  No scan history yet for this playlist.
+                </p>
+                <div class="table-scroll" data-scan-history-table hidden>
+                  <table class="results-table">
+                    <thead>
+                      <tr>
+                        <th>Scan date</th>
+                        <th>Country</th>
+                        <th>Keyword</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody data-scan-history-body></tbody>
+                  </table>
+                </div>
               </div>
             </div>
+            <section class="panel scan-history-detail-panel" data-scan-history-detail hidden>
+              <div class="panel-header">
+                <h2>Scan Details</h2>
+                <p>Review a completed scan run.</p>
+              </div>
+              <div class="panel-body">
+                <div class="scan-history-detail-actions">
+                  <button class="btn btn-secondary" type="button" data-scan-history-back>
+                    Back to Scan History
+                  </button>
+                </div>
+                <p class="summary-note scan-history-detail-message" data-scan-history-detail-message hidden></p>
+                <div class="scan-history-detail-results" data-scan-history-detail-results>
+                  {% set results_id = 'scan-history-detail-results' %}
+                  {% set results_title = 'Scan Details' %}
+                  {% set data_prefix = 'history-detail' %}
+                  {% set csv_controls_id = 'scan-history-detail-csv-controls' %}
+                  {% set summary_id = 'scan-history-detail-summary' %}
+                  {% set detailed_id = 'scan-history-detail-detailed' %}
+                  {% include "_components/scan_results.html" %}
+                </div>
+              </div>
+            </section>
           </div>
         </section>
       </div>
@@ -211,6 +236,7 @@
       let activeSection = null;
       let loadLatestScan = null;
       let loadScanHistory = null;
+      let resetHistoryDetail = null;
       let lastTabScrollY = null;
       let activeScanStatus = null;
 
@@ -288,6 +314,9 @@
           !options.allowRunningSwitch
         ) {
           return;
+        }
+        if (nextTab !== 'history' && typeof resetHistoryDetail === 'function') {
+          resetHistoryDetail({ skipScroll: true });
         }
         lastTabScrollY = window.scrollY;
         activeSection = nextTab;
@@ -659,6 +688,7 @@
         const scanRoot = document.querySelector('[data-basic-scan]');
         const latestRoot = document.querySelector('[data-latest-scan]');
         const historyRoot = document.querySelector('[data-scan-history]');
+        const historyDetailPanel = document.querySelector('[data-scan-history-detail]');
         if (!scanRoot) {
           return;
         }
@@ -683,11 +713,18 @@
           csvControls: root?.querySelector(`[data-${prefix}-csv-controls]`),
         });
         const latestResults = buildScanElements('latest-scan', latestRoot);
+        const historyDetailRoot = historyDetailPanel?.querySelector('[data-scan-history-detail-results]');
+        const historyDetailElements = buildScanElements('history-detail', historyDetailRoot);
         const historyElements = {
           table: historyRoot?.querySelector('[data-scan-history-table]'),
           body: historyRoot?.querySelector('[data-scan-history-body]'),
           empty: historyRoot?.querySelector('[data-scan-history-empty]'),
+          list: historyRoot?.querySelector('[data-scan-history-list]'),
         };
+        const historyDetailMessage = historyDetailPanel?.querySelector(
+          '[data-scan-history-detail-message]'
+        );
+        const historyDetailBackButton = historyDetailPanel?.querySelector('[data-scan-history-back]');
         const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
         let activeScanId = null;
@@ -704,6 +741,8 @@
         let etaMsFromServer = null;
         let etaMsLive = null;
         let etaTickInterval = null;
+        let selectedHistoryScanId = null;
+        let historyDetailRequestId = 0;
         const WATCHDOG_MS = 45000;
         const WATCHDOG_CHECK_MS = 5000;
 
@@ -1311,6 +1350,71 @@
           }
         };
 
+        const setHistoryDetailMessage = (message, { isError = false } = {}) => {
+          if (!historyDetailMessage) {
+            return;
+          }
+          historyDetailMessage.textContent = message || '';
+          historyDetailMessage.hidden = !message;
+          historyDetailMessage.classList.toggle('is-error', Boolean(message) && isError);
+        };
+
+        const clearHistoryDetailResults = () => {
+          if (!historyDetailElements) {
+            return;
+          }
+          if (historyDetailElements.summaryLead) {
+            historyDetailElements.summaryLead.textContent = '';
+            historyDetailElements.summaryLead.hidden = false;
+          }
+          if (historyDetailElements.summaryList) {
+            historyDetailElements.summaryList.innerHTML = '';
+            historyDetailElements.summaryList.hidden = true;
+          }
+          if (historyDetailElements.detailedWrap) {
+            historyDetailElements.detailedWrap.innerHTML = '';
+          }
+          if (historyDetailElements.detailedSection) {
+            historyDetailElements.detailedSection.hidden = true;
+          }
+          if (historyDetailElements.csvControls) {
+            hideSection(historyDetailElements.csvControls);
+          }
+          if (historyDetailElements.resultsWrap) {
+            historyDetailElements.resultsWrap.hidden = true;
+          }
+        };
+
+        const showHistoryDetailPanel = () => {
+          if (!historyDetailPanel) {
+            return;
+          }
+          historyDetailPanel.hidden = false;
+          historyDetailPanel.classList.add('is-active');
+        };
+
+        const hideHistoryDetailPanel = () => {
+          if (!historyDetailPanel) {
+            return;
+          }
+          historyDetailPanel.classList.remove('is-active');
+          historyDetailPanel.hidden = true;
+        };
+
+        resetHistoryDetail = ({ skipScroll = false, scrollTarget = null } = {}) => {
+          selectedHistoryScanId = null;
+          historyDetailRequestId += 1;
+          setHistoryDetailMessage('');
+          clearHistoryDetailResults();
+          hideHistoryDetailPanel();
+          if (historyElements.list) {
+            showSection(historyElements.list);
+          }
+          if (!skipScroll) {
+            scrollSectionToCenter(scrollTarget || scanHistorySection || historyRoot);
+          }
+        };
+
         const connectEventStream = (scanId) => {
           if (!scanId) {
             return;
@@ -1553,6 +1657,60 @@
           return String(value).replace(/_/g, ' ');
         };
 
+        const fetchScanDetail = async (scanId) => {
+          if (!scanId) {
+            return null;
+          }
+          const response = await fetch(`/api/basic-rank-checker/scans/${scanId}`);
+          const data = await readErrorPayload(response);
+          if (!response.ok) {
+            throw new Error(normalizeErrorMessage(data, 'Failed to load scan details.'));
+          }
+          return data;
+        };
+
+        const openHistoryDetail = async (scanId) => {
+          if (!scanId || !historyDetailPanel) {
+            return;
+          }
+          selectedHistoryScanId = scanId;
+          historyDetailRequestId += 1;
+          const requestId = historyDetailRequestId;
+          if (historyElements.list) {
+            hideSection(historyElements.list);
+          }
+          showHistoryDetailPanel();
+          clearHistoryDetailResults();
+          setHistoryDetailMessage('Loading scan details…');
+          historyDetailPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+          try {
+            const data = await fetchScanDetail(scanId);
+            if (requestId !== historyDetailRequestId) {
+              return;
+            }
+            const resultsPayload = data?.results || data;
+            if (!resultsPayload || !hasResults(resultsPayload)) {
+              showEmptyState(
+                historyDetailElements,
+                'No scan results were found for this run.'
+              );
+              setHistoryDetailMessage('No scan results found for this run.');
+              return;
+            }
+            renderScanResults(resultsPayload, historyDetailElements, data?.scan_id || scanId);
+            setHistoryDetailMessage('');
+          } catch (error) {
+            if (requestId !== historyDetailRequestId) {
+              return;
+            }
+            setHistoryDetailMessage(
+              normalizeErrorMessage(error, 'Unable to load scan details.'),
+              { isError: true }
+            );
+          }
+        };
+
         const renderScanHistory = (items) => {
           if (!historyElements.body || !historyElements.table || !historyElements.empty) {
             return;
@@ -1573,12 +1731,30 @@
               .join(', ');
             const keywords = (item.keywords || []).join(', ');
             const scanDate = formatTimestamp(item.created_at || item.started_at || item.finished_at);
+            const scanId = item.scan_id;
+            row.classList.add('scan-history-row');
+            row.dataset.scanId = scanId || '';
+            row.setAttribute('role', 'button');
+            row.tabIndex = 0;
             row.innerHTML = `
               <td>${scanDate}</td>
               <td>${countries || '—'}</td>
               <td>${keywords || '—'}</td>
               <td>${formatScanHistoryStatus(item.status)}</td>
             `;
+            const activateRow = () => {
+              if (!scanId) {
+                return;
+              }
+              openHistoryDetail(scanId);
+            };
+            row.addEventListener('click', activateRow);
+            row.addEventListener('keydown', (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                activateRow();
+              }
+            });
             historyElements.body.appendChild(row);
           });
         };
@@ -1613,6 +1789,11 @@
             );
           }
         };
+
+        historyDetailBackButton?.addEventListener('click', (event) => {
+          event.preventDefault();
+          resetHistoryDetail({ scrollTarget: historyRoot || scanHistorySection });
+        });
 
         runButton?.addEventListener('click', (event) => {
           event.preventDefault();
