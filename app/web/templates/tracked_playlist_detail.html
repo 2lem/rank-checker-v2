@@ -116,10 +116,20 @@
                 </div>
               </div>
               <div class="insights-chart" id="follower-graph-root">
-                <section class="graph-placeholder empty-state" id="graph-placeholder" data-graph-placeholder>
+                <section
+                  class="graph-placeholder empty-state"
+                  id="follower-graph-placeholder"
+                  data-graph-placeholder
+                  hidden
+                >
                   Not enough history yet — capture at least two days.
                 </section>
-                <section class="graph-container" id="graph-container" data-graph-container data-insights-chart></section>
+                <section
+                  class="graph-container"
+                  id="follower-graph-container"
+                  data-graph-container
+                  data-insights-chart
+                ></section>
               </div>
             </section>
 
@@ -978,8 +988,6 @@
 
       const insightsElements = {
         chart: document.querySelector('[data-insights-chart]'),
-        graphPlaceholder: document.querySelector('[data-graph-placeholder]'),
-        graphContainer: document.querySelector('[data-graph-container]'),
         dailyCard: document.querySelector('[data-insights-daily-card]'),
         dailyDates: document.querySelector('[data-insights-daily-dates]'),
         dailyFollowers: document.querySelector('[data-insights-daily-followers]'),
@@ -1031,11 +1039,11 @@
 
       const startOfMonthUTC = (year, month) => new Date(Date.UTC(year, month, 1));
 
-      const buildRangeAnchors = (firstDate, lastDate) => {
+      const buildRangeAnchors = (firstDate, lastDate, rangeKey) => {
         if (!lastDate) {
           return [];
         }
-        if (activeInsightsRange === '7d') {
+        if (rangeKey === '7d') {
           const start = new Date(
             Date.UTC(
               lastDate.getUTCFullYear(),
@@ -1053,7 +1061,7 @@
             )
           );
         }
-        if (activeInsightsRange === '30d') {
+        if (rangeKey === '30d') {
           const start = new Date(
             Date.UTC(
               lastDate.getUTCFullYear(),
@@ -1071,7 +1079,7 @@
             )
           );
         }
-        if (activeInsightsRange === '3m') {
+        if (rangeKey === '3m') {
           const latestMonthStart = startOfMonthUTC(
             lastDate.getUTCFullYear(),
             lastDate.getUTCMonth()
@@ -1083,7 +1091,7 @@
             )
           );
         }
-        if (activeInsightsRange === '6m') {
+        if (rangeKey === '6m') {
           const latestMonthStart = startOfMonthUTC(
             lastDate.getUTCFullYear(),
             lastDate.getUTCMonth()
@@ -1095,7 +1103,7 @@
             )
           );
         }
-        if (activeInsightsRange === '12m') {
+        if (rangeKey === '12m') {
           const quarterStartMonth = Math.floor(lastDate.getUTCMonth() / 3) * 3;
           const latestQuarterStart = startOfMonthUTC(
             lastDate.getUTCFullYear(),
@@ -1205,11 +1213,15 @@
         });
       };
 
-      const filterInsightsRange = (series) => {
+      const filterInsightsRange = (series, rangeKey) => {
         if (!series.length) {
           return [];
         }
-        const anchors = buildRangeAnchors(series[0].dateObj, series[series.length - 1].dateObj);
+        const anchors = buildRangeAnchors(
+          series[0].dateObj,
+          series[series.length - 1].dateObj,
+          rangeKey
+        );
         if (!anchors.length) {
           return [];
         }
@@ -1227,16 +1239,32 @@
         return { text: '—', className: 'delta-neutral' };
       };
 
-      const setVisibility = (element, isVisible) => {
-        if (!element) {
+      const applyFollowerGraphVisibility = (points, rootEl) => {
+        const placeholder = document.getElementById('follower-graph-placeholder');
+        const container = document.getElementById('follower-graph-container');
+        if (!placeholder || !container) {
           return;
         }
-        element.hidden = !isVisible;
-      };
 
-      const applyGraphVisibility = (hasData) => {
-        setVisibility(insightsElements.graphPlaceholder, !hasData);
-        setVisibility(insightsElements.graphContainer, hasData);
+        const hasPointData = Array.isArray(points) && points.length >= 2;
+        const hasRenderedSvg =
+          rootEl?.querySelector('svg path, svg polyline') ||
+          document.querySelector(
+            '#follower-graph-container svg path, #follower-graph-container svg polyline'
+          );
+        const hasCanvas =
+          rootEl?.querySelector('canvas') ||
+          document.querySelector('#follower-graph-container canvas');
+        const hasRenderedGraph = Boolean(hasRenderedSvg || hasCanvas);
+        const shouldShowGraph = hasPointData || hasRenderedGraph;
+
+        if (shouldShowGraph) {
+          placeholder.hidden = true;
+          container.hidden = false;
+        } else {
+          container.hidden = true;
+          placeholder.hidden = false;
+        }
       };
 
       const hasSummaryData = (compare) => {
@@ -1251,21 +1279,25 @@
         return hasFollowerDelta || improved + declined + unchanged > 0;
       };
 
-      const renderInsightsChart = (series) => {
+      const buildPointsForRange = (rangeKey, series) => filterInsightsRange(series, rangeKey);
+
+      const renderFollowerGraph = (points) => {
         if (!insightsElements.chart) {
           return;
         }
         insightsElements.chart.querySelectorAll('svg').forEach((node) => node.remove());
-        const filteredSeries = filterInsightsRange(series);
-        const hasChartPoints = filteredSeries.length >= 2;
-        applyGraphVisibility(hasChartPoints);
+        const hasChartPoints = points.length >= 2;
         if (!hasChartPoints) {
           return;
         }
-        const firstEntry = filteredSeries[0];
-        const lastEntry = filteredSeries[filteredSeries.length - 1];
-        const anchors = buildRangeAnchors(firstEntry?.dateObj || null, lastEntry?.dateObj || null);
-        const buckets = bucketSeries(filteredSeries, anchors);
+        const firstEntry = points[0];
+        const lastEntry = points[points.length - 1];
+        const anchors = buildRangeAnchors(
+          firstEntry?.dateObj || null,
+          lastEntry?.dateObj || null,
+          activeInsightsRange
+        );
+        const buckets = bucketSeries(points, anchors);
         const bucketValues = buckets
           .map((bucket) => (bucket.entry ? bucket.entry.followers : null))
           .filter((value) => Number.isFinite(value));
@@ -1628,7 +1660,9 @@
 
       const renderInsights = (payload) => {
         const series = normalizeTimeseries(payload);
-        renderInsightsChart(series);
+        const points = buildPointsForRange(activeInsightsRange, series);
+        renderFollowerGraph(points);
+        applyFollowerGraphVisibility(points, insightsElements.chart);
         renderDailySummary(payload);
         renderWeeklySummary(payload);
       };
@@ -1677,7 +1711,6 @@
       });
 
       updateInsightsRangeButtons();
-      applyGraphVisibility(false);
 
       window.addEventListener('resize', () => {
         if (activeSection === 'insights' && insightsPayload) {
