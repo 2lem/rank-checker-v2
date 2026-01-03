@@ -984,6 +984,21 @@
   font-weight: 600;
 }
 
+.change-up {
+  font-weight: 700;
+  color: #1f7a3a;
+}
+
+.change-down {
+  font-weight: 700;
+  color: #c62828;
+}
+
+.change-neutral {
+  font-weight: 600;
+  color: #555;
+}
+
 .insights-weekly-summary {
   display: flex;
   flex-direction: column;
