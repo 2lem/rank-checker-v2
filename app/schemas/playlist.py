@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -47,3 +47,27 @@ class RefreshPlaylistResponse(BaseModel):
     refreshed_at: datetime | None = None
     playlist: TrackedPlaylistOut | None = None
     status: str | None = None
+
+
+class FollowerTimeseriesEntry(BaseModel):
+    date: date
+    followers: int
+
+
+class PlaylistInsightsDeltas(BaseModel):
+    change_1d: int | None = None
+    change_7d: int | None = None
+    change_30d: int | None = None
+    change_90d: int | None = None
+    change_180d: int | None = None
+    change_365d: int | None = None
+    change_all_time: int | None = None
+
+
+class PlaylistInsightsOut(BaseModel):
+    playlist_id: str
+    first_seen_at: datetime | None = None
+    first_seen_followers: int | None = None
+    current_followers: int | None = None
+    follower_timeseries: list[FollowerTimeseriesEntry]
+    computed_deltas: PlaylistInsightsDeltas

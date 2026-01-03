@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.spotify import PLAYLIST_URL, get_access_token, get_latest_track_added_at, spotify_get
 from app.repositories.tracked_playlists import get_tracked_playlist_by_id
+from app.services.playlist_insights import upsert_playlist_seen_and_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +196,14 @@ def refresh_playlist_metadata(db: Session, tracked_playlist_id: str):
         tracked.tracks_count = tracks_count
         tracked.playlist_last_updated_at = playlist_last_updated_at
         tracked.last_meta_refresh_at = refreshed_at
+
+        upsert_playlist_seen_and_snapshot(
+            db,
+            playlist_id=tracked.playlist_id,
+            followers=followers_total,
+            seen_at=refreshed_at,
+            source="refresh_stats",
+        )
 
         db.add(tracked)
         db.commit()

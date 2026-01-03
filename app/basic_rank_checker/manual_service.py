@@ -28,6 +28,7 @@ from app.core.spotify import (
     start_scan_spotify_usage,
 )
 from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
+from app.services.playlist_insights import upsert_playlist_seen_and_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +163,7 @@ def run_manual_scan(scan_id: str) -> None:
             if scan is None:
                 return
 
+            snapshot_seen_at = basic_service._now_utc()
             scan.follower_snapshot = follower_snapshot
             if playlist_id:
                 scan.manual_playlist_id = playlist_id
@@ -171,7 +173,15 @@ def run_manual_scan(scan_id: str) -> None:
                 scan.manual_playlist_image_url = manual_meta.get("playlist_image_url") or manual_meta.get(
                     "playlist_image"
                 )
-            scan.last_event_at = basic_service._now_utc()
+            scan.last_event_at = snapshot_seen_at
+            if playlist_id and follower_snapshot is not None:
+                upsert_playlist_seen_and_snapshot(
+                    db,
+                    playlist_id=playlist_id,
+                    followers=follower_snapshot,
+                    seen_at=snapshot_seen_at,
+                    source="scan_result",
+                )
             db.add(scan)
             db.commit()
 
@@ -310,6 +320,14 @@ def run_manual_scan(scan_id: str) -> None:
                                     is_tracked_playlist=is_manual_playlist,
                                 )
                             )
+                            if result_playlist_id and playlist_followers is not None:
+                                upsert_playlist_seen_and_snapshot(
+                                    db,
+                                    playlist_id=result_playlist_id,
+                                    followers=playlist_followers,
+                                    seen_at=searched_at,
+                                    source="scan_result",
+                                )
 
                         query.tracked_rank = tracked_rank
                         query.tracked_found_in_top20 = tracked_rank is not None

@@ -35,6 +35,7 @@ from app.core.spotify import (
 )
 from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
 from app.models.tracked_playlist import TrackedPlaylist
+from app.services.playlist_insights import upsert_playlist_seen_and_snapshot
 
 logger = logging.getLogger(__name__)
 _MARKET_OVERRIDES = {"XK": "Kosovo"}
@@ -395,8 +396,17 @@ def run_basic_scan(scan_id: str) -> None:
             scan = db.get(BasicScan, scan_id_value)
             if scan is None:
                 return
+            snapshot_seen_at = _now_utc()
             scan.follower_snapshot = follower_snapshot
-            scan.last_event_at = _now_utc()
+            scan.last_event_at = snapshot_seen_at
+            if follower_snapshot is not None and tracked_playlist_playlist_id:
+                upsert_playlist_seen_and_snapshot(
+                    db,
+                    playlist_id=tracked_playlist_playlist_id,
+                    followers=follower_snapshot,
+                    seen_at=snapshot_seen_at,
+                    source="scan_result",
+                )
             db.add(scan)
             db.commit()
 
@@ -543,6 +553,14 @@ def run_basic_scan(scan_id: str) -> None:
                                     is_tracked_playlist=is_tracked,
                                 )
                             )
+                            if playlist_id and playlist_followers is not None:
+                                upsert_playlist_seen_and_snapshot(
+                                    db,
+                                    playlist_id=playlist_id,
+                                    followers=playlist_followers,
+                                    seen_at=searched_at,
+                                    source="scan_result",
+                                )
 
                         query.tracked_rank = tracked_rank
                         query.tracked_found_in_top20 = tracked_rank is not None
