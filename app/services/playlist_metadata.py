@@ -10,6 +10,7 @@ from app.repositories.tracked_playlists import get_tracked_playlist_by_id
 from app.services.playlist_insights import upsert_playlist_seen_and_snapshot
 
 logger = logging.getLogger(__name__)
+REFRESH_SNAPSHOT_DEDUPE_SECONDS = 300
 
 
 def select_smallest_image_url(images: list[dict]) -> str | None:
@@ -203,6 +204,7 @@ def refresh_playlist_metadata(db: Session, tracked_playlist_id: str):
             followers=followers_total,
             seen_at=refreshed_at,
             source="refresh_stats",
+            dedupe_window_seconds=REFRESH_SNAPSHOT_DEDUPE_SECONDS,
         )
 
         db.add(tracked)
