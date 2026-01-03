@@ -399,6 +399,13 @@ def run_basic_scan(scan_id: str) -> None:
             snapshot_seen_at = _now_utc()
             scan.follower_snapshot = follower_snapshot
             scan.last_event_at = snapshot_seen_at
+            if scan.tracked_playlist_id:
+                tracked_playlist = db.get(TrackedPlaylist, scan.tracked_playlist_id)
+                if tracked_playlist:
+                    if follower_snapshot is not None:
+                        tracked_playlist.followers_total = follower_snapshot
+                    tracked_playlist.last_meta_scan_at = snapshot_seen_at
+                    db.add(tracked_playlist)
             if follower_snapshot is not None and tracked_playlist_playlist_id:
                 upsert_playlist_seen_and_snapshot(
                     db,

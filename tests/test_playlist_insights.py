@@ -8,6 +8,7 @@ from app.models.playlist import PlaylistFollowerSnapshot
 from app.services.playlist_insights import (
     DailyScanRep,
     backfill_playlist_follower_snapshots_from_dedicated_scans,
+    build_daily_representative_snapshots,
     build_daily_compare,
     build_weekly_compare,
     compute_position_counts,
@@ -55,6 +56,22 @@ def _make_scan(scan_date: datetime, *, followers: int) -> BasicScan:
         scanned_keywords=["pop"],
         follower_snapshot=followers,
         is_tracked_playlist=True,
+    )
+
+
+def _make_snapshot(
+    snapshot_at: datetime,
+    *,
+    playlist_id: str = "playlist_1",
+    followers: int,
+    source: str = "refresh_stats",
+) -> PlaylistFollowerSnapshot:
+    return PlaylistFollowerSnapshot(
+        playlist_id=playlist_id,
+        snapshot_at=snapshot_at,
+        snapshot_date=snapshot_at.date(),
+        followers=followers,
+        source=source,
     )
 
 
@@ -108,6 +125,36 @@ def test_compute_position_counts_ignores_missing() -> None:
     assert counts["improved"] == 1
     assert counts["declined"] == 0
     assert counts["unchanged"] == 1
+
+
+def test_daily_representative_snapshots_include_refresh_only_days() -> None:
+    snapshot_at = datetime.now(timezone.utc)
+    refresh_snapshot = _make_snapshot(snapshot_at, followers=220)
+
+    reps = build_daily_representative_snapshots([refresh_snapshot], [], days_back=7)
+
+    assert len(reps) == 1
+    assert reps[0].date == snapshot_at.date()
+    assert reps[0].follower_snapshot == 220
+    assert reps[0].rank_map == {}
+
+
+def test_daily_representative_snapshots_merge_rank_maps_from_scans() -> None:
+    snapshot_at = datetime.now(timezone.utc)
+    refresh_snapshot = _make_snapshot(snapshot_at, followers=250)
+    scan_rep = DailyScanRep(
+        date=snapshot_at.date(),
+        scan_id="scan-123",
+        follower_snapshot=200,
+        rank_map={("US", "pop"): 10},
+    )
+
+    reps = build_daily_representative_snapshots([refresh_snapshot], [scan_rep], days_back=7)
+
+    assert len(reps) == 1
+    assert reps[0].date == snapshot_at.date()
+    assert reps[0].follower_snapshot == 250
+    assert reps[0].rank_map == scan_rep.rank_map
 
 
 def test_build_daily_compare_uses_latest_two_days() -> None:

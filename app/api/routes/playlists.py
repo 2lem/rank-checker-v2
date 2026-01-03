@@ -35,6 +35,7 @@ from app.services.playlist_metadata import (
 )
 from app.services.playlist_insights import upsert_playlist_seen_and_snapshot
 from app.services.playlist_refresh_jobs import enqueue_refresh
+from app.services.tracked_playlist_stats import resolve_latest_playlist_stats
 
 router = APIRouter(tags=["playlists"])
 logger = logging.getLogger(__name__)
@@ -64,9 +65,18 @@ def _ensure_no_removals(existing: list[str], incoming: list[str], label: str) ->
         )
 
 
+def _serialize_tracked_playlist(db: Session, tracked) -> TrackedPlaylistOut:
+    stats = resolve_latest_playlist_stats(db, tracked)
+    payload = TrackedPlaylistOut.model_validate(tracked).model_dump()
+    payload["followers_total"] = stats.followers_total
+    payload["stats_updated_at"] = stats.stats_updated_at
+    return TrackedPlaylistOut.model_validate(payload)
+
+
 @router.get("", response_model=list[TrackedPlaylistOut])
 def get_playlists(db: Session = Depends(get_db)):
-    return list_tracked_playlists(db)
+    playlists = list_tracked_playlists(db)
+    return [_serialize_tracked_playlist(db, item) for item in playlists]
 
 
 @router.get("/{tracked_playlist_id}", response_model=TrackedPlaylistOut)
@@ -74,7 +84,7 @@ def get_playlist(tracked_playlist_id: UUID, db: Session = Depends(get_db)):
     tracked = get_tracked_playlist_by_id(db, tracked_playlist_id)
     if not tracked:
         raise HTTPException(status_code=404, detail="Tracked playlist not found.")
-    return tracked
+    return _serialize_tracked_playlist(db, tracked)
 
 
 @router.post("", response_model=TrackedPlaylistOut, status_code=status.HTTP_201_CREATED)

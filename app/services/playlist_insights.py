@@ -25,6 +25,7 @@ def upsert_playlist_seen_and_snapshot(
     followers: int | None,
     seen_at: datetime | None,
     source: str,
+    dedupe_window_seconds: int | None = None,
 ) -> Playlist | None:
     if not playlist_id:
         return None
@@ -50,6 +51,24 @@ def upsert_playlist_seen_and_snapshot(
 
     if followers is None:
         return playlist
+
+    latest_snapshot = None
+    if dedupe_window_seconds:
+        latest_snapshot = (
+            db.execute(
+                select(PlaylistFollowerSnapshot)
+                .where(PlaylistFollowerSnapshot.playlist_id == playlist_id)
+                .order_by(PlaylistFollowerSnapshot.snapshot_at.desc())
+                .limit(1)
+            )
+            .scalar_one_or_none()
+        )
+        if latest_snapshot:
+            within_window = seen_at_utc - latest_snapshot.snapshot_at <= timedelta(
+                seconds=dedupe_window_seconds
+            )
+            if within_window and latest_snapshot.followers == followers:
+                return playlist
 
     snapshot_date = seen_at_utc.date()
     snapshot = db.execute(
@@ -258,6 +277,38 @@ def build_daily_representative_scans_from_dedicated_scans(
             )
         )
     return daily_reps
+
+
+def build_daily_representative_snapshots(
+    snapshots: list[PlaylistFollowerSnapshot],
+    scan_reps: list[DailyScanRep],
+    *,
+    days_back: int = 90,
+) -> list[DailyScanRep]:
+    if not snapshots and not scan_reps:
+        return []
+
+    cutoff_date = datetime.now(timezone.utc).date() - timedelta(days=days_back - 1)
+    scan_map = {rep.date: rep for rep in scan_reps if rep.date >= cutoff_date}
+    daily_map: dict[date, DailyScanRep] = {}
+
+    for snapshot in snapshots:
+        if snapshot.snapshot_date < cutoff_date:
+            continue
+        rep = scan_map.get(snapshot.snapshot_date)
+        daily_map[snapshot.snapshot_date] = DailyScanRep(
+            date=snapshot.snapshot_date,
+            scan_id=rep.scan_id if rep else snapshot.id,
+            follower_snapshot=snapshot.followers,
+            rank_map=rep.rank_map if rep else {},
+        )
+
+    for rep in scan_map.values():
+        if rep.date < cutoff_date or rep.date in daily_map:
+            continue
+        daily_map[rep.date] = rep
+
+    return sorted(daily_map.values(), key=lambda rep: rep.date)
 
 
 def compute_position_counts(
@@ -486,7 +537,7 @@ def build_playlist_insights(
         if snapshots:
             deltas["change_all_time"] = current_followers - snapshots[0].followers
 
-    daily_reps = (
+    scan_reps = (
         build_daily_representative_scans_from_dedicated_scans(
             db,
             tracked_playlist_id,
@@ -494,6 +545,7 @@ def build_playlist_insights(
         if tracked_playlist_id
         else []
     )
+    daily_reps = build_daily_representative_snapshots(snapshots, scan_reps)
     daily_entries_full = _build_daily_summary(daily_reps, days=0)
     daily_summary = _build_daily_summary(daily_reps, days=7)
     weekly_summary = _build_weekly_summary(daily_entries_full)

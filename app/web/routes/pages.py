@@ -16,6 +16,7 @@ from app.repositories.tracked_playlists import (
     get_tracked_playlist_by_id,
     list_tracked_playlists,
 )
+from app.services.tracked_playlist_stats import resolve_latest_playlist_stats
 
 router = APIRouter(tags=["pages"])
 
@@ -295,7 +296,9 @@ def _build_dashboard_header_labels(name: str | None) -> tuple[str, str, str]:
     return header_text, playlist_label, base_name
 
 
-def _playlist_to_view_model(playlist) -> dict:
+def _playlist_to_view_model(playlist, *, stats=None) -> dict:
+    followers_total = stats.followers_total if stats else playlist.followers_total
+    stats_updated_at = stats.stats_updated_at if stats else playlist.stats_updated_at
     playlist_url = playlist.playlist_url or f"https://open.spotify.com/playlist/{playlist.playlist_id}"
     header_text, playlist_label, base_name = _build_dashboard_header_labels(playlist.name)
     return {
@@ -305,9 +308,9 @@ def _playlist_to_view_model(playlist) -> dict:
         "name": base_name,
         "image_url": playlist.cover_image_url_small or "",
         "owner_name": playlist.owner_name or "—",
-        "followers_total": _format_count(playlist.followers_total),
+        "followers_total": _format_count(followers_total),
         "tracks_count": _format_count(playlist.tracks_count),
-        "scanned_display": _format_relative_time(playlist.stats_updated_at),
+        "scanned_display": _format_relative_time(stats_updated_at),
         "last_updated_display": _format_relative_time(playlist.playlist_last_updated_at),
         "target_countries": playlist.target_countries or [],
         "target_country_labels": {
@@ -328,7 +331,10 @@ def _render_template(request: Request, template_name: str, context: dict) -> HTM
 @router.get("/", response_class=HTMLResponse)
 def tracked_playlists_page(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     tracked_playlists = list_tracked_playlists(db)
-    playlists = [_playlist_to_view_model(item) for item in tracked_playlists]
+    playlists = [
+        _playlist_to_view_model(item, stats=resolve_latest_playlist_stats(db, item))
+        for item in tracked_playlists
+    ]
     return _render_template(
         request,
         "tracked_playlists.html",
@@ -356,7 +362,9 @@ def tracked_playlist_detail_page(
         request,
         "tracked_playlist_detail.html",
         {
-            "playlist": _playlist_to_view_model(playlist),
+            "playlist": _playlist_to_view_model(
+                playlist, stats=resolve_latest_playlist_stats(db, playlist)
+            ),
             "available_markets": _available_markets_with_labels(),
         },
     )
