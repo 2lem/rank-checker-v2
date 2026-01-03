@@ -1211,12 +1211,6 @@
         }
         insightsElements.chart.querySelectorAll('svg').forEach((node) => node.remove());
         const filteredSeries = filterInsightsRange(series);
-        if (filteredSeries.length < 2) {
-          if (insightsElements.chartEmpty) {
-            insightsElements.chartEmpty.hidden = false;
-          }
-          return;
-        }
         const firstEntry = filteredSeries[0];
         const lastEntry = filteredSeries[filteredSeries.length - 1];
         const anchors = buildRangeAnchors(firstEntry?.dateObj || null, lastEntry?.dateObj || null);
@@ -1225,14 +1219,12 @@
           .map((bucket) => (bucket.entry ? bucket.entry.followers : null))
           .filter((value) => Number.isFinite(value));
 
-        if (!buckets.length || !bucketValues.length) {
-          if (insightsElements.chartEmpty) {
-            insightsElements.chartEmpty.hidden = false;
-          }
-          return;
-        }
+        const hasChartPoints = filteredSeries.length >= 2 && bucketValues.length >= 2;
         if (insightsElements.chartEmpty) {
-          insightsElements.chartEmpty.hidden = true;
+          insightsElements.chartEmpty.hidden = hasChartPoints;
+        }
+        if (!hasChartPoints) {
+          return;
         }
 
         const width = insightsElements.chart.clientWidth || 600;
@@ -1333,12 +1325,12 @@
         }
       };
 
-      const renderDailySummary = (payload) => {
+      const renderDailySummary = (payload, hasHistory) => {
         const compare = payload?.daily_compare ?? null;
         if (!insightsElements.dailyCard) {
           return;
         }
-        if (!compare) {
+        if (!hasHistory || !compare) {
           if (insightsElements.dailyEmpty) {
             insightsElements.dailyEmpty.hidden = false;
           }
@@ -1411,12 +1403,12 @@
         }
       };
 
-      const renderWeeklySummary = (payload) => {
+      const renderWeeklySummary = (payload, hasHistory) => {
         const compare = payload?.weekly_compare ?? null;
         if (!insightsElements.weeklyCard) {
           return;
         }
-        if (!compare) {
+        if (!hasHistory || !compare) {
           if (insightsElements.weeklyEmpty) {
             insightsElements.weeklyEmpty.hidden = false;
           }
@@ -1591,9 +1583,10 @@
 
       const renderInsights = (payload) => {
         const series = normalizeTimeseries(payload);
+        const hasHistory = series.length >= 2;
         renderInsightsChart(series);
-        renderDailySummary(payload);
-        renderWeeklySummary(payload);
+        renderDailySummary(payload, hasHistory);
+        renderWeeklySummary(payload, hasHistory);
       };
 
       loadInsights = async () => {
