@@ -126,16 +126,19 @@
               <div class="insights-block-header">
                 <div>
                   <h3>Daily Summary</h3>
-                  <p class="summary-note">Last seven days of follower changes.</p>
+                  <p class="summary-note">Last seven days of follower changes and position shifts.</p>
                 </div>
               </div>
-              <div class="table-scroll">
+              <div class="table-scroll insights-table-wrap">
                 <table class="results-table insights-summary-table">
                   <thead>
                     <tr>
                       <th>Date</th>
                       <th>Followers</th>
                       <th>Change</th>
+                      <th>Improved</th>
+                      <th>Declined</th>
+                      <th>Unchanged</th>
                     </tr>
                   </thead>
                   <tbody data-insights-daily-body></tbody>
@@ -150,14 +153,26 @@
               <div class="insights-block-header">
                 <div>
                   <h3>Weekly Summary</h3>
-                  <p class="summary-note">High-level follower trend overview.</p>
+                  <p class="summary-note">Weekly follower change and position shifts.</p>
                 </div>
               </div>
-              <div class="insights-weekly-summary" data-insights-weekly-summary>
-                <p class="summary-note insights-empty" data-insights-weekly-empty hidden>
-                  Weekly trend data will appear once enough snapshots are captured.
-                </p>
+              <div class="table-scroll insights-table-wrap">
+                <table class="results-table insights-summary-table insights-weekly-table">
+                  <thead>
+                    <tr>
+                      <th>Week</th>
+                      <th>Follower Change</th>
+                      <th>Improved</th>
+                      <th>Declined</th>
+                      <th>Unchanged</th>
+                    </tr>
+                  </thead>
+                  <tbody data-insights-weekly-body></tbody>
+                </table>
               </div>
+              <p class="summary-note insights-empty" data-insights-weekly-empty hidden>
+                Weekly trend data will appear once enough snapshots are captured.
+              </p>
             </section>
           </div>
         </section>
@@ -885,8 +900,8 @@
         chartEmpty: document.querySelector('[data-insights-chart-empty]'),
         dailyBody: document.querySelector('[data-insights-daily-body]'),
         dailyEmpty: document.querySelector('[data-insights-daily-empty]'),
-        weeklySummary: document.querySelector('[data-insights-weekly-summary]'),
         weeklyEmpty: document.querySelector('[data-insights-weekly-empty]'),
+        weeklyBody: document.querySelector('[data-insights-weekly-body]'),
       };
       const insightsRangeButtons = document.querySelectorAll('[data-insights-range-button]');
       let insightsPayload = null;
@@ -1078,12 +1093,13 @@
         insightsElements.chart.append(svg);
       };
 
-      const renderDailySummary = (series) => {
+      const renderDailySummary = (payload) => {
+        const summary = Array.isArray(payload?.daily_summary) ? payload.daily_summary : [];
         if (!insightsElements.dailyBody) {
           return;
         }
         insightsElements.dailyBody.innerHTML = '';
-        if (!series.length) {
+        if (!summary.length) {
           if (insightsElements.dailyEmpty) {
             insightsElements.dailyEmpty.hidden = false;
           }
@@ -1092,53 +1108,63 @@
         if (insightsElements.dailyEmpty) {
           insightsElements.dailyEmpty.hidden = true;
         }
-        const dailyPoints = series.slice(-7);
-        const byDate = new Map(series.map((entry) => [entry.dateKey, entry]));
-
-        dailyPoints.forEach((entry) => {
+        summary.forEach((entry) => {
           const row = document.createElement('tr');
           const dateCell = document.createElement('td');
-          dateCell.textContent = formatInsightsDate(entry.dateObj);
+          const dateObj = parseSnapshotDate(entry?.date);
+          dateCell.textContent = dateObj ? formatInsightsDate(dateObj) : '—';
           const followersCell = document.createElement('td');
-          followersCell.textContent = entry.followers.toLocaleString();
+          const followersValue = Number(entry?.followers);
+          followersCell.textContent = Number.isFinite(followersValue)
+            ? followersValue.toLocaleString()
+            : '—';
           const changeCell = document.createElement('td');
-
-          const previousDate = new Date(
-            Date.UTC(
-              entry.dateObj.getUTCFullYear(),
-              entry.dateObj.getUTCMonth(),
-              entry.dateObj.getUTCDate() - 1
-            )
-          );
-          const previousKey = previousDate.toISOString().slice(0, 10);
-          const previousEntry = byDate.get(previousKey);
-
-          if (!previousEntry) {
+          const followerChange = Number(entry?.follower_change);
+          if (!Number.isFinite(followerChange)) {
             changeCell.textContent = '–';
           } else {
-            const delta = entry.followers - previousEntry.followers;
-            const deltaInfo = describeDelta(delta);
+            const deltaInfo = describeDelta(followerChange);
             changeCell.textContent = deltaInfo.text;
             changeCell.classList.add(deltaInfo.className);
           }
 
-          row.append(dateCell, followersCell, changeCell);
+          const improvedCell = document.createElement('td');
+          const improvedValue = Number(entry?.improved_positions);
+          improvedCell.textContent = Number.isFinite(improvedValue)
+            ? improvedValue.toLocaleString()
+            : '—';
+          const declinedCell = document.createElement('td');
+          const declinedValue = Number(entry?.declined_positions);
+          declinedCell.textContent = Number.isFinite(declinedValue)
+            ? declinedValue.toLocaleString()
+            : '—';
+          const unchangedCell = document.createElement('td');
+          const unchangedValue = Number(entry?.unchanged_positions);
+          unchangedCell.textContent = Number.isFinite(unchangedValue)
+            ? unchangedValue.toLocaleString()
+            : '—';
+
+          row.append(
+            dateCell,
+            followersCell,
+            changeCell,
+            improvedCell,
+            declinedCell,
+            unchangedCell
+          );
           insightsElements.dailyBody.append(row);
         });
       };
 
       const renderWeeklySummary = (payload) => {
-        if (!insightsElements.weeklySummary) {
+        if (!insightsElements.weeklyBody) {
           return;
         }
-        insightsElements.weeklySummary.innerHTML = '';
-        const weeklyDelta = payload?.computed_deltas?.change_7d;
-        const allTimeDelta = payload?.computed_deltas?.change_all_time;
-
-        if (weeklyDelta === null || weeklyDelta === undefined) {
+        insightsElements.weeklyBody.innerHTML = '';
+        const summary = Array.isArray(payload?.weekly_summary) ? payload.weekly_summary : [];
+        if (!summary.length) {
           if (insightsElements.weeklyEmpty) {
             insightsElements.weeklyEmpty.hidden = false;
-            insightsElements.weeklySummary.append(insightsElements.weeklyEmpty);
           }
           return;
         }
@@ -1146,35 +1172,41 @@
           insightsElements.weeklyEmpty.hidden = true;
         }
 
-        const weeklyLine = document.createElement('p');
-        weeklyLine.classList.add('insights-weekly-line');
-        const weeklyLabel = document.createElement('span');
-        weeklyLabel.textContent = 'This week: ';
-        const weeklyDeltaInfo = describeDelta(weeklyDelta);
-        const weeklyDeltaSpan = document.createElement('span');
-        weeklyDeltaSpan.textContent = `${weeklyDeltaInfo.text} followers`;
-        weeklyDeltaSpan.classList.add(weeklyDeltaInfo.className);
-        weeklyLine.append(weeklyLabel, weeklyDeltaSpan);
-        insightsElements.weeklySummary.append(weeklyLine);
-
-        if (allTimeDelta !== null && allTimeDelta !== undefined) {
-          const allTimeLine = document.createElement('p');
-          allTimeLine.classList.add('insights-weekly-line');
-          const allTimeLabel = document.createElement('span');
-          allTimeLabel.textContent = 'Since first seen: ';
-          const allTimeDeltaInfo = describeDelta(allTimeDelta);
-          const allTimeDeltaSpan = document.createElement('span');
-          allTimeDeltaSpan.textContent = `${allTimeDeltaInfo.text} followers`;
-          allTimeDeltaSpan.classList.add(allTimeDeltaInfo.className);
-          allTimeLine.append(allTimeLabel, allTimeDeltaSpan);
-          insightsElements.weeklySummary.append(allTimeLine);
-        }
+        summary.forEach((entry) => {
+          const row = document.createElement('tr');
+          const weekCell = document.createElement('td');
+          weekCell.textContent = entry?.week || '—';
+          const followersCell = document.createElement('td');
+          const changeValue = Number(entry?.follower_change);
+          const deltaInfo = Number.isFinite(changeValue) ? describeDelta(changeValue) : null;
+          followersCell.textContent = deltaInfo ? deltaInfo.text : '–';
+          if (deltaInfo) {
+            followersCell.classList.add(deltaInfo.className);
+          }
+          const improvedCell = document.createElement('td');
+          const improvedValue = Number(entry?.improved_positions);
+          improvedCell.textContent = Number.isFinite(improvedValue)
+            ? improvedValue.toLocaleString()
+            : '—';
+          const declinedCell = document.createElement('td');
+          const declinedValue = Number(entry?.declined_positions);
+          declinedCell.textContent = Number.isFinite(declinedValue)
+            ? declinedValue.toLocaleString()
+            : '—';
+          const unchangedCell = document.createElement('td');
+          const unchangedValue = Number(entry?.unchanged_positions);
+          unchangedCell.textContent = Number.isFinite(unchangedValue)
+            ? unchangedValue.toLocaleString()
+            : '—';
+          row.append(weekCell, followersCell, improvedCell, declinedCell, unchangedCell);
+          insightsElements.weeklyBody.append(row);
+        });
       };
 
       const renderInsights = (payload) => {
         const series = normalizeTimeseries(payload);
         renderInsightsChart(filterInsightsRange(series));
-        renderDailySummary(series);
+        renderDailySummary(payload);
         renderWeeklySummary(payload);
       };
 

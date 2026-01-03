@@ -13,6 +13,16 @@ class _FakeSession:
         self.commits = 0
         self.rollbacks = 0
 
+    def get(self, _model, _key):
+        return None
+
+    def execute(self, _query):
+        class _Result:
+            def scalar_one_or_none(self):
+                return None
+
+        return _Result()
+
     def add(self, obj):
         self.added.append(obj)
 

@@ -71,3 +71,5 @@ class PlaylistInsightsOut(BaseModel):
     current_followers: int | None = None
     follower_timeseries: list[FollowerTimeseriesEntry]
     computed_deltas: PlaylistInsightsDeltas
+    daily_summary: list[dict[str, object]] = Field(default_factory=list)
+    weekly_summary: list[dict[str, object]] = Field(default_factory=list)
