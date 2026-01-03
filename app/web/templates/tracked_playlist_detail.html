@@ -131,23 +131,44 @@
               </div>
               <div class="insights-daily-card" data-insights-daily-card>
                 <p class="insights-daily-dates" data-insights-daily-dates></p>
-                <div class="insights-daily-row">
+                <div
+                  class="insights-daily-row insights-metric-row"
+                  data-insights-metric-row
+                  data-insights-summary="daily"
+                  data-insights-metric="followers"
+                >
                   <span class="insights-daily-label">FOLLOWERS</span>
                   <span class="insights-daily-value" data-insights-daily-followers></span>
                 </div>
-                <div class="insights-daily-row">
+                <div
+                  class="insights-daily-row insights-metric-row"
+                  data-insights-metric-row
+                  data-insights-summary="daily"
+                  data-insights-metric="improved"
+                >
                   <span class="insights-daily-label">IMPROVED POSITIONS</span>
                   <span class="insights-daily-value" data-insights-daily-improved></span>
                 </div>
-                <div class="insights-daily-row">
+                <div
+                  class="insights-daily-row insights-metric-row"
+                  data-insights-metric-row
+                  data-insights-summary="daily"
+                  data-insights-metric="declined"
+                >
                   <span class="insights-daily-label">DECLINED POSITIONS</span>
                   <span class="insights-daily-value" data-insights-daily-declined></span>
                 </div>
-                <div class="insights-daily-row">
+                <div
+                  class="insights-daily-row insights-metric-row"
+                  data-insights-metric-row
+                  data-insights-summary="daily"
+                  data-insights-metric="unchanged"
+                >
                   <span class="insights-daily-label">UNCHANGED</span>
                   <span class="insights-daily-value" data-insights-daily-unchanged></span>
                 </div>
               </div>
+              <div class="insights-drilldown-slot" data-insights-drilldown-slot="daily"></div>
               <p class="summary-note insights-empty" data-insights-daily-empty hidden>
                 Not enough history yet — capture at least two days.
               </p>
@@ -165,24 +186,45 @@
                   <div>
                     <p class="insights-daily-dates" data-insights-weekly-dates></p>
                   </div>
-                  <div class="insights-daily-row">
+                  <div
+                    class="insights-daily-row insights-metric-row"
+                    data-insights-metric-row
+                    data-insights-summary="weekly"
+                    data-insights-metric="followers"
+                  >
                     <span class="insights-daily-label">FOLLOWERS</span>
                     <span class="insights-daily-value" data-insights-weekly-followers></span>
                   </div>
-                  <div class="insights-daily-row">
+                  <div
+                    class="insights-daily-row insights-metric-row"
+                    data-insights-metric-row
+                    data-insights-summary="weekly"
+                    data-insights-metric="improved"
+                  >
                     <span class="insights-daily-label">IMPROVED POSITIONS</span>
                     <span class="insights-daily-value" data-insights-weekly-improved></span>
                   </div>
-                  <div class="insights-daily-row">
+                  <div
+                    class="insights-daily-row insights-metric-row"
+                    data-insights-metric-row
+                    data-insights-summary="weekly"
+                    data-insights-metric="declined"
+                  >
                     <span class="insights-daily-label">DECLINED POSITIONS</span>
                     <span class="insights-daily-value" data-insights-weekly-declined></span>
                   </div>
-                  <div class="insights-daily-row">
+                  <div
+                    class="insights-daily-row insights-metric-row"
+                    data-insights-metric-row
+                    data-insights-summary="weekly"
+                    data-insights-metric="unchanged"
+                  >
                     <span class="insights-daily-label">UNCHANGED</span>
                     <span class="insights-daily-value" data-insights-weekly-unchanged></span>
                   </div>
                 </div>
               </div>
+              <div class="insights-drilldown-slot" data-insights-drilldown-slot="weekly"></div>
               <p class="summary-note insights-empty" data-insights-weekly-empty hidden>
                 Not enough history yet — capture at least two days.
               </p>
@@ -929,11 +971,17 @@
         weeklyUnchanged: document.querySelector('[data-insights-weekly-unchanged]'),
         weeklyEmpty: document.querySelector('[data-insights-weekly-empty]'),
       };
+      const drilldownSlots = {
+        daily: document.querySelector('[data-insights-drilldown-slot="daily"]'),
+        weekly: document.querySelector('[data-insights-drilldown-slot="weekly"]'),
+      };
+      const insightsMetricRows = document.querySelectorAll('[data-insights-metric-row]');
       const insightsRangeButtons = document.querySelectorAll('[data-insights-range-button]');
       let insightsPayload = null;
       let activeInsightsRange = '7d';
       let insightsLoading = false;
       let insightsReloadRequested = false;
+      let activeDrilldown = null;
 
       const parseSnapshotDate = (value) => {
         if (!value) {
@@ -1417,6 +1465,106 @@
           setDailyValue(insightsElements.weeklyUnchanged, '—', 'delta-neutral');
         }
       };
+
+      const clearActiveDrilldown = ({ restoreScroll = true } = {}) => {
+        if (!activeDrilldown) {
+          return;
+        }
+        const { slot, row, restoreScrollY } = activeDrilldown;
+        if (slot) {
+          slot.innerHTML = '';
+        }
+        if (row) {
+          row.classList.remove('is-active');
+        }
+        if (restoreScroll && Number.isFinite(restoreScrollY)) {
+          window.scrollTo({ top: restoreScrollY, behavior: 'smooth' });
+        }
+        activeDrilldown = null;
+      };
+
+      const renderDrilldownError = (slot, message) => {
+        if (!slot) {
+          return;
+        }
+        slot.innerHTML = `
+          <section class="insights-drilldown" data-insights-drilldown>
+            <div class="insights-drilldown-header">
+              <h4>Drilldown</h4>
+              <button
+                class="btn btn-secondary insights-drilldown-close"
+                type="button"
+                data-insights-drilldown-close
+              >
+                Close
+              </button>
+            </div>
+            <p class="summary-note">${message}</p>
+          </section>
+        `;
+      };
+
+      const openInsightsDrilldown = async (row) => {
+        const summary = row?.dataset?.insightsSummary;
+        const metric = row?.dataset?.insightsMetric;
+        const slot = drilldownSlots[summary];
+        if (!summary || !metric || !slot || !playlistId) {
+          return;
+        }
+
+        if (activeDrilldown?.summary === summary && activeDrilldown?.metric === metric) {
+          clearActiveDrilldown({ restoreScroll: true });
+          return;
+        }
+
+        clearActiveDrilldown({ restoreScroll: false });
+
+        const restoreScrollY = window.scrollY;
+        activeDrilldown = { summary, metric, slot, row, restoreScrollY };
+        row.classList.add('is-active');
+        slot.innerHTML = `
+          <section class="insights-drilldown insights-drilldown-loading" data-insights-drilldown>
+            <p class="summary-note">Loading details…</p>
+          </section>
+        `;
+
+        try {
+          const response = await fetch(
+            `/playlists/${playlistId}/insights/${summary}/drilldown?metric=${encodeURIComponent(
+              metric
+            )}`
+          );
+          if (!response.ok) {
+            throw new Error('Unable to load drilldown.');
+          }
+          const html = await response.text();
+          slot.innerHTML = html;
+          const drilldownSection = slot.querySelector('[data-insights-drilldown]');
+          drilldownSection?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          const closeButton = slot.querySelector('[data-insights-drilldown-close]');
+          closeButton?.addEventListener('click', (event) => {
+            event.preventDefault();
+            clearActiveDrilldown({ restoreScroll: true });
+          });
+        } catch (error) {
+          if (typeof console !== 'undefined' && console.error) {
+            console.error('[insights] drilldown failed', error);
+          }
+          renderDrilldownError(slot, 'Unable to load drilldown details.');
+          const closeButton = slot.querySelector('[data-insights-drilldown-close]');
+          closeButton?.addEventListener('click', (event) => {
+            event.preventDefault();
+            clearActiveDrilldown({ restoreScroll: true });
+          });
+        }
+      };
+
+      insightsMetricRows.forEach((row) => {
+        row.addEventListener('click', (event) => {
+          event.preventDefault();
+          openInsightsDrilldown(row);
+        });
+      });
 
       const renderInsights = (payload) => {
         const series = normalizeTimeseries(payload);

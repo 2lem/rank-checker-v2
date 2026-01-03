@@ -1,0 +1,70 @@
+<section class="insights-drilldown" data-insights-drilldown>
+  <div class="insights-drilldown-header">
+    <h4>{{ summary_label }} {{ metric_label }}</h4>
+    <button
+      class="btn btn-secondary insights-drilldown-close"
+      type="button"
+      data-insights-drilldown-close
+    >
+      Close
+    </button>
+  </div>
+
+  {% if metric == 'followers' %}
+    {% if follower_row %}
+      <div class="comparison-metrics-table-wrap insights-drilldown-table-wrap">
+        <table class="results-table comparison-table comparison-followers-table">
+          <thead>
+            <tr>
+              <th>From (date)</th>
+              <th>To (date)</th>
+              <th>Followers From</th>
+              <th>Followers To</th>
+              <th>Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>{{ follower_row.from_date }}</td>
+              <td>{{ follower_row.to_date }}</td>
+              <td>{{ follower_row.followers_from }}</td>
+              <td>{{ follower_row.followers_to }}</td>
+              <td class="{{ follower_row.change_class }}">{{ follower_row.change_label }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="summary-note">No follower comparison available.</p>
+    {% endif %}
+  {% else %}
+    {% if rows %}
+      <div class="table-scroll insights-drilldown-table-wrap">
+        <table class="results-table comparison-table">
+          <thead>
+            <tr>
+              <th>Country</th>
+              <th>Keyword</th>
+              <th>Previous Rank</th>
+              <th>Current Rank</th>
+              <th>Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                <td>{{ row.country }}</td>
+                <td>{{ row.keyword }}</td>
+                <td>{{ row.previous_rank }}</td>
+                <td>{{ row.current_rank }}</td>
+                <td class="{{ row.change_class }}">{{ row.change_label }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="summary-note">No results available for this metric.</p>
+    {% endif %}
+  {% endif %}
+</section>

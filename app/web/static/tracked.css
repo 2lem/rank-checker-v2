@@ -812,6 +812,21 @@
   padding-bottom: 5px;
 }
 
+.insights-metric-row {
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 6px 8px;
+  margin: 0 -8px;
+}
+
+.insights-metric-row:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.insights-metric-row.is-active {
+  background: rgba(0, 0, 0, 0.08);
+}
+
 .insights-daily-row:last-child {
   padding-bottom: 0;
 }
@@ -832,6 +847,36 @@
 }
 
 .insights-weekly-card-wrap {
+  width: 100%;
+}
+
+.insights-drilldown-slot {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.insights-drilldown {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  padding: 12px;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.insights-drilldown-loading {
+  align-items: center;
+}
+
+.insights-drilldown-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.insights-drilldown-table-wrap {
   width: 100%;
 }
 
