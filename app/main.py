@@ -9,7 +9,13 @@ from contextvars import Token
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
-from app.api import basic_rank_checker_router, debug_router, playlists_router, scans_router
+from app.api import (
+    basic_rank_checker_router,
+    debug_router,
+    playlists_router,
+    scans_router,
+    tracked_playlists_router,
+)
 from app.basic_rank_checker.watchdog import start_scan_watchdog
 from app.core.db import request_path_var
 from app.core.version import get_git_sha
@@ -71,6 +77,7 @@ async def request_tracing_middleware(request: Request, call_next):
 app.include_router(debug_router)
 app.include_router(basic_rank_checker_router, prefix="/api/basic-rank-checker")
 app.include_router(playlists_router, prefix="/api/playlists")
+app.include_router(tracked_playlists_router, prefix="/api/tracked-playlists")
 app.include_router(scans_router, prefix="/api/scans")
 app.include_router(pages_router)
 

@@ -45,6 +45,14 @@
             <button
               class="btn btn-secondary scan-tab-button"
               type="button"
+              data-scan-tab="insights"
+              aria-pressed="true"
+            >
+              Insights
+            </button>
+            <button
+              class="btn btn-secondary scan-tab-button"
+              type="button"
               data-scan-tab="dedicated"
               aria-pressed="false"
             >
@@ -54,7 +62,7 @@
               class="btn btn-secondary scan-tab-button"
               type="button"
               data-scan-tab="latest"
-              aria-pressed="true"
+              aria-pressed="false"
             >
               Latest Scan Results
             </button>
@@ -66,6 +74,91 @@
             >
               Scan History
             </button>
+          </div>
+        </section>
+
+        <section class="panel insights-panel is-active" id="insights-section">
+          <div class="panel-header">
+            <h2>Insights</h2>
+            <p>Follower trends and summary metrics for this playlist.</p>
+          </div>
+          <div class="panel-body insights-body">
+            <section class="insights-block insights-graph">
+              <div class="insights-block-header">
+                <div>
+                  <h3>Follower Change Graph</h3>
+                  <p class="summary-note">Daily follower snapshots over time.</p>
+                </div>
+                <div class="insights-range" data-insights-range>
+                  <button
+                    class="pill pill-secondary is-active"
+                    type="button"
+                    data-insights-range-button
+                    data-range="7d"
+                  >
+                    7D
+                  </button>
+                  <button class="pill pill-secondary" type="button" data-insights-range-button data-range="30d">
+                    30D
+                  </button>
+                  <button class="pill pill-secondary" type="button" data-insights-range-button data-range="3m">
+                    3M
+                  </button>
+                  <button class="pill pill-secondary" type="button" data-insights-range-button data-range="6m">
+                    6M
+                  </button>
+                  <button class="pill pill-secondary" type="button" data-insights-range-button data-range="12m">
+                    12M
+                  </button>
+                  <button class="pill pill-secondary" type="button" data-insights-range-button data-range="all">
+                    ALL
+                  </button>
+                </div>
+              </div>
+              <div class="insights-chart" data-insights-chart>
+                <p class="summary-note insights-empty" data-insights-chart-empty hidden>
+                  Not enough follower snapshots to chart yet.
+                </p>
+              </div>
+            </section>
+
+            <section class="insights-block insights-daily">
+              <div class="insights-block-header">
+                <div>
+                  <h3>Daily Summary</h3>
+                  <p class="summary-note">Last seven days of follower changes.</p>
+                </div>
+              </div>
+              <div class="table-scroll">
+                <table class="results-table insights-summary-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Followers</th>
+                      <th>Change</th>
+                    </tr>
+                  </thead>
+                  <tbody data-insights-daily-body></tbody>
+                </table>
+              </div>
+              <p class="summary-note insights-empty" data-insights-daily-empty hidden>
+                No daily snapshots yet.
+              </p>
+            </section>
+
+            <section class="insights-block insights-weekly">
+              <div class="insights-block-header">
+                <div>
+                  <h3>Weekly Summary</h3>
+                  <p class="summary-note">High-level follower trend overview.</p>
+                </div>
+              </div>
+              <div class="insights-weekly-summary" data-insights-weekly-summary>
+                <p class="summary-note insights-empty" data-insights-weekly-empty hidden>
+                  Weekly trend data will appear once enough snapshots are captured.
+                </p>
+              </div>
+            </section>
           </div>
         </section>
 
@@ -142,7 +235,7 @@
           </div>
         </section>
 
-        <section class="panel latest-scan-panel is-active" id="latest-scan-section">
+        <section class="panel latest-scan-panel is-hidden" id="latest-scan-section">
           <div class="panel-header">
             <h2>Latest Scan Results</h2>
             <p>Most recent completed scan, refreshed on every visit.</p>
@@ -321,12 +414,14 @@
       const panels = document.querySelectorAll('.panel[data-panel]');
       const toolbar = document.querySelector('.toolbar-panel');
       let lastAnchor = toolbar;
+      const insightsSection = document.getElementById('insights-section');
       const basicScanSection = document.getElementById('basic-scan-section');
       const latestScanSection = document.getElementById('latest-scan-section');
       const scanHistorySection = document.getElementById('scan-history-section');
       const scanTabButtons = document.querySelectorAll('[data-scan-tab]');
       let basicScanStageController = null;
       let activeSection = null;
+      let loadInsights = null;
       let loadLatestScan = null;
       let loadScanHistory = null;
       let resetHistoryDetail = null;
@@ -426,6 +521,7 @@
           section.classList.toggle('is-hidden', !isActive);
         };
 
+        setSectionActive(insightsSection, nextTab === 'insights');
         setSectionActive(basicScanSection, nextTab === 'dedicated');
         setSectionActive(latestScanSection, nextTab === 'latest');
         setSectionActive(scanHistorySection, nextTab === 'history');
@@ -445,6 +541,9 @@
         }
         if (nextTab === 'history' && !options.skipFetch && typeof loadScanHistory === 'function') {
           loadScanHistory();
+        }
+        if (nextTab === 'insights' && !options.skipFetch && typeof loadInsights === 'function') {
+          loadInsights();
         }
 
         if (!options.skipScroll && lastTabScrollY !== null) {
@@ -780,6 +879,347 @@
         }
         return upper.replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt()));
       };
+
+      const insightsElements = {
+        chart: document.querySelector('[data-insights-chart]'),
+        chartEmpty: document.querySelector('[data-insights-chart-empty]'),
+        dailyBody: document.querySelector('[data-insights-daily-body]'),
+        dailyEmpty: document.querySelector('[data-insights-daily-empty]'),
+        weeklySummary: document.querySelector('[data-insights-weekly-summary]'),
+        weeklyEmpty: document.querySelector('[data-insights-weekly-empty]'),
+      };
+      const insightsRangeButtons = document.querySelectorAll('[data-insights-range-button]');
+      let insightsPayload = null;
+      let activeInsightsRange = '7d';
+      let insightsLoading = false;
+
+      const parseSnapshotDate = (value) => {
+        if (!value) {
+          return null;
+        }
+        const date = new Date(`${value}T00:00:00Z`);
+        if (Number.isNaN(date.getTime())) {
+          return null;
+        }
+        return date;
+      };
+
+      const formatInsightsDate = (date) =>
+        date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+      const formatInsightsDateShort = (date) =>
+        date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+
+      const normalizeTimeseries = (payload) => {
+        const raw = Array.isArray(payload?.follower_timeseries)
+          ? payload.follower_timeseries
+          : [];
+        return raw
+          .map((entry) => {
+            const dateObj = parseSnapshotDate(entry?.date);
+            if (!dateObj) {
+              return null;
+            }
+            const followers = Number(entry.followers);
+            if (!Number.isFinite(followers)) {
+              return null;
+            }
+            return {
+              dateObj,
+              dateKey: entry.date,
+              followers,
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => a.dateObj - b.dateObj);
+      };
+
+      const updateInsightsRangeButtons = () => {
+        insightsRangeButtons.forEach((button) => {
+          const isActive = button.dataset.range === activeInsightsRange;
+          button.classList.toggle('is-active', isActive);
+        });
+      };
+
+      const filterInsightsRange = (series) => {
+        if (!series.length) {
+          return [];
+        }
+        if (activeInsightsRange === 'all') {
+          return series;
+        }
+        const rangeDaysMap = {
+          '7d': 7,
+          '30d': 30,
+          '3m': 90,
+          '6m': 180,
+          '12m': 365,
+        };
+        const days = rangeDaysMap[activeInsightsRange];
+        if (!days) {
+          return series;
+        }
+        const latest = series[series.length - 1].dateObj;
+        const start = new Date(
+          Date.UTC(
+            latest.getUTCFullYear(),
+            latest.getUTCMonth(),
+            latest.getUTCDate() - (days - 1)
+          )
+        );
+        return series.filter((entry) => entry.dateObj >= start);
+      };
+
+      const describeDelta = (delta) => {
+        if (delta > 0) {
+          return { text: `↑ ${delta}`, className: 'delta-up' };
+        }
+        if (delta < 0) {
+          return { text: `↓ ${Math.abs(delta)}`, className: 'delta-down' };
+        }
+        return { text: '0', className: 'delta-neutral' };
+      };
+
+      const renderInsightsChart = (series) => {
+        if (!insightsElements.chart) {
+          return;
+        }
+        insightsElements.chart.querySelectorAll('svg').forEach((node) => node.remove());
+        if (!series.length) {
+          if (insightsElements.chartEmpty) {
+            insightsElements.chartEmpty.hidden = false;
+          }
+          return;
+        }
+        if (insightsElements.chartEmpty) {
+          insightsElements.chartEmpty.hidden = true;
+        }
+
+        const width = insightsElements.chart.clientWidth || 600;
+        const height = 240;
+        const padding = { top: 16, right: 16, bottom: 32, left: 48 };
+        const plotWidth = Math.max(width - padding.left - padding.right, 1);
+        const plotHeight = Math.max(height - padding.top - padding.bottom, 1);
+
+        const values = series.map((entry) => entry.followers);
+        const minValue = Math.min(...values);
+        const maxValue = Math.max(...values);
+        const range = Math.max(maxValue - minValue, 1);
+
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        svg.setAttribute('width', '100%');
+        svg.setAttribute('height', '100%');
+        svg.setAttribute('role', 'img');
+        svg.setAttribute('aria-label', 'Follower change line chart');
+
+        const axis = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        axis.setAttribute(
+          'd',
+          `M ${padding.left} ${padding.top} V ${padding.top + plotHeight} H ${
+            padding.left + plotWidth
+          }`
+        );
+        axis.setAttribute('fill', 'none');
+        axis.setAttribute('stroke', 'rgba(0,0,0,0.1)');
+        axis.setAttribute('stroke-width', '1');
+        svg.append(axis);
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const points = series.map((entry, index) => {
+          const x =
+            padding.left +
+            (series.length === 1 ? plotWidth / 2 : (plotWidth * index) / (series.length - 1));
+          const y =
+            padding.top + ((maxValue - entry.followers) / range) * plotHeight;
+          return `${x} ${y}`;
+        });
+        path.setAttribute('d', `M ${points.join(' L ')}`);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', '#111111');
+        path.setAttribute('stroke-width', '2');
+        path.setAttribute('stroke-linecap', 'round');
+        path.setAttribute('stroke-linejoin', 'round');
+        svg.append(path);
+
+        const labels = [
+          { value: maxValue, y: padding.top + 4 },
+          { value: minValue, y: padding.top + plotHeight },
+        ];
+        labels.forEach((label) => {
+          const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          text.setAttribute('x', String(padding.left - 8));
+          text.setAttribute('y', String(label.y));
+          text.setAttribute('text-anchor', 'end');
+          text.setAttribute('dominant-baseline', 'middle');
+          text.setAttribute('fill', '#6b6b6b');
+          text.setAttribute('font-size', '11');
+          text.textContent = label.value.toLocaleString();
+          svg.append(text);
+        });
+
+        const firstLabel = series[0];
+        const lastLabel = series[series.length - 1];
+        const dateLabels = [
+          { entry: firstLabel, x: padding.left, anchor: 'start' },
+          { entry: lastLabel, x: padding.left + plotWidth, anchor: 'end' },
+        ];
+        dateLabels.forEach(({ entry, x, anchor }) => {
+          const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          text.setAttribute('x', String(x));
+          text.setAttribute('y', String(padding.top + plotHeight + 20));
+          text.setAttribute('text-anchor', anchor);
+          text.setAttribute('fill', '#6b6b6b');
+          text.setAttribute('font-size', '11');
+          text.textContent = formatInsightsDateShort(entry.dateObj);
+          svg.append(text);
+        });
+
+        insightsElements.chart.append(svg);
+      };
+
+      const renderDailySummary = (series) => {
+        if (!insightsElements.dailyBody) {
+          return;
+        }
+        insightsElements.dailyBody.innerHTML = '';
+        if (!series.length) {
+          if (insightsElements.dailyEmpty) {
+            insightsElements.dailyEmpty.hidden = false;
+          }
+          return;
+        }
+        if (insightsElements.dailyEmpty) {
+          insightsElements.dailyEmpty.hidden = true;
+        }
+        const dailyPoints = series.slice(-7);
+        const byDate = new Map(series.map((entry) => [entry.dateKey, entry]));
+
+        dailyPoints.forEach((entry) => {
+          const row = document.createElement('tr');
+          const dateCell = document.createElement('td');
+          dateCell.textContent = formatInsightsDate(entry.dateObj);
+          const followersCell = document.createElement('td');
+          followersCell.textContent = entry.followers.toLocaleString();
+          const changeCell = document.createElement('td');
+
+          const previousDate = new Date(
+            Date.UTC(
+              entry.dateObj.getUTCFullYear(),
+              entry.dateObj.getUTCMonth(),
+              entry.dateObj.getUTCDate() - 1
+            )
+          );
+          const previousKey = previousDate.toISOString().slice(0, 10);
+          const previousEntry = byDate.get(previousKey);
+
+          if (!previousEntry) {
+            changeCell.textContent = '–';
+          } else {
+            const delta = entry.followers - previousEntry.followers;
+            const deltaInfo = describeDelta(delta);
+            changeCell.textContent = deltaInfo.text;
+            changeCell.classList.add(deltaInfo.className);
+          }
+
+          row.append(dateCell, followersCell, changeCell);
+          insightsElements.dailyBody.append(row);
+        });
+      };
+
+      const renderWeeklySummary = (payload) => {
+        if (!insightsElements.weeklySummary) {
+          return;
+        }
+        insightsElements.weeklySummary.innerHTML = '';
+        const weeklyDelta = payload?.computed_deltas?.change_7d;
+        const allTimeDelta = payload?.computed_deltas?.change_all_time;
+
+        if (weeklyDelta === null || weeklyDelta === undefined) {
+          if (insightsElements.weeklyEmpty) {
+            insightsElements.weeklyEmpty.hidden = false;
+            insightsElements.weeklySummary.append(insightsElements.weeklyEmpty);
+          }
+          return;
+        }
+        if (insightsElements.weeklyEmpty) {
+          insightsElements.weeklyEmpty.hidden = true;
+        }
+
+        const weeklyLine = document.createElement('p');
+        weeklyLine.classList.add('insights-weekly-line');
+        const weeklyLabel = document.createElement('span');
+        weeklyLabel.textContent = 'This week: ';
+        const weeklyDeltaInfo = describeDelta(weeklyDelta);
+        const weeklyDeltaSpan = document.createElement('span');
+        weeklyDeltaSpan.textContent = `${weeklyDeltaInfo.text} followers`;
+        weeklyDeltaSpan.classList.add(weeklyDeltaInfo.className);
+        weeklyLine.append(weeklyLabel, weeklyDeltaSpan);
+        insightsElements.weeklySummary.append(weeklyLine);
+
+        if (allTimeDelta !== null && allTimeDelta !== undefined) {
+          const allTimeLine = document.createElement('p');
+          allTimeLine.classList.add('insights-weekly-line');
+          const allTimeLabel = document.createElement('span');
+          allTimeLabel.textContent = 'Since first seen: ';
+          const allTimeDeltaInfo = describeDelta(allTimeDelta);
+          const allTimeDeltaSpan = document.createElement('span');
+          allTimeDeltaSpan.textContent = `${allTimeDeltaInfo.text} followers`;
+          allTimeDeltaSpan.classList.add(allTimeDeltaInfo.className);
+          allTimeLine.append(allTimeLabel, allTimeDeltaSpan);
+          insightsElements.weeklySummary.append(allTimeLine);
+        }
+      };
+
+      const renderInsights = (payload) => {
+        const series = normalizeTimeseries(payload);
+        renderInsightsChart(filterInsightsRange(series));
+        renderDailySummary(series);
+        renderWeeklySummary(payload);
+      };
+
+      loadInsights = async () => {
+        if (!playlistId || insightsLoading) {
+          return;
+        }
+        insightsLoading = true;
+        try {
+          const response = await fetch(`/api/tracked-playlists/${playlistId}/insights`);
+          if (!response.ok) {
+            const errorPayload = await readErrorPayload(response);
+            throw new Error(
+              normalizeErrorMessage(errorPayload, 'Unable to load insights data.')
+            );
+          }
+          insightsPayload = await parseJsonSafely(response);
+          renderInsights(insightsPayload);
+        } catch (error) {
+          if (typeof console !== 'undefined' && console.error) {
+            console.error('[insights] failed to load', error);
+          }
+        } finally {
+          insightsLoading = false;
+        }
+      };
+
+      insightsRangeButtons.forEach((button) => {
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          activeInsightsRange = button.dataset.range || '7d';
+          updateInsightsRangeButtons();
+          if (insightsPayload) {
+            renderInsights(insightsPayload);
+          }
+        });
+      });
+
+      updateInsightsRangeButtons();
+
+      window.addEventListener('resize', () => {
+        if (activeSection === 'insights' && insightsPayload) {
+          renderInsights(insightsPayload);
+        }
+      });
 
       const setupBasicScan = () => {
         const scanRoot = document.querySelector('[data-basic-scan]');
@@ -2645,7 +3085,7 @@
           }
           logSwitchLatest('none', 'no_active_scan');
           setStopButtonVisible(false);
-          setActiveSection('latest', { skipScroll: true });
+          setActiveSection('insights', { skipScroll: true });
         };
 
         initializeScanSections();

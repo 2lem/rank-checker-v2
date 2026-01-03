@@ -33,6 +33,7 @@ from app.services.playlist_metadata import (
     select_largest_image_url,
     select_smallest_image_url,
 )
+from app.services.playlist_insights import upsert_playlist_seen_and_snapshot
 from app.services.playlist_refresh_jobs import enqueue_refresh
 
 router = APIRouter(tags=["playlists"])
@@ -152,7 +153,7 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
     playlist_last_updated_at = None
     last_meta_refresh_at = datetime.now(timezone.utc)
 
-    return create_tracked_playlist(
+    tracked = create_tracked_playlist(
         db,
         playlist_id=playlist_id,
         playlist_url=resolved_url,
@@ -168,6 +169,15 @@ def add_playlist(payload: TrackedPlaylistCreate, db: Session = Depends(get_db)):
         target_countries=payload.target_countries,
         target_keywords=payload.target_keywords,
     )
+    upsert_playlist_seen_and_snapshot(
+        db,
+        playlist_id=playlist_id,
+        followers=followers_total,
+        seen_at=last_meta_refresh_at,
+        source="tracked_manual",
+    )
+    db.commit()
+    return tracked
 
 
 @router.post(
