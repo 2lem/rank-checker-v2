@@ -784,6 +784,11 @@
   font-size: 12px;
 }
 
+.insights-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .delta-up {
   color: #107c10;
   font-weight: 700;

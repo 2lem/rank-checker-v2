@@ -19,4 +19,8 @@ def get_tracked_playlist_insights(
     tracked = get_tracked_playlist_by_id(db, tracked_playlist_id)
     if not tracked:
         raise HTTPException(status_code=404, detail="Tracked playlist not found.")
-    return build_playlist_insights(db, tracked.playlist_id)
+    return build_playlist_insights(
+        db,
+        tracked.playlist_id,
+        tracked_playlist_id=str(tracked.id),
+    )
