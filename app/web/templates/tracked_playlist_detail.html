@@ -58,6 +58,14 @@
             >
               Latest Scan Results
             </button>
+            <button
+              class="btn btn-secondary scan-tab-button"
+              type="button"
+              data-scan-tab="history"
+              aria-pressed="false"
+            >
+              Scan History
+            </button>
           </div>
         </section>
 
@@ -151,6 +159,33 @@
             </div>
           </div>
         </section>
+
+        <section class="panel scan-history-panel is-hidden" id="scan-history-section">
+          <div class="panel-header">
+            <h2>Scan History</h2>
+            <p>Recent scan runs for this playlist.</p>
+          </div>
+          <div class="panel-body">
+            <div class="scan-history" data-scan-history data-tracked-playlist-id="{{ playlist.id }}">
+              <p class="summary-note" data-scan-history-empty hidden>
+                No scan history yet for this playlist.
+              </p>
+              <div class="table-scroll" data-scan-history-table hidden>
+                <table class="results-table">
+                  <thead>
+                    <tr>
+                      <th>Scan date</th>
+                      <th>Country</th>
+                      <th>Keyword</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody data-scan-history-body></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
 
@@ -170,10 +205,12 @@
       let lastAnchor = toolbar;
       const basicScanSection = document.getElementById('basic-scan-section');
       const latestScanSection = document.getElementById('latest-scan-section');
+      const scanHistorySection = document.getElementById('scan-history-section');
       const scanTabButtons = document.querySelectorAll('[data-scan-tab]');
       let basicScanStageController = null;
       let activeSection = null;
       let loadLatestScan = null;
+      let loadScanHistory = null;
       let lastTabScrollY = null;
       let activeScanStatus = null;
 
@@ -246,7 +283,7 @@
           return;
         }
         if (
-          nextTab === 'latest' &&
+          nextTab !== 'dedicated' &&
           ['queued', 'running'].includes(activeScanStatus) &&
           !options.allowRunningSwitch
         ) {
@@ -255,19 +292,20 @@
         lastTabScrollY = window.scrollY;
         activeSection = nextTab;
 
-        if (nextTab === 'dedicated') {
-          basicScanSection?.classList.add('is-active');
-          latestScanSection?.classList.remove('is-active');
-          basicScanSection?.classList.remove('is-hidden');
-          latestScanSection?.classList.add('is-hidden');
-          if (basicScanStageController) {
-            basicScanStageController.setStage(basicScanStageController.getStage());
+        const setSectionActive = (section, isActive) => {
+          if (!section) {
+            return;
           }
-        } else {
-          latestScanSection?.classList.add('is-active');
-          basicScanSection?.classList.remove('is-active');
-          latestScanSection?.classList.remove('is-hidden');
-          basicScanSection?.classList.add('is-hidden');
+          section.classList.toggle('is-active', isActive);
+          section.classList.toggle('is-hidden', !isActive);
+        };
+
+        setSectionActive(basicScanSection, nextTab === 'dedicated');
+        setSectionActive(latestScanSection, nextTab === 'latest');
+        setSectionActive(scanHistorySection, nextTab === 'history');
+
+        if (nextTab === 'dedicated' && basicScanStageController) {
+          basicScanStageController.setStage(basicScanStageController.getStage());
         }
 
         scanTabButtons.forEach((button) => {
@@ -278,6 +316,9 @@
 
         if (nextTab === 'latest' && !options.skipFetch && typeof loadLatestScan === 'function') {
           loadLatestScan();
+        }
+        if (nextTab === 'history' && !options.skipFetch && typeof loadScanHistory === 'function') {
+          loadScanHistory();
         }
 
         if (!options.skipScroll && lastTabScrollY !== null) {
@@ -617,6 +658,7 @@
       const setupBasicScan = () => {
         const scanRoot = document.querySelector('[data-basic-scan]');
         const latestRoot = document.querySelector('[data-latest-scan]');
+        const historyRoot = document.querySelector('[data-scan-history]');
         if (!scanRoot) {
           return;
         }
@@ -641,6 +683,11 @@
           csvControls: root?.querySelector(`[data-${prefix}-csv-controls]`),
         });
         const latestResults = buildScanElements('latest-scan', latestRoot);
+        const historyElements = {
+          table: historyRoot?.querySelector('[data-scan-history-table]'),
+          body: historyRoot?.querySelector('[data-scan-history-body]'),
+          empty: historyRoot?.querySelector('[data-scan-history-empty]'),
+        };
         const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
         let activeScanId = null;
@@ -1496,6 +1543,74 @@
             renderScanResults(resultsPayload, latestResults, data.scan_id);
           } catch (error) {
             setStatus(normalizeErrorMessage(error, 'Failed to load latest scan.'), 'status-error');
+          }
+        };
+
+        const formatScanHistoryStatus = (value) => {
+          if (!value) {
+            return '—';
+          }
+          return String(value).replace(/_/g, ' ');
+        };
+
+        const renderScanHistory = (items) => {
+          if (!historyElements.body || !historyElements.table || !historyElements.empty) {
+            return;
+          }
+          historyElements.body.innerHTML = '';
+          if (!items.length) {
+            historyElements.empty.textContent = 'No scan history yet for this playlist.';
+            showSection(historyElements.empty);
+            hideSection(historyElements.table);
+            return;
+          }
+          hideSection(historyElements.empty);
+          showSection(historyElements.table);
+          items.forEach((item) => {
+            const row = document.createElement('tr');
+            const countries = (item.countries || [])
+              .map((country) => resolveMarketLabel(country))
+              .join(', ');
+            const keywords = (item.keywords || []).join(', ');
+            const scanDate = formatTimestamp(item.created_at || item.started_at || item.finished_at);
+            row.innerHTML = `
+              <td>${scanDate}</td>
+              <td>${countries || '—'}</td>
+              <td>${keywords || '—'}</td>
+              <td>${formatScanHistoryStatus(item.status)}</td>
+            `;
+            historyElements.body.appendChild(row);
+          });
+        };
+
+        loadScanHistory = async () => {
+          if (!historyRoot) {
+            return;
+          }
+          const trackedPlaylistId = resolveTrackedPlaylistId();
+          if (!trackedPlaylistId) {
+            renderScanHistory([]);
+            return;
+          }
+          try {
+            const url = new URL('/api/basic-rank-checker/scans/history', window.location.origin);
+            url.searchParams.set('tracked_playlist_id', trackedPlaylistId);
+            const response = await fetch(`${url.pathname}${url.search}`);
+            const data = await readErrorPayload(response);
+            if (!response.ok) {
+              throw new Error(normalizeErrorMessage(data, 'Failed to load scan history.'));
+            }
+            const items = Array.isArray(data?.items) ? data.items : [];
+            const trackedItems = items.filter((item) => item?.is_tracked_playlist);
+            renderScanHistory(trackedItems);
+          } catch (error) {
+            if (typeof console !== 'undefined' && console.error) {
+              console.error('[scan-history] load failed', error);
+            }
+            setStatus(
+              normalizeErrorMessage(error, 'Failed to load scan history.'),
+              'status-error'
+            );
           }
         };
 

@@ -500,6 +500,13 @@
   box-shadow: var(--shadow-md);
 }
 
+.scan-tab-button.is-active[data-scan-tab="history"] {
+  background: #111111;
+  border-color: #111111;
+  color: #ffffff;
+  box-shadow: var(--shadow-md);
+}
+
 .basic-scan,
 .tracked-basic-scan {
   display: flex;
