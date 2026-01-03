@@ -790,9 +790,36 @@
   text-align: left;
 }
 
+.scan-history-row {
+  cursor: pointer;
+}
+
+.scan-history-row:hover td {
+  background: #f7f7f7;
+}
+
 .tracked-highlight {
   background: #f0f7ff;
   font-weight: 700;
+}
+
+.scan-history-detail-panel {
+  margin-top: 16px;
+}
+
+.scan-history-detail-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+
+.scan-history-detail-message {
+  margin: 0 0 12px;
+}
+
+.scan-history-detail-message.is-error {
+  color: #a12222;
+  font-weight: 600;
 }
 
 .btn-csv {
