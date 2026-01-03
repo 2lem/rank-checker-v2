@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -8,13 +8,23 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import pycountry
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.version import get_build_time, get_git_sha
+from app.models.playlist import PlaylistFollowerSnapshot
 from app.repositories.tracked_playlists import (
     get_tracked_playlist_by_id,
     list_tracked_playlists,
+)
+from app.services.playlist_insights import (
+    backfill_playlist_follower_snapshots_from_dedicated_scans,
+    build_compare_entry,
+    build_daily_representative_scans_from_dedicated_scans,
+    build_daily_representative_snapshots,
+    resolve_daily_compare_reps,
+    resolve_weekly_compare_reps,
 )
 from app.services.tracked_playlist_stats import resolve_latest_playlist_stats
 
@@ -282,6 +292,12 @@ def _format_count(value: int | None) -> str:
     return f"{value:,}"
 
 
+def _format_date_label(value: datetime | date | None) -> str:
+    if not value:
+        return "—"
+    return value.strftime("%d %b %Y")
+
+
 def _build_dashboard_header_labels(name: str | None) -> tuple[str, str, str]:
     base_name = name or "Tracked Playlist"
     available = max(DASHBOARD_HEADER_MAX_LENGTH - len(DASHBOARD_HEADER_PREFIX), 0)
@@ -366,5 +382,164 @@ def tracked_playlist_detail_page(
                 playlist, stats=resolve_latest_playlist_stats(db, playlist)
             ),
             "available_markets": _available_markets_with_labels(),
+        },
+    )
+
+
+@router.get(
+    "/playlists/{tracked_playlist_id}/insights/{period}/drilldown",
+    response_class=HTMLResponse,
+)
+def tracked_playlist_insights_drilldown(
+    tracked_playlist_id: str,
+    period: str,
+    metric: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    try:
+        UUID(tracked_playlist_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Tracked playlist not found") from exc
+
+    if period not in {"daily", "weekly"}:
+        raise HTTPException(status_code=404, detail="Insight period not supported")
+
+    metric_key = (metric or "").lower()
+    metric_labels = {
+        "followers": "Followers",
+        "improved": "Improved Positions",
+        "declined": "Declined Positions",
+        "unchanged": "Unchanged",
+    }
+    if metric_key not in metric_labels:
+        raise HTTPException(status_code=404, detail="Insight metric not supported")
+
+    playlist = get_tracked_playlist_by_id(db, tracked_playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Tracked playlist not found")
+
+    snapshots = (
+        db.execute(
+            select(PlaylistFollowerSnapshot)
+            .where(PlaylistFollowerSnapshot.playlist_id == playlist.playlist_id)
+            .order_by(PlaylistFollowerSnapshot.snapshot_date)
+        )
+        .scalars()
+        .all()
+    )
+    if len(snapshots) < 2:
+        backfill_playlist_follower_snapshots_from_dedicated_scans(
+            db,
+            playlist.playlist_id,
+            tracked_playlist_id,
+        )
+        snapshots = (
+            db.execute(
+                select(PlaylistFollowerSnapshot)
+                .where(PlaylistFollowerSnapshot.playlist_id == playlist.playlist_id)
+                .order_by(PlaylistFollowerSnapshot.snapshot_date)
+            )
+            .scalars()
+            .all()
+        )
+
+    scan_reps = build_daily_representative_scans_from_dedicated_scans(
+        db,
+        tracked_playlist_id,
+    )
+    daily_reps = build_daily_representative_snapshots(snapshots, scan_reps)
+
+    compare_reps = (
+        resolve_daily_compare_reps(daily_reps)
+        if period == "daily"
+        else resolve_weekly_compare_reps(daily_reps)
+    )
+    compare_entry = (
+        build_compare_entry(*compare_reps) if compare_reps is not None else None
+    )
+
+    summary_label = "Daily" if period == "daily" else "Weekly"
+    metric_label = metric_labels[metric_key]
+    follower_row = None
+    rows: list[dict[str, object]] = []
+
+    if metric_key == "followers" and compare_entry:
+        follower_change = compare_entry.get("followers_change")
+        change_class = "delta-neutral"
+        change_label = "—"
+        if isinstance(follower_change, int):
+            if follower_change > 0:
+                change_class = "delta-up"
+                change_label = f"+{follower_change:,}"
+            elif follower_change < 0:
+                change_class = "delta-down"
+                change_label = f"{follower_change:,}"
+            else:
+                change_label = "0"
+        follower_row = {
+            "from_date": _format_date_label(compare_entry.get("date_older")),
+            "to_date": _format_date_label(compare_entry.get("date_newer")),
+            "followers_from": _format_count(compare_entry.get("followers_older")),
+            "followers_to": _format_count(compare_entry.get("followers_newer")),
+            "change_label": change_label,
+            "change_class": change_class,
+        }
+
+    if metric_key != "followers" and compare_reps:
+        newer, older = compare_reps
+        shared_keys = newer.rank_map.keys() & older.rank_map.keys()
+        for country_code, keyword in shared_keys:
+            rank_newer = newer.rank_map.get((country_code, keyword))
+            rank_older = older.rank_map.get((country_code, keyword))
+            if rank_newer is None or rank_older is None:
+                continue
+            change = rank_newer - rank_older
+            if metric_key == "improved" and change >= 0:
+                continue
+            if metric_key == "declined" and change <= 0:
+                continue
+            if metric_key == "unchanged" and change != 0:
+                continue
+
+            if change < 0:
+                change_class = "delta-up"
+            elif change > 0:
+                change_class = "delta-down"
+            else:
+                change_class = "delta-neutral"
+
+            if change == 0:
+                change_label = "0"
+            else:
+                change_label = f"{change:+d}"
+
+            rows.append(
+                {
+                    "country": _market_label(country_code) or country_code or "—",
+                    "keyword": keyword or "—",
+                    "previous_rank": rank_older,
+                    "current_rank": rank_newer,
+                    "change_label": change_label,
+                    "change_class": change_class,
+                }
+            )
+
+        rows.sort(
+            key=lambda row: (
+                (row.get("country") or "").casefold(),
+                (row.get("keyword") or "").casefold(),
+            )
+        )
+
+    return _render_template(
+        request,
+        "_components/insights_drilldown.html",
+        {
+            "summary_label": summary_label,
+            "metric": metric_key,
+            "metric_label": metric_label,
+            "follower_row": follower_row,
+            "rows": rows,
         },
     )

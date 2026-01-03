@@ -389,6 +389,47 @@ def build_weekly_compare(daily_reps: list[DailyScanRep]) -> dict[str, object] | 
     return _build_compare_entry(newer, older)
 
 
+def resolve_daily_compare_reps(
+    daily_reps: list[DailyScanRep],
+) -> tuple[DailyScanRep, DailyScanRep] | None:
+    if len(daily_reps) < 2:
+        return None
+    sorted_reps = sorted(daily_reps, key=lambda rep: rep.date)
+    older = sorted_reps[-2]
+    newer = sorted_reps[-1]
+    return newer, older
+
+
+def resolve_weekly_compare_reps(
+    daily_reps: list[DailyScanRep],
+) -> tuple[DailyScanRep, DailyScanRep] | None:
+    if len(daily_reps) < 2:
+        return None
+
+    sorted_reps = sorted(daily_reps, key=lambda rep: rep.date)
+    newer = sorted_reps[-1]
+    first = sorted_reps[0]
+    history_span = newer.date - first.date
+
+    if history_span < timedelta(days=7):
+        older = first
+    else:
+        target_date = newer.date - timedelta(days=7)
+        older = None
+        for rep in reversed(sorted_reps):
+            if rep.date <= target_date:
+                older = rep
+                break
+        if older is None:
+            return None
+
+    return newer, older
+
+
+def build_compare_entry(newer: DailyScanRep, older: DailyScanRep) -> dict[str, object] | None:
+    return _build_compare_entry(newer, older)
+
+
 def _build_daily_summary(
     daily_reps: list[DailyScanRep],
     *,
