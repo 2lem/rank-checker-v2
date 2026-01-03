@@ -229,6 +229,19 @@
                 </div>
                 <p class="summary-note scan-history-compare-message" data-scan-history-compare-message hidden></p>
                 <div class="scan-history-compare-summary" data-scan-history-compare-summary></div>
+                <div class="scan-history-compare-followers" data-scan-history-compare-followers hidden>
+                  <table class="results-table comparison-table comparison-followers-table">
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        <th>Scan A</th>
+                        <th>Scan B</th>
+                        <th>Change</th>
+                      </tr>
+                    </thead>
+                    <tbody data-scan-history-compare-followers-body></tbody>
+                  </table>
+                </div>
                 <div class="table-scroll" data-scan-history-compare-table hidden>
                   <table class="results-table comparison-table">
                     <thead>
@@ -237,9 +250,7 @@
                         <th>Keyword</th>
                         <th>Rank A</th>
                         <th>Rank B</th>
-                        <th>Δ (B-A)</th>
-                        <th>Found A</th>
-                        <th>Found B</th>
+                        <th>Position change</th>
                       </tr>
                     </thead>
                     <tbody data-scan-history-compare-body></tbody>
@@ -795,6 +806,10 @@
           back: scanHistorySection?.querySelector('[data-scan-history-compare-back]'),
           message: scanHistorySection?.querySelector('[data-scan-history-compare-message]'),
           summary: scanHistorySection?.querySelector('[data-scan-history-compare-summary]'),
+          followers: scanHistorySection?.querySelector('[data-scan-history-compare-followers]'),
+          followersBody: scanHistorySection?.querySelector(
+            '[data-scan-history-compare-followers-body]'
+          ),
           table: scanHistorySection?.querySelector('[data-scan-history-compare-table]'),
           body: scanHistorySection?.querySelector('[data-scan-history-compare-body]'),
         };
@@ -1482,6 +1497,12 @@
           if (historyCompareElements.summary) {
             historyCompareElements.summary.innerHTML = '';
           }
+          if (historyCompareElements.followersBody) {
+            historyCompareElements.followersBody.innerHTML = '';
+          }
+          if (historyCompareElements.followers) {
+            historyCompareElements.followers.hidden = true;
+          }
           if (historyCompareElements.body) {
             historyCompareElements.body.innerHTML = '';
           }
@@ -1589,7 +1610,7 @@
 
           return `
             <div class="scan-history-compare-card">
-              <h4>Scan ${label}</h4>
+              <h4>${label}</h4>
               <dl>
                 <div>
                   <dt>Scan date</dt>
@@ -1612,6 +1633,40 @@
           `;
         };
 
+        const renderCompareOverviewCard = ({
+          followersChange,
+          improvedCount,
+          worsenedCount,
+          unchangedCount,
+        }) => `
+          <div class="scan-history-compare-card">
+            <h4>Summary</h4>
+            <dl>
+              <div>
+                <dt>Followers</dt>
+                <dd>${followersChange}</dd>
+              </div>
+              <div>
+                <dt>Improved keywords</dt>
+                <dd>${improvedCount}</dd>
+              </div>
+              <div>
+                <dt>Worsened keywords</dt>
+                <dd>${worsenedCount}</dd>
+              </div>
+              <div>
+                <dt>Unchanged</dt>
+                <dd>${unchangedCount}</dd>
+              </div>
+            </dl>
+          </div>
+        `;
+
+        const toNumber = (value) => {
+          const coerced = Number(value);
+          return Number.isFinite(coerced) ? coerced : null;
+        };
+
         const formatCompareRank = (value) => {
           if (value === null || typeof value === 'undefined') {
             return '—';
@@ -1619,24 +1674,51 @@
           return Number.isFinite(value) ? value : '—';
         };
 
-        const formatCompareFound = (value) => {
-          if (value === true) {
-            return 'Yes';
+        const formatCompareCount = (value) => {
+          if (value === null || typeof value === 'undefined') {
+            return '—';
           }
-          if (value === false) {
-            return 'No';
+          return Number.isFinite(value) ? value.toLocaleString() : '—';
+        };
+
+        const formatSignedValue = (value) => {
+          if (!Number.isFinite(value)) {
+            return '—';
           }
-          return '—';
+          const sign = value > 0 ? '+' : '';
+          return `${sign}${value.toLocaleString()}`;
+        };
+
+        const formatPositionChange = (rankA, rankB) => {
+          if (!Number.isFinite(rankA) || !Number.isFinite(rankB)) {
+            return { text: '—', className: 'delta-neutral' };
+          }
+          const delta = rankB - rankA;
+          if (delta > 0) {
+            return { text: `↑ ${Math.abs(delta)}`, className: 'delta-up' };
+          }
+          if (delta < 0) {
+            return { text: `↓ ${Math.abs(delta)}`, className: 'delta-down' };
+          }
+          return { text: '—', className: 'delta-neutral' };
+        };
+
+        const getScanTimestamp = (scan) => {
+          const rawTimestamp = scan?.created_at || scan?.started_at || scan?.finished_at;
+          const parsed = rawTimestamp ? Date.parse(rawTimestamp) : Number.NaN;
+          return Number.isFinite(parsed) ? parsed : null;
         };
 
         const renderHistoryComparison = (scanA, scanB) => {
           if (!historyCompareElements.summary || !historyCompareElements.body) {
             return;
           }
-          historyCompareElements.summary.innerHTML = `
-            ${renderCompareSummaryCard(scanA, 'A')}
-            ${renderCompareSummaryCard(scanB, 'B')}
-          `;
+          const followerA = toNumber(scanA?.follower_snapshot);
+          const followerB = toNumber(scanB?.follower_snapshot);
+          const followerChange =
+            Number.isFinite(followerA) && Number.isFinite(followerB)
+              ? followerA - followerB
+              : null;
 
           const comparisonMap = new Map();
           const ingestSummary = (scan, label) => {
@@ -1650,7 +1732,6 @@
               }
               const row = comparisonMap.get(key);
               row[`rank${label}`] = entry?.tracked_rank ?? null;
-              row[`found${label}`] = entry?.tracked_found_in_top20 ?? null;
             });
           };
           ingestSummary(scanA, 'A');
@@ -1666,6 +1747,49 @@
           });
 
           historyCompareElements.body.innerHTML = '';
+          let improvedCount = 0;
+          let worsenedCount = 0;
+          let unchangedCount = 0;
+
+          rows.forEach((row) => {
+            const rankA = Number.isFinite(row.rankA) ? row.rankA : null;
+            const rankB = Number.isFinite(row.rankB) ? row.rankB : null;
+            if (Number.isFinite(rankA) && Number.isFinite(rankB)) {
+              const delta = rankB - rankA;
+              if (delta > 0) {
+                improvedCount += 1;
+              } else if (delta < 0) {
+                worsenedCount += 1;
+              } else {
+                unchangedCount += 1;
+              }
+            }
+          });
+
+          historyCompareElements.summary.innerHTML = `
+            ${renderCompareOverviewCard({
+              followersChange: formatSignedValue(followerChange),
+              improvedCount,
+              worsenedCount,
+              unchangedCount,
+            })}
+            ${renderCompareSummaryCard(scanA, 'Scan A (newer)')}
+            ${renderCompareSummaryCard(scanB, 'Scan B (older)')}
+          `;
+
+          if (historyCompareElements.followersBody) {
+            historyCompareElements.followersBody.innerHTML = `
+              <tr>
+                <td>Followers</td>
+                <td>${formatCompareCount(followerA)}</td>
+                <td>${formatCompareCount(followerB)}</td>
+                <td>${formatSignedValue(followerChange)}</td>
+              </tr>
+            `;
+          }
+          if (historyCompareElements.followers) {
+            historyCompareElements.followers.hidden = false;
+          }
           if (!rows.length) {
             setHistoryCompareMessage('No summary data available to compare.');
             if (historyCompareElements.table) {
@@ -1677,17 +1801,14 @@
           rows.forEach((row) => {
             const rankA = Number.isFinite(row.rankA) ? row.rankA : null;
             const rankB = Number.isFinite(row.rankB) ? row.rankB : null;
-            const delta =
-              Number.isFinite(rankA) && Number.isFinite(rankB) ? rankB - rankA : null;
+            const positionChange = formatPositionChange(rankA, rankB);
             const tr = document.createElement('tr');
             tr.innerHTML = `
               <td>${resolveMarketLabel(row.country) || '—'}</td>
               <td>${row.keyword || '—'}</td>
               <td>${formatCompareRank(rankA)}</td>
               <td>${formatCompareRank(rankB)}</td>
-              <td>${delta === null ? '—' : delta}</td>
-              <td>${formatCompareFound(row.foundA)}</td>
-              <td>${formatCompareFound(row.foundB)}</td>
+              <td class="${positionChange.className}">${positionChange.text}</td>
             `;
             historyCompareElements.body.appendChild(tr);
           });
@@ -2032,11 +2153,26 @@
           }
 
           try {
-            const [scanA, scanB] = await Promise.all(
+            const [firstScan, secondScan] = await Promise.all(
               selectedCompareScanIds.map((scanId) => fetchScanDetail(scanId))
             );
             if (requestId !== compareRequestId) {
               return;
+            }
+            const firstTimestamp = getScanTimestamp(firstScan);
+            const secondTimestamp = getScanTimestamp(secondScan);
+            let scanA = firstScan;
+            let scanB = secondScan;
+            if (firstTimestamp === null && secondTimestamp !== null) {
+              scanA = secondScan;
+              scanB = firstScan;
+            } else if (
+              firstTimestamp !== null &&
+              secondTimestamp !== null &&
+              firstTimestamp < secondTimestamp
+            ) {
+              scanA = secondScan;
+              scanB = firstScan;
             }
             compareData = { scanA, scanB };
             renderHistoryComparison(scanA, scanB);

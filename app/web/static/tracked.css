@@ -875,6 +875,14 @@
   margin-bottom: 16px;
 }
 
+.scan-history-compare-followers {
+  margin-bottom: 16px;
+}
+
+.comparison-followers-table {
+  min-width: 520px;
+}
+
 .scan-history-compare-card {
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
@@ -908,6 +916,21 @@
 
 .comparison-table {
   min-width: 960px;
+}
+
+.delta-up {
+  color: #1a7f37;
+  font-weight: 700;
+}
+
+.delta-down {
+  color: #c21f1f;
+  font-weight: 700;
+}
+
+.delta-neutral {
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .btn-csv {
