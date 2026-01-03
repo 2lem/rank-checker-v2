@@ -1543,21 +1543,34 @@
           historyDetailPanel.hidden = true;
         };
 
-        const updateCompareControls = () => {
+        const setElementVisibility = (element, isVisible) => {
+          if (!element) {
+            return;
+          }
+          element.hidden = !isVisible;
+          element.style.display = isVisible ? '' : 'none';
+        };
+
+        const renderCompareControls = () => {
+          const compareReady = compareMode && selectedCompareScanIds.length === 2 && !compareLoading;
           if (historyCompareElements.toggle) {
             historyCompareElements.toggle.classList.toggle('is-active', compareMode);
             historyCompareElements.toggle.setAttribute('aria-pressed', String(compareMode));
-            historyCompareElements.toggle.hidden = compareMode;
+            setElementVisibility(historyCompareElements.toggle, !compareMode);
           }
           if (historyCompareElements.cancel) {
-            historyCompareElements.cancel.hidden = !compareMode;
+            setElementVisibility(historyCompareElements.cancel, compareMode);
           }
           if (historyCompareElements.run) {
-            const compareReady = selectedCompareScanIds.length === 2 && !compareLoading;
-            historyCompareElements.run.hidden = !compareMode;
+            setElementVisibility(historyCompareElements.run, compareMode);
             historyCompareElements.run.disabled = !compareReady;
             historyCompareElements.run.classList.toggle('compare-btn-enabled', compareReady);
             historyCompareElements.run.classList.toggle('compare-btn-disabled', !compareReady);
+            historyCompareElements.run.style.pointerEvents = compareReady ? 'auto' : 'none';
+            historyCompareElements.run.style.cursor = compareReady ? 'pointer' : 'not-allowed';
+          }
+          if (historyCompareElements.column) {
+            setElementVisibility(historyCompareElements.column, compareMode);
           }
         };
 
@@ -1574,8 +1587,8 @@
           });
         };
 
-        const setCompareMode = (enabled, { skipScroll = false } = {}) => {
-          compareMode = enabled;
+        const resetCompareState = ({ skipScroll = false } = {}) => {
+          compareMode = false;
           selectedCompareScanIds = [];
           compareLoading = false;
           compareError = null;
@@ -1590,11 +1603,32 @@
           if (historyElements.list) {
             showSection(historyElements.list);
           }
-          if (historyCompareElements.column) {
-            historyCompareElements.column.hidden = !compareMode;
+          renderScanHistory(latestHistoryItems);
+          renderCompareControls();
+          applyCompareSelectionState();
+          if (!skipScroll) {
+            scrollSectionToCenter(scanHistorySection || historyRoot);
+          }
+        };
+
+        const enterCompareMode = ({ skipScroll = false } = {}) => {
+          compareMode = true;
+          selectedCompareScanIds = [];
+          compareLoading = false;
+          compareError = null;
+          compareData = null;
+          compareRequestId += 1;
+          setHistoryCompareMessage('');
+          clearHistoryCompareResults();
+          hideHistoryComparePanel();
+          if (typeof resetHistoryDetail === 'function') {
+            resetHistoryDetail({ skipScroll: true, scrollTarget: scanHistorySection || historyRoot });
+          }
+          if (historyElements.list) {
+            showSection(historyElements.list);
           }
           renderScanHistory(latestHistoryItems);
-          updateCompareControls();
+          renderCompareControls();
           applyCompareSelectionState();
           if (!skipScroll) {
             scrollSectionToCenter(scanHistorySection || historyRoot);
@@ -1650,11 +1684,17 @@
                 <dd>${followersChange}</dd>
               </div>
               <div>
-                <dt>Improved keywords</dt>
+                <dt>
+                  <span class="delta-up">↑</span>
+                  <span class="delta-up">IMPROVED POSITIONS</span>
+                </dt>
                 <dd>${improvedCount}</dd>
               </div>
               <div>
-                <dt>Worsened keywords</dt>
+                <dt>
+                  <span class="delta-down">↓</span>
+                  <span class="delta-down">DECLINED POSITIONS</span>
+                </dt>
                 <dd>${worsenedCount}</dd>
               </div>
               <div>
@@ -1684,12 +1724,17 @@
           return Number.isFinite(value) ? value.toLocaleString() : '—';
         };
 
-        const formatSignedValue = (value) => {
+        const formatFollowerDelta = (value) => {
           if (!Number.isFinite(value)) {
-            return '—';
+            return '<span class="delta-flat">—</span>';
           }
-          const sign = value > 0 ? '+' : '';
-          return `${sign}${value.toLocaleString()}`;
+          if (value > 0) {
+            return `<span class="delta-up">↑ ${value.toLocaleString()}</span>`;
+          }
+          if (value < 0) {
+            return `<span class="delta-down">↓ ${Math.abs(value).toLocaleString()}</span>`;
+          }
+          return '<span class="delta-flat">0</span>';
         };
 
         const formatPositionChange = (rankA, rankB) => {
@@ -1771,7 +1816,7 @@
 
           historyCompareElements.summary.innerHTML = `
             ${renderCompareOverviewCard({
-              followersChange: formatSignedValue(followerChange),
+              followersChange: formatFollowerDelta(followerChange),
               improvedCount,
               worsenedCount,
               unchangedCount,
@@ -1786,7 +1831,7 @@
                 <td>Followers</td>
                 <td>${formatCompareCount(followerA)}</td>
                 <td>${formatCompareCount(followerB)}</td>
-                <td>${formatSignedValue(followerChange)}</td>
+                <td>${formatFollowerDelta(followerChange)}</td>
               </tr>
             `;
           }
@@ -1836,7 +1881,7 @@
         };
 
         resetHistoryCompare = ({ skipScroll = false } = {}) => {
-          setCompareMode(false, { skipScroll });
+          resetCompareState({ skipScroll });
         };
 
         const connectEventStream = (scanId) => {
@@ -2143,7 +2188,7 @@
           compareError = null;
           compareRequestId += 1;
           const requestId = compareRequestId;
-          updateCompareControls();
+          renderCompareControls();
           if (historyElements.list) {
             hideSection(historyElements.list);
           }
@@ -2192,7 +2237,7 @@
           } finally {
             if (requestId === compareRequestId) {
               compareLoading = false;
-              updateCompareControls();
+              renderCompareControls();
               applyCompareSelectionState();
             }
           }
@@ -2206,7 +2251,7 @@
           historyElements.body.innerHTML = '';
           if (!latestHistoryItems.length) {
             selectedCompareScanIds = [];
-            updateCompareControls();
+            renderCompareControls();
             historyElements.empty.textContent = 'No scan history yet for this playlist.';
             showSection(historyElements.empty);
             hideSection(historyElements.table);
@@ -2214,9 +2259,7 @@
           }
           hideSection(historyElements.empty);
           showSection(historyElements.table);
-          if (historyCompareElements.column) {
-            historyCompareElements.column.hidden = !compareMode;
-          }
+          renderCompareControls();
           latestHistoryItems.forEach((item) => {
             const row = document.createElement('tr');
             const countries = (item.countries || [])
@@ -2277,7 +2320,7 @@
                       (value) => value !== scanId
                     );
                   }
-                  updateCompareControls();
+                  renderCompareControls();
                   applyCompareSelectionState();
                 });
               }
@@ -2298,6 +2341,7 @@
             }
             historyElements.body.appendChild(row);
           });
+          renderCompareControls();
           applyCompareSelectionState();
         };
 
@@ -2305,6 +2349,8 @@
           if (!historyRoot) {
             return;
           }
+          resetCompareState({ skipScroll: true });
+          renderCompareControls();
           const trackedPlaylistId = resolveTrackedPlaylistId();
           if (!trackedPlaylistId) {
             renderScanHistory([]);
@@ -2342,12 +2388,14 @@
           if (compareMode) {
             return;
           }
-          setCompareMode(true, { skipScroll: true });
+          enterCompareMode({ skipScroll: true });
+          renderCompareControls();
         });
 
         historyCompareElements.cancel?.addEventListener('click', (event) => {
           event.preventDefault();
-          resetHistoryCompare({ skipScroll: true });
+          resetCompareState({ skipScroll: true });
+          renderCompareControls();
         });
 
         historyCompareElements.run?.addEventListener('click', (event) => {
@@ -2360,7 +2408,8 @@
 
         historyCompareElements.back?.addEventListener('click', (event) => {
           event.preventDefault();
-          resetHistoryCompare({ skipScroll: true });
+          resetCompareState({ skipScroll: true });
+          renderCompareControls();
         });
 
         runButton?.addEventListener('click', (event) => {

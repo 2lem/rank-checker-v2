@@ -884,6 +884,7 @@
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
+  padding-bottom: 5px;
 }
 
 .scan-history-compare-followers {
@@ -935,13 +936,17 @@
 }
 
 .delta-down {
-  color: #c21f1f;
+  color: #d1242f;
   font-weight: 700;
 }
 
 .delta-neutral {
   color: var(--text-secondary);
   font-weight: 600;
+}
+
+.delta-flat {
+  color: #6b7280;
 }
 
 .btn-csv {
