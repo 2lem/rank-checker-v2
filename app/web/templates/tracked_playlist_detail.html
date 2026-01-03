@@ -117,13 +117,6 @@
               </div>
               <div class="insights-chart" id="follower-graph-root">
                 <section
-                  class="graph-placeholder empty-state"
-                  id="follower-graph-placeholder"
-                  data-graph-placeholder
-                  hidden
-                >
-                </section>
-                <section
                   class="graph-container"
                   id="follower-graph-container"
                   data-graph-container
@@ -1305,17 +1298,6 @@
         changeCells.forEach((cell) => applyChangeArrowFormatting(cell, mode));
       };
 
-      const applyFollowerGraphVisibility = (points, rootEl) => {
-        const placeholder = document.getElementById('follower-graph-placeholder');
-        const container = document.getElementById('follower-graph-container');
-        if (placeholder) {
-          placeholder.hidden = true;
-        }
-        if (container) {
-          container.hidden = false;
-        }
-      };
-
       const hasSummaryData = (compare) => {
         if (!compare) {
           return false;
@@ -1334,8 +1316,8 @@
         if (!insightsElements.chart) {
           return;
         }
-        insightsElements.chart.querySelectorAll('svg').forEach((node) => node.remove());
-        const hasChartPoints = points.length >= 2;
+        insightsElements.chart.innerHTML = '';
+        const hasChartPoints = points.length >= 1;
         if (!hasChartPoints) {
           return;
         }
@@ -1712,7 +1694,6 @@
         const series = normalizeTimeseries(payload);
         const points = buildPointsForRange(activeInsightsRange, series);
         renderFollowerGraph(points);
-        applyFollowerGraphVisibility(points, insightsElements.chart);
         renderDailySummary(payload);
         renderWeeklySummary(payload);
       };
