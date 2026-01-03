@@ -126,26 +126,30 @@
               <div class="insights-block-header">
                 <div>
                   <h3>Daily Summary</h3>
-                  <p class="summary-note">Last seven days of follower changes and position shifts.</p>
+                  <p class="summary-note">Changes vs previous day</p>
                 </div>
               </div>
-              <div class="table-scroll insights-table-wrap">
-                <table class="results-table insights-summary-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Followers</th>
-                      <th>Change</th>
-                      <th>Improved</th>
-                      <th>Declined</th>
-                      <th>Unchanged</th>
-                    </tr>
-                  </thead>
-                  <tbody data-insights-daily-body></tbody>
-                </table>
+              <div class="insights-daily-card" data-insights-daily-card>
+                <p class="insights-daily-dates" data-insights-daily-dates></p>
+                <div class="insights-daily-row">
+                  <span class="insights-daily-label">FOLLOWERS</span>
+                  <span class="insights-daily-value" data-insights-daily-followers></span>
+                </div>
+                <div class="insights-daily-row">
+                  <span class="insights-daily-label">IMPROVED POSITIONS</span>
+                  <span class="insights-daily-value" data-insights-daily-improved></span>
+                </div>
+                <div class="insights-daily-row">
+                  <span class="insights-daily-label">DECLINED POSITIONS</span>
+                  <span class="insights-daily-value" data-insights-daily-declined></span>
+                </div>
+                <div class="insights-daily-row">
+                  <span class="insights-daily-label">UNCHANGED</span>
+                  <span class="insights-daily-value" data-insights-daily-unchanged></span>
+                </div>
               </div>
               <p class="summary-note insights-empty" data-insights-daily-empty hidden>
-                No daily snapshots yet.
+                Not enough history yet — run scans on multiple days to see daily changes.
               </p>
             </section>
 
@@ -898,7 +902,12 @@
       const insightsElements = {
         chart: document.querySelector('[data-insights-chart]'),
         chartEmpty: document.querySelector('[data-insights-chart-empty]'),
-        dailyBody: document.querySelector('[data-insights-daily-body]'),
+        dailyCard: document.querySelector('[data-insights-daily-card]'),
+        dailyDates: document.querySelector('[data-insights-daily-dates]'),
+        dailyFollowers: document.querySelector('[data-insights-daily-followers]'),
+        dailyImproved: document.querySelector('[data-insights-daily-improved]'),
+        dailyDeclined: document.querySelector('[data-insights-daily-declined]'),
+        dailyUnchanged: document.querySelector('[data-insights-daily-unchanged]'),
         dailyEmpty: document.querySelector('[data-insights-daily-empty]'),
         weeklyEmpty: document.querySelector('[data-insights-weekly-empty]'),
         weeklyBody: document.querySelector('[data-insights-weekly-body]'),
@@ -992,7 +1001,7 @@
         if (delta < 0) {
           return { text: `↓ ${Math.abs(delta)}`, className: 'delta-down' };
         }
-        return { text: '0', className: 'delta-neutral' };
+        return { text: '—', className: 'delta-neutral' };
       };
 
       const renderInsightsChart = (series) => {
@@ -1093,67 +1102,83 @@
         insightsElements.chart.append(svg);
       };
 
-      const renderDailySummary = (payload) => {
-        const summary = Array.isArray(payload?.daily_summary) ? payload.daily_summary : [];
-        if (!insightsElements.dailyBody) {
+      const setDailyValue = (element, value, className) => {
+        if (!element) {
           return;
         }
-        insightsElements.dailyBody.innerHTML = '';
-        if (!summary.length) {
+        element.textContent = value;
+        element.classList.remove('delta-up', 'delta-down', 'delta-neutral');
+        if (className) {
+          element.classList.add(className);
+        }
+      };
+
+      const renderDailySummary = (payload) => {
+        const compare = payload?.daily_compare ?? null;
+        if (!insightsElements.dailyCard) {
+          return;
+        }
+        if (!compare) {
+          insightsElements.dailyCard.hidden = true;
           if (insightsElements.dailyEmpty) {
             insightsElements.dailyEmpty.hidden = false;
           }
           return;
         }
+        insightsElements.dailyCard.hidden = false;
         if (insightsElements.dailyEmpty) {
           insightsElements.dailyEmpty.hidden = true;
         }
-        summary.forEach((entry) => {
-          const row = document.createElement('tr');
-          const dateCell = document.createElement('td');
-          const dateObj = parseSnapshotDate(entry?.date);
-          dateCell.textContent = dateObj ? formatInsightsDate(dateObj) : '—';
-          const followersCell = document.createElement('td');
-          const followersValue = Number(entry?.followers);
-          followersCell.textContent = Number.isFinite(followersValue)
-            ? followersValue.toLocaleString()
-            : '—';
-          const changeCell = document.createElement('td');
-          const followerChange = Number(entry?.follower_change);
-          if (!Number.isFinite(followerChange)) {
-            changeCell.textContent = '–';
-          } else {
-            const deltaInfo = describeDelta(followerChange);
-            changeCell.textContent = deltaInfo.text;
-            changeCell.classList.add(deltaInfo.className);
-          }
 
-          const improvedCell = document.createElement('td');
-          const improvedValue = Number(entry?.improved_positions);
-          improvedCell.textContent = Number.isFinite(improvedValue)
-            ? improvedValue.toLocaleString()
-            : '—';
-          const declinedCell = document.createElement('td');
-          const declinedValue = Number(entry?.declined_positions);
-          declinedCell.textContent = Number.isFinite(declinedValue)
-            ? declinedValue.toLocaleString()
-            : '—';
-          const unchangedCell = document.createElement('td');
-          const unchangedValue = Number(entry?.unchanged_positions);
-          unchangedCell.textContent = Number.isFinite(unchangedValue)
-            ? unchangedValue.toLocaleString()
-            : '—';
+        const newerDate = parseSnapshotDate(compare?.date_newer);
+        const olderDate = parseSnapshotDate(compare?.date_older);
+        if (insightsElements.dailyDates) {
+          insightsElements.dailyDates.textContent =
+            newerDate && olderDate
+              ? `${formatInsightsDate(newerDate)} vs ${formatInsightsDate(olderDate)}`
+              : '—';
+        }
 
-          row.append(
-            dateCell,
-            followersCell,
-            changeCell,
-            improvedCell,
-            declinedCell,
-            unchangedCell
+        const followerChange = Number(compare?.followers_change);
+        if (Number.isFinite(followerChange)) {
+          const deltaInfo = describeDelta(followerChange);
+          setDailyValue(insightsElements.dailyFollowers, deltaInfo.text, deltaInfo.className);
+        } else {
+          setDailyValue(insightsElements.dailyFollowers, '—', 'delta-neutral');
+        }
+
+        const improvedCount = Number(compare?.improved_positions);
+        if (Number.isFinite(improvedCount) && improvedCount > 0) {
+          setDailyValue(
+            insightsElements.dailyImproved,
+            `↑${improvedCount}`,
+            'delta-up'
           );
-          insightsElements.dailyBody.append(row);
-        });
+        } else {
+          setDailyValue(insightsElements.dailyImproved, '—', 'delta-neutral');
+        }
+
+        const declinedCount = Number(compare?.declined_positions);
+        if (Number.isFinite(declinedCount) && declinedCount > 0) {
+          setDailyValue(
+            insightsElements.dailyDeclined,
+            `↓${declinedCount}`,
+            'delta-down'
+          );
+        } else {
+          setDailyValue(insightsElements.dailyDeclined, '—', 'delta-neutral');
+        }
+
+        const unchangedCount = Number(compare?.unchanged_positions);
+        if (Number.isFinite(unchangedCount)) {
+          setDailyValue(
+            insightsElements.dailyUnchanged,
+            unchangedCount.toLocaleString(),
+            'delta-neutral'
+          );
+        } else {
+          setDailyValue(insightsElements.dailyUnchanged, '—', 'delta-neutral');
+        }
       };
 
       const renderWeeklySummary = (payload) => {
