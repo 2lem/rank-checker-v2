@@ -122,7 +122,6 @@
                   data-graph-placeholder
                   hidden
                 >
-                  Not enough history yet — capture at least two days.
                 </section>
                 <section
                   class="graph-container"
@@ -1239,31 +1238,81 @@
         return { text: '—', className: 'delta-neutral' };
       };
 
+      const formatChangeArrow = (value, mode) => {
+        const num = Number(value || 0);
+        const abs = Math.abs(num);
+        const formatted = abs.toLocaleString('en-US');
+
+        if (mode === 'improved') {
+          return { text: `↑${formatted}`, className: 'change-up' };
+        }
+
+        if (mode === 'declined') {
+          return { text: `↓${formatted}`, className: 'change-down' };
+        }
+
+        if (num > 0) {
+          return { text: `↑${formatted}`, className: 'change-up' };
+        }
+
+        if (num < 0) {
+          return { text: `↓${formatted}`, className: 'change-down' };
+        }
+
+        return { text: '0', className: 'change-neutral' };
+      };
+
+      const parseChangeValue = (value) => {
+        if (value === null || typeof value === 'undefined') {
+          return null;
+        }
+        const match = String(value)
+          .replace(/\s+/g, '')
+          .match(/[-+]?\d+(?:,\d+)*/);
+        if (!match) {
+          return null;
+        }
+        const numeric = Number(match[0].replace(/,/g, ''));
+        return Number.isFinite(numeric) ? numeric : null;
+      };
+
+      const applyChangeArrowFormatting = (cell, mode) => {
+        if (!cell || !mode) {
+          return;
+        }
+        const rawValue = parseChangeValue(cell.textContent);
+        if (rawValue === null) {
+          return;
+        }
+        const { text, className } = formatChangeArrow(rawValue, mode);
+        cell.innerHTML = `<span class="${className}">${text}</span>`;
+      };
+
+      const applyDrilldownChangeFormatting = (slot, metric) => {
+        if (!slot) {
+          return;
+        }
+        const modeMap = {
+          improved: 'improved',
+          declined: 'declined',
+          followers: 'followers',
+        };
+        const mode = modeMap[(metric || '').toLowerCase()];
+        if (!mode) {
+          return;
+        }
+        const changeCells = slot.querySelectorAll('table tbody tr td:last-child');
+        changeCells.forEach((cell) => applyChangeArrowFormatting(cell, mode));
+      };
+
       const applyFollowerGraphVisibility = (points, rootEl) => {
         const placeholder = document.getElementById('follower-graph-placeholder');
         const container = document.getElementById('follower-graph-container');
-        if (!placeholder || !container) {
-          return;
-        }
-
-        const hasPointData = Array.isArray(points) && points.length >= 2;
-        const hasRenderedSvg =
-          rootEl?.querySelector('svg path, svg polyline') ||
-          document.querySelector(
-            '#follower-graph-container svg path, #follower-graph-container svg polyline'
-          );
-        const hasCanvas =
-          rootEl?.querySelector('canvas') ||
-          document.querySelector('#follower-graph-container canvas');
-        const hasRenderedGraph = Boolean(hasRenderedSvg || hasCanvas);
-        const shouldShowGraph = hasPointData || hasRenderedGraph;
-
-        if (shouldShowGraph) {
+        if (placeholder) {
           placeholder.hidden = true;
+        }
+        if (container) {
           container.hidden = false;
-        } else {
-          container.hidden = true;
-          placeholder.hidden = false;
         }
       };
 
@@ -1631,6 +1680,7 @@
           }
           const html = await response.text();
           slot.innerHTML = html;
+          applyDrilldownChangeFormatting(slot, metric);
           const drilldownSection = slot.querySelector('[data-insights-drilldown]');
           drilldownSection?.scrollIntoView({ behavior: 'smooth', block: 'center' });
           const closeButton = slot.querySelector('[data-insights-drilldown-close]');
