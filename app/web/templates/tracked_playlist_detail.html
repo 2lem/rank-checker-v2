@@ -163,9 +163,6 @@
               <div class="insights-weekly-card-wrap">
                 <div class="insights-daily-card insights-weekly-card" data-insights-weekly-card>
                   <div>
-                    <p class="insights-weekly-subtitle" data-insights-weekly-subtitle>
-                      Changes vs ~7 days ago
-                    </p>
                     <p class="insights-daily-dates" data-insights-weekly-dates></p>
                   </div>
                   <div class="insights-daily-row">
@@ -927,7 +924,6 @@
         weeklyImproved: document.querySelector('[data-insights-weekly-improved]'),
         weeklyDeclined: document.querySelector('[data-insights-weekly-declined]'),
         weeklyUnchanged: document.querySelector('[data-insights-weekly-unchanged]'),
-        weeklySubtitle: document.querySelector('[data-insights-weekly-subtitle]'),
         weeklyEmpty: document.querySelector('[data-insights-weekly-empty]'),
       };
       const insightsRangeButtons = document.querySelectorAll('[data-insights-range-button]');
@@ -951,6 +947,154 @@
 
       const formatInsightsDateShort = (date) =>
         date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+
+      const formatBucketLabel = (date) =>
+        date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+      const startOfMonthUTC = (year, month) => new Date(Date.UTC(year, month, 1));
+
+      const buildRangeAnchors = (firstDate, lastDate) => {
+        if (!lastDate) {
+          return [];
+        }
+        if (activeInsightsRange === '7d') {
+          const start = new Date(
+            Date.UTC(
+              lastDate.getUTCFullYear(),
+              lastDate.getUTCMonth(),
+              lastDate.getUTCDate() - 6
+            )
+          );
+          return Array.from({ length: 7 }, (_, index) =>
+            new Date(
+              Date.UTC(
+                start.getUTCFullYear(),
+                start.getUTCMonth(),
+                start.getUTCDate() + index
+              )
+            )
+          );
+        }
+        if (activeInsightsRange === '30d') {
+          const start = new Date(
+            Date.UTC(
+              lastDate.getUTCFullYear(),
+              lastDate.getUTCMonth(),
+              lastDate.getUTCDate() - 21
+            )
+          );
+          return Array.from({ length: 4 }, (_, index) =>
+            new Date(
+              Date.UTC(
+                start.getUTCFullYear(),
+                start.getUTCMonth(),
+                start.getUTCDate() + index * 7
+              )
+            )
+          );
+        }
+        if (activeInsightsRange === '3m') {
+          const latestMonthStart = startOfMonthUTC(
+            lastDate.getUTCFullYear(),
+            lastDate.getUTCMonth()
+          );
+          return Array.from({ length: 3 }, (_, index) =>
+            startOfMonthUTC(
+              latestMonthStart.getUTCFullYear(),
+              latestMonthStart.getUTCMonth() - (2 - index)
+            )
+          );
+        }
+        if (activeInsightsRange === '6m') {
+          const latestMonthStart = startOfMonthUTC(
+            lastDate.getUTCFullYear(),
+            lastDate.getUTCMonth()
+          );
+          return Array.from({ length: 6 }, (_, index) =>
+            startOfMonthUTC(
+              latestMonthStart.getUTCFullYear(),
+              latestMonthStart.getUTCMonth() - (5 - index)
+            )
+          );
+        }
+        if (activeInsightsRange === '12m') {
+          const quarterStartMonth = Math.floor(lastDate.getUTCMonth() / 3) * 3;
+          const latestQuarterStart = startOfMonthUTC(
+            lastDate.getUTCFullYear(),
+            quarterStartMonth
+          );
+          return Array.from({ length: 4 }, (_, index) =>
+            startOfMonthUTC(
+              latestQuarterStart.getUTCFullYear(),
+              latestQuarterStart.getUTCMonth() - (3 * (3 - index))
+            )
+          );
+        }
+        const halfYearStartMonth = lastDate.getUTCMonth() < 6 ? 0 : 6;
+        const latestHalfYearStart = startOfMonthUTC(
+          lastDate.getUTCFullYear(),
+          halfYearStartMonth
+        );
+        return Array.from({ length: 6 }, (_, index) =>
+          startOfMonthUTC(
+            latestHalfYearStart.getUTCFullYear(),
+            latestHalfYearStart.getUTCMonth() - (6 * (5 - index))
+          )
+        );
+      };
+
+      const bucketSeries = (series, anchors) => {
+        if (!anchors.length) {
+          return [];
+        }
+        let pointer = 0;
+        return anchors.map((anchor, index) => {
+          const nextAnchor = anchors[index + 1] || null;
+          while (pointer < series.length && series[pointer].dateObj < anchor) {
+            pointer += 1;
+          }
+          let bucketEntry = null;
+          let scanIndex = pointer;
+          while (scanIndex < series.length) {
+            const entry = series[scanIndex];
+            const withinWindow = !nextAnchor || entry.dateObj < nextAnchor;
+            if (entry.dateObj < anchor) {
+              scanIndex += 1;
+              continue;
+            }
+            if (!withinWindow) {
+              break;
+            }
+            bucketEntry = entry;
+            break;
+          }
+          if (bucketEntry) {
+            pointer = scanIndex;
+          }
+          return { anchor, entry: bucketEntry };
+        });
+      };
+
+      const buildYAxisTicks = (minValue, maxValue, tickCount) => {
+        if (!Number.isFinite(minValue) || !Number.isFinite(maxValue) || tickCount <= 0) {
+          return [];
+        }
+        const range = Math.max(maxValue - minValue, 1);
+        const step = range / Math.max(tickCount - 1, 1);
+        return Array.from({ length: tickCount }, (_, index) => maxValue - step * index);
+      };
+
+      const getRangeTickCount = () => {
+        const tickCounts = {
+          '7d': 7,
+          '30d': 4,
+          '3m': 3,
+          '6m': 6,
+          '12m': 4,
+          all: 6,
+        };
+        return tickCounts[activeInsightsRange] || 7;
+      };
 
       const normalizeTimeseries = (payload) => {
         const raw = Array.isArray(payload?.follower_timeseries)
@@ -987,29 +1131,12 @@
         if (!series.length) {
           return [];
         }
-        if (activeInsightsRange === 'all') {
-          return series;
+        const anchors = buildRangeAnchors(series[0].dateObj, series[series.length - 1].dateObj);
+        if (!anchors.length) {
+          return [];
         }
-        const rangeDaysMap = {
-          '7d': 7,
-          '30d': 30,
-          '3m': 90,
-          '6m': 180,
-          '12m': 365,
-        };
-        const days = rangeDaysMap[activeInsightsRange];
-        if (!days) {
-          return series;
-        }
-        const latest = series[series.length - 1].dateObj;
-        const start = new Date(
-          Date.UTC(
-            latest.getUTCFullYear(),
-            latest.getUTCMonth(),
-            latest.getUTCDate() - (days - 1)
-          )
-        );
-        return series.filter((entry) => entry.dateObj >= start);
+        const rangeStart = anchors[0];
+        return series.filter((entry) => entry.dateObj >= rangeStart);
       };
 
       const describeDelta = (delta) => {
@@ -1033,6 +1160,22 @@
           }
           return;
         }
+
+        const filteredSeries = filterInsightsRange(series);
+        const firstEntry = filteredSeries[0];
+        const lastEntry = filteredSeries[filteredSeries.length - 1];
+        const anchors = buildRangeAnchors(firstEntry?.dateObj || null, lastEntry?.dateObj || null);
+        const buckets = bucketSeries(filteredSeries, anchors);
+        const bucketValues = buckets
+          .map((bucket) => (bucket.entry ? bucket.entry.followers : null))
+          .filter((value) => Number.isFinite(value));
+
+        if (!buckets.length || !bucketValues.length) {
+          if (insightsElements.chartEmpty) {
+            insightsElements.chartEmpty.hidden = false;
+          }
+          return;
+        }
         if (insightsElements.chartEmpty) {
           insightsElements.chartEmpty.hidden = true;
         }
@@ -1043,10 +1186,11 @@
         const plotWidth = Math.max(width - padding.left - padding.right, 1);
         const plotHeight = Math.max(height - padding.top - padding.bottom, 1);
 
-        const values = series.map((entry) => entry.followers);
-        const minValue = Math.min(...values);
-        const maxValue = Math.max(...values);
+        const minValue = Math.min(...bucketValues);
+        const maxValue = Math.max(...bucketValues);
         const range = Math.max(maxValue - minValue, 1);
+        const tickCount = getRangeTickCount();
+        const yTicks = buildYAxisTicks(minValue, maxValue, tickCount);
 
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
@@ -1068,15 +1212,27 @@
         svg.append(axis);
 
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        const points = series.map((entry, index) => {
-          const x =
-            padding.left +
-            (series.length === 1 ? plotWidth / 2 : (plotWidth * index) / (series.length - 1));
+        const xForIndex = (index) =>
+          padding.left +
+          (anchors.length === 1 ? plotWidth / 2 : (plotWidth * index) / (anchors.length - 1));
+        const pathCommands = [];
+        let pathStarted = false;
+        buckets.forEach((bucket, index) => {
+          if (!bucket.entry) {
+            pathStarted = false;
+            return;
+          }
+          const x = xForIndex(index);
           const y =
-            padding.top + ((maxValue - entry.followers) / range) * plotHeight;
-          return `${x} ${y}`;
+            padding.top + ((maxValue - bucket.entry.followers) / range) * plotHeight;
+          if (!pathStarted) {
+            pathCommands.push(`M ${x} ${y}`);
+            pathStarted = true;
+          } else {
+            pathCommands.push(`L ${x} ${y}`);
+          }
         });
-        path.setAttribute('d', `M ${points.join(' L ')}`);
+        path.setAttribute('d', pathCommands.join(' '));
         path.setAttribute('fill', 'none');
         path.setAttribute('stroke', '#111111');
         path.setAttribute('stroke-width', '2');
@@ -1084,36 +1240,27 @@
         path.setAttribute('stroke-linejoin', 'round');
         svg.append(path);
 
-        const labels = [
-          { value: maxValue, y: padding.top + 4 },
-          { value: minValue, y: padding.top + plotHeight },
-        ];
-        labels.forEach((label) => {
+        yTicks.forEach((tick) => {
+          const y = padding.top + ((maxValue - tick) / range) * plotHeight;
           const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
           text.setAttribute('x', String(padding.left - 8));
-          text.setAttribute('y', String(label.y));
+          text.setAttribute('y', String(y));
           text.setAttribute('text-anchor', 'end');
           text.setAttribute('dominant-baseline', 'middle');
           text.setAttribute('fill', '#6b6b6b');
           text.setAttribute('font-size', '11');
-          text.textContent = label.value.toLocaleString();
+          text.textContent = Math.round(tick).toLocaleString();
           svg.append(text);
         });
 
-        const firstLabel = series[0];
-        const lastLabel = series[series.length - 1];
-        const dateLabels = [
-          { entry: firstLabel, x: padding.left, anchor: 'start' },
-          { entry: lastLabel, x: padding.left + plotWidth, anchor: 'end' },
-        ];
-        dateLabels.forEach(({ entry, x, anchor }) => {
+        anchors.forEach((anchorDate, index) => {
           const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-          text.setAttribute('x', String(x));
+          text.setAttribute('x', String(xForIndex(index)));
           text.setAttribute('y', String(padding.top + plotHeight + 20));
-          text.setAttribute('text-anchor', anchor);
+          text.setAttribute('text-anchor', 'middle');
           text.setAttribute('fill', '#6b6b6b');
           text.setAttribute('font-size', '11');
-          text.textContent = formatInsightsDateShort(entry.dateObj);
+          text.textContent = formatBucketLabel(anchorDate);
           svg.append(text);
         });
 
@@ -1224,15 +1371,6 @@
               ? `${formatInsightsDate(newerDate)} vs ${formatInsightsDate(olderDate)}`
               : '—';
         }
-        if (insightsElements.weeklySubtitle) {
-          const diffMs =
-            newerDate && olderDate ? newerDate.getTime() - olderDate.getTime() : null;
-          const diffDays = diffMs !== null ? Math.round(diffMs / (1000 * 60 * 60 * 24)) : null;
-          insightsElements.weeklySubtitle.textContent =
-            diffDays !== null && diffDays < 7
-              ? 'Changes since first snapshot'
-              : 'Changes vs ~7 days ago';
-        }
 
         const followerChange = Number(compare?.followers_change);
         if (Number.isFinite(followerChange)) {
@@ -1278,7 +1416,7 @@
 
       const renderInsights = (payload) => {
         const series = normalizeTimeseries(payload);
-        renderInsightsChart(filterInsightsRange(series));
+        renderInsightsChart(series);
         renderDailySummary(payload);
         renderWeeklySummary(payload);
       };
