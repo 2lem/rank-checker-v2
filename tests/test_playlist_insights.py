@@ -9,6 +9,7 @@ from app.services.playlist_insights import (
     DailyScanRep,
     backfill_playlist_follower_snapshots_from_dedicated_scans,
     build_daily_compare,
+    build_weekly_compare,
     compute_position_counts,
 )
 
@@ -155,3 +156,94 @@ def test_build_daily_compare_returns_none_with_single_entry() -> None:
     compare = build_daily_compare([only])
 
     assert compare is None
+
+
+def test_build_weekly_compare_uses_first_day_when_history_is_short() -> None:
+    base_date = datetime.now(timezone.utc).date()
+    first = DailyScanRep(
+        date=base_date - timedelta(days=2),
+        scan_id="scan_first",
+        follower_snapshot=100,
+        rank_map={("US", "pop"): 20},
+    )
+    middle = DailyScanRep(
+        date=base_date - timedelta(days=1),
+        scan_id="scan_middle",
+        follower_snapshot=120,
+        rank_map={("US", "pop"): 15},
+    )
+    newest = DailyScanRep(
+        date=base_date,
+        scan_id="scan_newest",
+        follower_snapshot=140,
+        rank_map={("US", "pop"): 10},
+    )
+
+    compare = build_weekly_compare([middle, newest, first])
+
+    assert compare is not None
+    assert compare["date_newer"] == newest.date
+    assert compare["date_older"] == first.date
+    assert compare["followers_change"] == 40
+    assert compare["improved_positions"] == 1
+    assert compare["declined_positions"] == 0
+    assert compare["unchanged_positions"] == 0
+
+
+def test_build_weekly_compare_chooses_closest_day_before_target() -> None:
+    base_date = datetime(2024, 1, 15, tzinfo=timezone.utc).date()
+    reps = [
+        DailyScanRep(
+            date=base_date - timedelta(days=14),
+            scan_id="scan_oldest",
+            follower_snapshot=90,
+            rank_map={("US", "pop"): 30},
+        ),
+        DailyScanRep(
+            date=base_date - timedelta(days=8),
+            scan_id="scan_target_neighbor",
+            follower_snapshot=100,
+            rank_map={("US", "pop"): 25},
+        ),
+        DailyScanRep(
+            date=base_date,
+            scan_id="scan_latest",
+            follower_snapshot=150,
+            rank_map={("US", "pop"): 15},
+        ),
+    ]
+
+    compare = build_weekly_compare(reps)
+
+    assert compare is not None
+    assert compare["date_newer"] == base_date
+    assert compare["date_older"] == base_date - timedelta(days=8)
+    assert compare["followers_change"] == 50
+    assert compare["improved_positions"] == 1
+    assert compare["declined_positions"] == 0
+
+
+def test_build_weekly_compare_handles_exact_seven_day_gap() -> None:
+    base_date = datetime(2024, 1, 15, tzinfo=timezone.utc).date()
+    older = DailyScanRep(
+        date=base_date - timedelta(days=7),
+        scan_id="scan_week_before",
+        follower_snapshot=200,
+        rank_map={("US", "pop"): 5, ("GB", "rock"): 12},
+    )
+    newest = DailyScanRep(
+        date=base_date,
+        scan_id="scan_current",
+        follower_snapshot=230,
+        rank_map={("US", "pop"): 4, ("GB", "rock"): 15},
+    )
+
+    compare = build_weekly_compare([newest, older])
+
+    assert compare is not None
+    assert compare["date_newer"] == newest.date
+    assert compare["date_older"] == older.date
+    assert compare["followers_change"] == 30
+    assert compare["improved_positions"] == 1
+    assert compare["declined_positions"] == 1
+    assert compare["unchanged_positions"] == 0
