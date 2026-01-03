@@ -6,7 +6,9 @@ from uuid import uuid4
 from app.models.basic_scan import BasicScan
 from app.models.playlist import PlaylistFollowerSnapshot
 from app.services.playlist_insights import (
+    DailyScanRep,
     backfill_playlist_follower_snapshots_from_dedicated_scans,
+    build_daily_compare,
     compute_position_counts,
 )
 
@@ -105,3 +107,51 @@ def test_compute_position_counts_ignores_missing() -> None:
     assert counts["improved"] == 1
     assert counts["declined"] == 0
     assert counts["unchanged"] == 1
+
+
+def test_build_daily_compare_uses_latest_two_days() -> None:
+    base_date = datetime.now(timezone.utc).date()
+    older = DailyScanRep(
+        date=base_date - timedelta(days=2),
+        scan_id="scan_old",
+        follower_snapshot=100,
+        rank_map={("US", "pop"): 12},
+    )
+    previous = DailyScanRep(
+        date=base_date - timedelta(days=1),
+        scan_id="scan_previous",
+        follower_snapshot=110,
+        rank_map={("US", "pop"): 10, ("US", "rock"): 5},
+    )
+    newest = DailyScanRep(
+        date=base_date,
+        scan_id="scan_new",
+        follower_snapshot=125,
+        rank_map={("US", "pop"): 8, ("US", "rock"): 7},
+    )
+
+    compare = build_daily_compare([older, newest, previous])
+
+    assert compare is not None
+    assert compare["date_newer"] == newest.date
+    assert compare["date_older"] == previous.date
+    assert compare["followers_newer"] == 125
+    assert compare["followers_older"] == 110
+    assert compare["followers_change"] == 15
+    assert compare["improved_positions"] == 1
+    assert compare["declined_positions"] == 1
+    assert compare["unchanged_positions"] == 0
+
+
+def test_build_daily_compare_returns_none_with_single_entry() -> None:
+    base_date = datetime.now(timezone.utc).date()
+    only = DailyScanRep(
+        date=base_date,
+        scan_id="scan_only",
+        follower_snapshot=150,
+        rank_map={("US", "pop"): 3},
+    )
+
+    compare = build_daily_compare([only])
+
+    assert compare is None

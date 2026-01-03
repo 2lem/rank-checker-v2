@@ -789,6 +789,40 @@
   -webkit-overflow-scrolling: touch;
 }
 
+.insights-daily-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.insights-daily-dates {
+  margin: 0;
+  font-size: 12px;
+  color: #555;
+}
+
+.insights-daily-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 5px;
+}
+
+.insights-daily-row:last-child {
+  padding-bottom: 0;
+}
+
+.insights-daily-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #555;
+  letter-spacing: 0.04em;
+}
+
+.insights-daily-value {
+  font-size: 13px;
+}
+
 .delta-up {
   color: #107c10;
   font-weight: 700;

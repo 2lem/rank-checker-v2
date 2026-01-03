@@ -286,6 +286,27 @@ def compute_position_counts(
     }
 
 
+def build_daily_compare(daily_reps: list[DailyScanRep]) -> dict[str, object] | None:
+    if len(daily_reps) < 2:
+        return None
+    sorted_reps = sorted(daily_reps, key=lambda rep: rep.date)
+    older = sorted_reps[-2]
+    newer = sorted_reps[-1]
+    if newer.follower_snapshot is None or older.follower_snapshot is None:
+        return None
+    counts = compute_position_counts(newer.rank_map, older.rank_map)
+    return {
+        "date_newer": newer.date,
+        "date_older": older.date,
+        "followers_newer": newer.follower_snapshot,
+        "followers_older": older.follower_snapshot,
+        "followers_change": newer.follower_snapshot - older.follower_snapshot,
+        "improved_positions": counts["improved"],
+        "declined_positions": counts["declined"],
+        "unchanged_positions": counts["unchanged"],
+    }
+
+
 def _build_daily_summary(
     daily_reps: list[DailyScanRep],
     *,
@@ -445,6 +466,7 @@ def build_playlist_insights(
     daily_entries_full = _build_daily_summary(daily_reps, days=0)
     daily_summary = _build_daily_summary(daily_reps, days=7)
     weekly_summary = _build_weekly_summary(daily_entries_full)
+    daily_compare = build_daily_compare(daily_reps)
 
     return {
         "playlist_id": playlist_id,
@@ -454,5 +476,6 @@ def build_playlist_insights(
         "follower_timeseries": timeseries,
         "computed_deltas": deltas,
         "daily_summary": daily_summary,
+        "daily_compare": daily_compare,
         "weekly_summary": weekly_summary,
     }
