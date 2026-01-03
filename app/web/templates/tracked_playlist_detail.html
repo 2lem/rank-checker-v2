@@ -115,10 +115,11 @@
                   </button>
                 </div>
               </div>
-              <div class="insights-chart" data-insights-chart id="follower-graph-root">
-                <div class="empty-state" data-insights-chart-empty hidden>
+              <div class="insights-chart" id="follower-graph-root">
+                <section class="graph-placeholder empty-state" id="graph-placeholder" data-graph-placeholder>
                   Not enough history yet — capture at least two days.
-                </div>
+                </section>
+                <section class="graph-container" id="graph-container" data-graph-container data-insights-chart></section>
               </div>
             </section>
 
@@ -131,10 +132,19 @@
               </div>
               <div class="insights-daily-card" data-insights-daily-card>
                 <p class="insights-daily-dates" data-insights-daily-dates></p>
-                <div class="empty-state" data-insights-daily-empty hidden>
+                <section
+                  class="summary-placeholder empty-state"
+                  data-insights-daily-empty
+                  data-daily-placeholder
+                  hidden
+                >
                   Not enough history yet — capture at least two days.
-                </div>
-                <section class="insights-daily-metrics" data-insights-daily-metrics>
+                </section>
+                <section
+                  class="insights-daily-metrics summary-metrics"
+                  data-insights-daily-metrics
+                  data-daily-metrics
+                >
                   <div
                     class="insights-daily-row insights-metric-row"
                     data-insights-metric-row
@@ -188,10 +198,19 @@
                   <div>
                     <p class="insights-daily-dates" data-insights-weekly-dates></p>
                   </div>
-                  <div class="empty-state" data-insights-weekly-empty hidden>
+                  <section
+                    class="summary-placeholder empty-state"
+                    data-insights-weekly-empty
+                    data-weekly-placeholder
+                    hidden
+                  >
                     Not enough history yet — capture at least two days.
-                  </div>
-                  <section class="insights-weekly-metrics" data-insights-weekly-metrics>
+                  </section>
+                  <section
+                    class="insights-weekly-metrics summary-metrics"
+                    data-insights-weekly-metrics
+                    data-weekly-metrics
+                  >
                     <div
                       class="insights-daily-row insights-metric-row"
                       data-insights-metric-row
@@ -959,23 +978,24 @@
 
       const insightsElements = {
         chart: document.querySelector('[data-insights-chart]'),
-        chartEmpty: document.querySelector('[data-insights-chart-empty]'),
+        graphPlaceholder: document.querySelector('[data-graph-placeholder]'),
+        graphContainer: document.querySelector('[data-graph-container]'),
         dailyCard: document.querySelector('[data-insights-daily-card]'),
         dailyDates: document.querySelector('[data-insights-daily-dates]'),
         dailyFollowers: document.querySelector('[data-insights-daily-followers]'),
         dailyImproved: document.querySelector('[data-insights-daily-improved]'),
         dailyDeclined: document.querySelector('[data-insights-daily-declined]'),
         dailyUnchanged: document.querySelector('[data-insights-daily-unchanged]'),
-        dailyEmpty: document.querySelector('[data-insights-daily-empty]'),
-        dailyMetrics: document.querySelector('[data-insights-daily-metrics]'),
+        dailyEmpty: document.querySelector('[data-daily-placeholder]'),
+        dailyMetrics: document.querySelector('[data-daily-metrics]'),
         weeklyCard: document.querySelector('[data-insights-weekly-card]'),
         weeklyDates: document.querySelector('[data-insights-weekly-dates]'),
         weeklyFollowers: document.querySelector('[data-insights-weekly-followers]'),
         weeklyImproved: document.querySelector('[data-insights-weekly-improved]'),
         weeklyDeclined: document.querySelector('[data-insights-weekly-declined]'),
         weeklyUnchanged: document.querySelector('[data-insights-weekly-unchanged]'),
-        weeklyEmpty: document.querySelector('[data-insights-weekly-empty]'),
-        weeklyMetrics: document.querySelector('[data-insights-weekly-metrics]'),
+        weeklyEmpty: document.querySelector('[data-weekly-placeholder]'),
+        weeklyMetrics: document.querySelector('[data-weekly-metrics]'),
       };
       const drilldownSlots = {
         daily: document.querySelector('[data-insights-drilldown-slot="daily"]'),
@@ -1207,12 +1227,41 @@
         return { text: '—', className: 'delta-neutral' };
       };
 
+      const setVisibility = (element, isVisible) => {
+        if (!element) {
+          return;
+        }
+        element.hidden = !isVisible;
+      };
+
+      const applyGraphVisibility = (hasData) => {
+        setVisibility(insightsElements.graphPlaceholder, !hasData);
+        setVisibility(insightsElements.graphContainer, hasData);
+      };
+
+      const hasSummaryData = (compare) => {
+        if (!compare) {
+          return false;
+        }
+        const followerDelta = compare?.followers_change;
+        const hasFollowerDelta = followerDelta !== null && followerDelta !== undefined;
+        const improved = Number(compare?.improved_positions) || 0;
+        const declined = Number(compare?.declined_positions) || 0;
+        const unchanged = Number(compare?.unchanged_positions) || 0;
+        return hasFollowerDelta || improved + declined + unchanged > 0;
+      };
+
       const renderInsightsChart = (series) => {
         if (!insightsElements.chart) {
           return;
         }
         insightsElements.chart.querySelectorAll('svg').forEach((node) => node.remove());
         const filteredSeries = filterInsightsRange(series);
+        const hasChartPoints = filteredSeries.length >= 2;
+        applyGraphVisibility(hasChartPoints);
+        if (!hasChartPoints) {
+          return;
+        }
         const firstEntry = filteredSeries[0];
         const lastEntry = filteredSeries[filteredSeries.length - 1];
         const anchors = buildRangeAnchors(firstEntry?.dateObj || null, lastEntry?.dateObj || null);
@@ -1220,14 +1269,6 @@
         const bucketValues = buckets
           .map((bucket) => (bucket.entry ? bucket.entry.followers : null))
           .filter((value) => Number.isFinite(value));
-
-        const hasChartPoints = filteredSeries.length >= 2 && bucketValues.length >= 2;
-        if (insightsElements.chartEmpty) {
-          insightsElements.chartEmpty.hidden = hasChartPoints;
-        }
-        if (!hasChartPoints) {
-          return;
-        }
 
         const width = insightsElements.chart.clientWidth || 600;
         const height = 240;
@@ -1327,12 +1368,13 @@
         }
       };
 
-      const renderDailySummary = (payload, hasHistory) => {
+      const renderDailySummary = (payload) => {
         const compare = payload?.daily_compare ?? null;
         if (!insightsElements.dailyCard) {
           return;
         }
-        if (!hasHistory || !compare) {
+        const dailyHasData = hasSummaryData(compare);
+        if (!dailyHasData) {
           if (insightsElements.dailyEmpty) {
             insightsElements.dailyEmpty.hidden = false;
           }
@@ -1405,12 +1447,13 @@
         }
       };
 
-      const renderWeeklySummary = (payload, hasHistory) => {
+      const renderWeeklySummary = (payload) => {
         const compare = payload?.weekly_compare ?? null;
         if (!insightsElements.weeklyCard) {
           return;
         }
-        if (!hasHistory || !compare) {
+        const weeklyHasData = hasSummaryData(compare);
+        if (!weeklyHasData) {
           if (insightsElements.weeklyEmpty) {
             insightsElements.weeklyEmpty.hidden = false;
           }
@@ -1585,10 +1628,9 @@
 
       const renderInsights = (payload) => {
         const series = normalizeTimeseries(payload);
-        const hasHistory = series.length >= 2;
         renderInsightsChart(series);
-        renderDailySummary(payload, hasHistory);
-        renderWeeklySummary(payload, hasHistory);
+        renderDailySummary(payload);
+        renderWeeklySummary(payload);
       };
 
       loadInsights = async () => {
@@ -1635,6 +1677,7 @@
       });
 
       updateInsightsRangeButtons();
+      applyGraphVisibility(false);
 
       window.addEventListener('resize', () => {
         if (activeSection === 'insights' && insightsPayload) {
