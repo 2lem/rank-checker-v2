@@ -184,7 +184,7 @@
                 Cancel
               </button>
               <button
-                class="btn btn-secondary"
+                class="pill pill-primary"
                 type="button"
                 data-scan-history-compare-run
                 disabled
@@ -1526,6 +1526,7 @@
           if (historyCompareElements.toggle) {
             historyCompareElements.toggle.classList.toggle('is-active', compareMode);
             historyCompareElements.toggle.setAttribute('aria-pressed', String(compareMode));
+            historyCompareElements.toggle.hidden = compareMode;
           }
           if (historyCompareElements.cancel) {
             historyCompareElements.cancel.hidden = !compareMode;
