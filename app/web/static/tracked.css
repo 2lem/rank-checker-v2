@@ -44,8 +44,13 @@
   gap: 12px;
 }
 
+.tracked-section-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .tracked-order-status {
-  margin-top: 8px;
   font-size: 12px;
   color: #5a5a5a;
 }
@@ -62,51 +67,11 @@
   color: #38598a;
 }
 
-.tracked-reorder-column {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-}
-
-.drag-handle {
-  width: 28px;
-  height: 48px;
-  border-radius: 10px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: #f8f8f8;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: grab;
-}
-
-.drag-handle:active {
-  cursor: grabbing;
-}
-
-.drag-grip {
-  width: 10px;
-  height: 20px;
-  background: repeating-linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.4),
-    rgba(0, 0, 0, 0.4) 2px,
-    transparent 2px,
-    transparent 5px
-  );
-  border-radius: 4px;
-}
-
-.tracked-card.is-dragging {
-  opacity: 0.6;
-}
-
 .reorder-controls {
   display: none;
-  flex-direction: column;
+  align-items: center;
   gap: 6px;
+  margin-left: auto;
 }
 
 .reorder-mode .reorder-controls {
@@ -114,8 +79,8 @@
 }
 
 .reorder-btn {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 8px;
   border: 1px solid rgba(0, 0, 0, 0.08);
   background: #ffffff;
@@ -127,8 +92,9 @@
   transform: translateY(1px);
 }
 
-.reorder-toggle {
-  display: none;
+.reorder-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .tracked-thumb {

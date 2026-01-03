@@ -243,14 +243,14 @@
         <div class="section-header">
           <div class="tracked-section-header-row">
             <h2>Tracked Playlists</h2>
-            <button class="pill pill-secondary reorder-toggle" type="button" data-reorder-toggle>
-              Reorder
-            </button>
+            <div class="tracked-section-actions">
+              <div class="tracked-order-status" data-order-status role="status" aria-live="polite"></div>
+              <button class="pill pill-secondary reorder-toggle" type="button" data-reorder-toggle aria-pressed="false">
+                Reorder
+              </button>
+            </div>
           </div>
           <p class="section-subtitle">Click Manage to view details for a playlist.</p>
-          <div class="tracked-order-status" data-order-status role="status" aria-live="polite">
-            Ready.
-          </div>
         </div>
         <div class="tracked-card-list" data-tracked-card-list>
           {% if playlists %}
@@ -439,13 +439,34 @@
         if (!cardList) {
           return;
         }
-        let dragSource = null;
         let lastCommittedOrder = getOrderedIds();
         let saveTimeout = null;
         let saveRequestId = 0;
+        let statusTimeout = null;
+        let revertOrder = lastCommittedOrder;
+        let isReorderActive = false;
+
+        const updateReorderControls = () => {
+          const cards = Array.from(cardList.querySelectorAll('[data-tracked-card]'));
+          const firstCard = cards[0] || null;
+          const lastCard = cards[cards.length - 1] || null;
+          cards.forEach((card) => {
+            const moveUp = card.querySelector('[data-move-up]');
+            const moveDown = card.querySelector('[data-move-down]');
+            if (moveUp) {
+              moveUp.disabled = !isReorderActive || card === firstCard;
+            }
+            if (moveDown) {
+              moveDown.disabled = !isReorderActive || card === lastCard;
+            }
+          });
+        };
 
         const scheduleSave = (orderedIds) => {
-          setOrderStatus('Saving order...', 'status-loading');
+          setOrderStatus('Saving…', 'status-loading');
+          if (statusTimeout) {
+            window.clearTimeout(statusTimeout);
+          }
           if (saveTimeout) {
             window.clearTimeout(saveTimeout);
           }
@@ -472,118 +493,70 @@
             }
             lastCommittedOrder = orderedIds;
             setOrderStatus('Order saved.', 'status-success');
+            if (statusTimeout) {
+              window.clearTimeout(statusTimeout);
+            }
+            statusTimeout = window.setTimeout(() => {
+              setOrderStatus('');
+            }, 1500);
           } catch (error) {
             if (requestId !== saveRequestId) {
               return;
             }
-            applyOrder(lastCommittedOrder);
+            applyOrder(revertOrder);
+            updateReorderControls();
             setOrderStatus('Failed to save order.', 'status-error');
           }
         };
 
-        const getDragAfterElement = (container, y) => {
-          const draggableElements = [
-            ...container.querySelectorAll('[data-tracked-card]:not(.is-dragging)'),
-          ];
-          return draggableElements.reduce(
-            (closest, child) => {
-              const box = child.getBoundingClientRect();
-              const offset = y - box.top - box.height / 2;
-              if (offset < 0 && offset > closest.offset) {
-                return { offset, element: child };
-              }
-              return closest;
-            },
-            { offset: Number.NEGATIVE_INFINITY, element: null }
-          ).element;
-        };
-
         const cards = Array.from(cardList.querySelectorAll('[data-tracked-card]'));
         cards.forEach((card) => {
-          const handle = card.querySelector('[data-drag-handle]');
           const moveUp = card.querySelector('[data-move-up]');
           const moveDown = card.querySelector('[data-move-down]');
-          if (!handle) {
-            return;
-          }
-
-          handle.addEventListener('pointerdown', () => {
-            card.setAttribute('draggable', 'true');
-            card.classList.add('is-drag-ready');
-          });
-
-          handle.addEventListener('pointerup', () => {
-            if (!card.classList.contains('is-dragging')) {
-              card.removeAttribute('draggable');
-              card.classList.remove('is-drag-ready');
-            }
-          });
-
-          handle.addEventListener('pointerleave', () => {
-            if (!card.classList.contains('is-dragging')) {
-              card.removeAttribute('draggable');
-              card.classList.remove('is-drag-ready');
-            }
-          });
-
-          card.addEventListener('dragstart', (event) => {
-            if (!card.hasAttribute('draggable')) {
-              event.preventDefault();
-              return;
-            }
-            dragSource = card;
-            card.classList.add('is-dragging');
-            event.dataTransfer.effectAllowed = 'move';
-            event.dataTransfer.setData('text/plain', card.dataset.playlistId || '');
-          });
-
-          card.addEventListener('dragend', () => {
-            card.classList.remove('is-dragging');
-            card.removeAttribute('draggable');
-            card.classList.remove('is-drag-ready');
-            dragSource = null;
-            const newOrder = getOrderedIds();
-            if (!arraysEqual(newOrder, lastCommittedOrder)) {
-              scheduleSave(newOrder);
-            }
-          });
 
           moveUp?.addEventListener('click', () => {
+            if (!isReorderActive) {
+              return;
+            }
             const prev = card.previousElementSibling;
             if (!prev) {
               return;
             }
+            revertOrder = getOrderedIds();
             cardList.insertBefore(card, prev);
-            scheduleSave(getOrderedIds());
+            updateReorderControls();
+            const orderedIds = getOrderedIds();
+            if (!arraysEqual(orderedIds, lastCommittedOrder)) {
+              scheduleSave(orderedIds);
+            }
           });
 
           moveDown?.addEventListener('click', () => {
+            if (!isReorderActive) {
+              return;
+            }
             const next = card.nextElementSibling;
             if (!next) {
               return;
             }
+            revertOrder = getOrderedIds();
             cardList.insertBefore(card, next.nextSibling);
-            scheduleSave(getOrderedIds());
+            updateReorderControls();
+            const orderedIds = getOrderedIds();
+            if (!arraysEqual(orderedIds, lastCommittedOrder)) {
+              scheduleSave(orderedIds);
+            }
           });
         });
 
-        cardList.addEventListener('dragover', (event) => {
-          if (!dragSource) {
-            return;
-          }
-          event.preventDefault();
-          const afterElement = getDragAfterElement(cardList, event.clientY);
-          if (!afterElement) {
-            cardList.appendChild(dragSource);
-          } else if (afterElement !== dragSource) {
-            cardList.insertBefore(dragSource, afterElement);
-          }
+        reorderToggle?.addEventListener('click', () => {
+          isReorderActive = pageRoot.classList.toggle('reorder-mode');
+          reorderToggle.textContent = isReorderActive ? 'Done' : 'Reorder';
+          reorderToggle.setAttribute('aria-pressed', String(isReorderActive));
+          updateReorderControls();
         });
 
-        reorderToggle?.addEventListener('click', () => {
-          const isActive = pageRoot.classList.toggle('reorder-mode');
-          reorderToggle.textContent = isActive ? 'Done' : 'Reorder';
-        });
+        updateReorderControls();
       };
 
       const readErrorPayload = async (response) => {
