@@ -64,7 +64,7 @@ class PlaylistInsightsDeltas(BaseModel):
     change_all_time: int | None = None
 
 
-class PlaylistInsightsDailyCompare(BaseModel):
+class PlaylistInsightsCompare(BaseModel):
     date_newer: date
     date_older: date
     followers_newer: int
@@ -83,5 +83,6 @@ class PlaylistInsightsOut(BaseModel):
     follower_timeseries: list[FollowerTimeseriesEntry]
     computed_deltas: PlaylistInsightsDeltas
     daily_summary: list[dict[str, object]] = Field(default_factory=list)
-    daily_compare: PlaylistInsightsDailyCompare | None = None
+    daily_compare: PlaylistInsightsCompare | None = None
     weekly_summary: list[dict[str, object]] = Field(default_factory=list)
+    weekly_compare: PlaylistInsightsCompare | None = None

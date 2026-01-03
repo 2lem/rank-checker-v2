@@ -286,12 +286,10 @@ def compute_position_counts(
     }
 
 
-def build_daily_compare(daily_reps: list[DailyScanRep]) -> dict[str, object] | None:
-    if len(daily_reps) < 2:
-        return None
-    sorted_reps = sorted(daily_reps, key=lambda rep: rep.date)
-    older = sorted_reps[-2]
-    newer = sorted_reps[-1]
+def _build_compare_entry(
+    newer: DailyScanRep,
+    older: DailyScanRep,
+) -> dict[str, object] | None:
     if newer.follower_snapshot is None or older.follower_snapshot is None:
         return None
     counts = compute_position_counts(newer.rank_map, older.rank_map)
@@ -305,6 +303,39 @@ def build_daily_compare(daily_reps: list[DailyScanRep]) -> dict[str, object] | N
         "declined_positions": counts["declined"],
         "unchanged_positions": counts["unchanged"],
     }
+
+
+def build_daily_compare(daily_reps: list[DailyScanRep]) -> dict[str, object] | None:
+    if len(daily_reps) < 2:
+        return None
+    sorted_reps = sorted(daily_reps, key=lambda rep: rep.date)
+    older = sorted_reps[-2]
+    newer = sorted_reps[-1]
+    return _build_compare_entry(newer, older)
+
+
+def build_weekly_compare(daily_reps: list[DailyScanRep]) -> dict[str, object] | None:
+    if len(daily_reps) < 2:
+        return None
+
+    sorted_reps = sorted(daily_reps, key=lambda rep: rep.date)
+    newer = sorted_reps[-1]
+    first = sorted_reps[0]
+    history_span = newer.date - first.date
+
+    if history_span < timedelta(days=7):
+        older = first
+    else:
+        target_date = newer.date - timedelta(days=7)
+        older = None
+        for rep in reversed(sorted_reps):
+            if rep.date <= target_date:
+                older = rep
+                break
+        if older is None:
+            return None
+
+    return _build_compare_entry(newer, older)
 
 
 def _build_daily_summary(
@@ -467,6 +498,7 @@ def build_playlist_insights(
     daily_summary = _build_daily_summary(daily_reps, days=7)
     weekly_summary = _build_weekly_summary(daily_entries_full)
     daily_compare = build_daily_compare(daily_reps)
+    weekly_compare = build_weekly_compare(daily_reps)
 
     return {
         "playlist_id": playlist_id,
@@ -478,4 +510,5 @@ def build_playlist_insights(
         "daily_summary": daily_summary,
         "daily_compare": daily_compare,
         "weekly_summary": weekly_summary,
+        "weekly_compare": weekly_compare,
     }
