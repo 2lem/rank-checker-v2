@@ -61,6 +61,20 @@ def _format_scan_timestamp(scan: BasicScan, tz: ZoneInfo) -> str:
     return formatted or "scan"
 
 
+def _serialize_scan_history_item(scan: BasicScan) -> dict:
+    return {
+        "scan_id": str(scan.id),
+        "status": scan.status,
+        "created_at": _format_dt(scan.created_at),
+        "started_at": _format_dt(scan.started_at),
+        "finished_at": _format_dt(scan.finished_at),
+        "countries": scan.scanned_countries or [],
+        "keywords": scan.scanned_keywords or [],
+        "follower_snapshot": scan.follower_snapshot,
+        "is_tracked_playlist": scan.is_tracked_playlist,
+    }
+
+
 def _csv_response(filename: str, headers: list[str], rows: list[list[object | None]]) -> Response:
     output = io.StringIO(newline="")
     writer = csv.writer(output, lineterminator="\r\n")
@@ -304,6 +318,53 @@ def get_latest_completed_scan(
         "keywords": scan.scanned_keywords or [],
         "status": "completed",
         "results": _serialize_scan_payload(results_payload),
+    }
+
+
+@router.get("/scans/history")
+def get_scan_history(
+    tracked_playlist_id: str = Query(...),
+    limit: int = Query(default=20, ge=1),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    try:
+        tracked_uuid = UUID(str(tracked_playlist_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid tracked_playlist_id.") from exc
+
+    if limit > 100:
+        limit = 100
+
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset must be >= 0.")
+
+    total = (
+        db.execute(
+            select(func.count(BasicScan.id)).where(BasicScan.tracked_playlist_id == tracked_uuid)
+        )
+        .scalar_one()
+        or 0
+    )
+    ordering = func.coalesce(BasicScan.finished_at, BasicScan.created_at).desc()
+    scans = (
+        db.execute(
+            select(BasicScan)
+            .where(BasicScan.tracked_playlist_id == tracked_uuid)
+            .order_by(ordering)
+            .limit(limit)
+            .offset(offset)
+        )
+        .scalars()
+        .all()
+    )
+
+    return {
+        "tracked_playlist_id": str(tracked_uuid),
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "items": [_serialize_scan_history_item(scan) for scan in scans],
     }
 
 
