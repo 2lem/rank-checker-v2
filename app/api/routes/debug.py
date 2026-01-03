@@ -15,6 +15,7 @@ from app.core.db import SessionLocal, engine
 from app.core.debug_tools import require_debug_tools, require_debug_tools_enabled
 from app.core.spotify import get_spotify_metrics_snapshot
 from app.models.basic_scan import BasicScan, BasicScanQuery, BasicScanResult
+from app.models.tracked_playlist import TrackedPlaylist
 
 router = APIRouter(
     prefix="/api/debug",
@@ -100,6 +101,10 @@ def _is_manual_scan(scan: BasicScan) -> bool:
     return False
 
 
+def _is_dedicated_scan(scan: BasicScan) -> bool:
+    return scan.tracked_playlist_id is not None
+
+
 def _serialize_manual_scan_item(scan: BasicScan) -> dict:
     return {
         "scan_id": str(scan.id),
@@ -113,6 +118,22 @@ def _serialize_manual_scan_item(scan: BasicScan) -> dict:
         "manual_playlist_owner": scan.manual_playlist_owner,
         "manual_target_countries": scan.manual_target_countries or [],
         "manual_target_keywords": scan.manual_target_keywords or [],
+    }
+
+
+def _serialize_dedicated_scan_item(scan: BasicScan, tracked_playlist_name: str | None) -> dict:
+    countries = scan.scanned_countries or []
+    keywords = scan.scanned_keywords or []
+    return {
+        "scan_id": str(scan.id),
+        "tracked_playlist_id": str(scan.tracked_playlist_id),
+        "tracked_playlist_name": tracked_playlist_name,
+        "country": countries[0] if countries else None,
+        "keyword": keywords[0] if keywords else None,
+        "status": scan.status,
+        "created_at": _format_dt(scan.created_at),
+        "started_at": _format_dt(scan.started_at),
+        "finished_at": _format_dt(scan.finished_at),
     }
 
 
@@ -153,6 +174,32 @@ def _query_manual_scans(
             .offset(normalized_offset)
         )
         .scalars()
+        .all()
+    )
+    return normalized_limit, normalized_offset, total, scans
+
+
+def _query_dedicated_scans(
+    session,
+    limit: int,
+    offset: int,
+) -> tuple[int, int, int, list[tuple[BasicScan, str | None]]]:
+    normalized_limit = _normalize_limit(limit)
+    normalized_offset = _normalize_offset(offset)
+    filters = [BasicScan.tracked_playlist_id.is_not(None)]
+
+    total = (
+        session.execute(select(func.count(BasicScan.id)).where(*filters)).scalar_one() or 0
+    )
+    scans = (
+        session.execute(
+            select(BasicScan, TrackedPlaylist.name)
+            .outerjoin(TrackedPlaylist, TrackedPlaylist.id == BasicScan.tracked_playlist_id)
+            .where(*filters)
+            .order_by(BasicScan.created_at.desc())
+            .limit(normalized_limit)
+            .offset(normalized_offset)
+        )
         .all()
     )
     return normalized_limit, normalized_offset, total, scans
@@ -380,6 +427,72 @@ def list_manual_scans(
         "total": total,
         "items": [_serialize_manual_scan_item(scan) for scan in scans],
     }
+
+
+@router.get("/dedicated-scans", dependencies=[Depends(require_debug_tools_enabled)])
+def list_dedicated_scans(
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
+):
+    if SessionLocal is None:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"ok": False, "error": "Database session not configured"},
+        )
+
+    session = SessionLocal()
+    try:
+        normalized_limit, normalized_offset, total, scans = _query_dedicated_scans(
+            session,
+            limit=limit,
+            offset=offset,
+        )
+    except HTTPException as exc:
+        raise exc
+    except Exception as exc:  # pragma: no cover - best effort defensive response
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"ok": False, "error": str(exc)},
+        )
+    finally:
+        session.close()
+
+    return {
+        "limit": normalized_limit,
+        "offset": normalized_offset,
+        "total": total,
+        "items": [
+            _serialize_dedicated_scan_item(scan, tracked_playlist_name)
+            for scan, tracked_playlist_name in scans
+        ],
+    }
+
+
+@router.get("/dedicated-scans/{scan_id}", dependencies=[Depends(require_debug_tools_enabled)])
+def get_dedicated_scan(scan_id: str):
+    if SessionLocal is None:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"ok": False, "error": "Database session not configured"},
+        )
+    try:
+        scan_uuid = UUID(scan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Scan not found.") from exc
+
+    session = SessionLocal()
+    try:
+        scan = session.get(BasicScan, scan_uuid)
+        if scan is None or not _is_dedicated_scan(scan):
+            raise HTTPException(status_code=404, detail="Scan not found.")
+        detail = fetch_scan_details(session, scan_uuid)
+    finally:
+        session.close()
+
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+
+    return {"scan_id": str(scan.id), "type": "dedicated", "detail": detail}
 
 
 @router.get("/manual-scans/{scan_id}", dependencies=[Depends(require_debug_tools_enabled)])
