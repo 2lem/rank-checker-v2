@@ -184,7 +184,7 @@
                 Cancel
               </button>
               <button
-                class="pill pill-primary"
+                class="pill pill-primary scan-history-compare-run"
                 type="button"
                 data-scan-history-compare-run
                 disabled
@@ -1553,8 +1553,11 @@
             historyCompareElements.cancel.hidden = !compareMode;
           }
           if (historyCompareElements.run) {
+            const compareReady = selectedCompareScanIds.length === 2 && !compareLoading;
             historyCompareElements.run.hidden = !compareMode;
-            historyCompareElements.run.disabled = selectedCompareScanIds.length !== 2 || compareLoading;
+            historyCompareElements.run.disabled = !compareReady;
+            historyCompareElements.run.classList.toggle('compare-btn-enabled', compareReady);
+            historyCompareElements.run.classList.toggle('compare-btn-disabled', !compareReady);
           }
         };
 

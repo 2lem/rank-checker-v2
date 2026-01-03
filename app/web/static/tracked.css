@@ -805,6 +805,17 @@
   flex-wrap: wrap;
 }
 
+.scan-history-compare-run.compare-btn-disabled {
+  background: #d7d7d7;
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+.scan-history-compare-run.compare-btn-enabled {
+  background: #ff002f;
+  cursor: pointer;
+}
+
 .scan-history-compare-cell {
   width: 40px;
 }
