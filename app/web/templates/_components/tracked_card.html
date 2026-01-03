@@ -7,17 +7,6 @@
   data-target-keywords='{{ playlist.target_keywords | tojson }}'
 >
   <div class="tracked-card-inner {% if variant == 'detail' %}detail-header-grid{% endif %}">
-    {% if variant != 'detail' %}
-      <div class="tracked-reorder-column" aria-hidden="false">
-        <button class="drag-handle" type="button" aria-label="Drag to reorder" data-drag-handle>
-          <span class="drag-grip" aria-hidden="true"></span>
-        </button>
-        <div class="reorder-controls" data-reorder-controls>
-          <button class="reorder-btn" type="button" data-move-up aria-label="Move up">↑</button>
-          <button class="reorder-btn" type="button" data-move-down aria-label="Move down">↓</button>
-        </div>
-      </div>
-    {% endif %}
     <div class="tracked-thumb">
       {% if playlist.image_url %}
         <img src="{{ playlist.image_url }}" alt="Playlist artwork" />
@@ -36,6 +25,10 @@
         {% else %}
           <a class="pill pill-primary" href="/playlists/{{ playlist.id }}">Open Dashboard</a>
           <button class="pill pill-secondary" type="button" data-manage-toggle aria-expanded="false">Manage</button>
+          <div class="reorder-controls" data-reorder-controls>
+            <button class="reorder-btn" type="button" data-move-up aria-label="Move up">▲</button>
+            <button class="reorder-btn" type="button" data-move-down aria-label="Move down">▼</button>
+          </div>
         {% endif %}
       </div>
       <div class="tracked-title" title="{{ playlist.name }}">{{ playlist.name }}</div>
