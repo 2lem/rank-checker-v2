@@ -192,6 +192,14 @@
               >
                 Compare
               </button>
+              <button
+                class="pill pill-dark"
+                type="button"
+                data-scan-history-compare-close
+                hidden
+              >
+                Close
+              </button>
             </div>
           </div>
           <div class="panel-body">
@@ -217,16 +225,23 @@
               </div>
             </div>
             <section class="panel scan-history-compare-panel" data-scan-history-compare hidden>
-              <div class="panel-header">
-                <h2>Comparison Results</h2>
-                <p>Review the differences between two scans.</p>
-              </div>
-              <div class="panel-body">
-                <div class="scan-history-compare-actions">
-                  <button class="btn btn-secondary" type="button" data-scan-history-compare-back>
-                    Back to Scan History
+              <div class="panel-header scan-history-compare-header">
+                <div>
+                  <h2>Comparison Results</h2>
+                  <p>Review the differences between two scans.</p>
+                </div>
+                <div class="scan-history-compare-header-actions">
+                  <button
+                    class="btn btn-secondary btn-csv"
+                    type="button"
+                    data-scan-history-compare-download
+                    hidden
+                  >
+                    Download Comparison CSV
                   </button>
                 </div>
+              </div>
+              <div class="panel-body">
                 <p class="summary-note scan-history-compare-message" data-scan-history-compare-message hidden></p>
                 <div class="scan-history-compare-summary" data-scan-history-compare-summary></div>
                 <div class="scan-history-compare-followers" data-scan-history-compare-followers hidden>
@@ -801,9 +816,10 @@
           toggle: scanHistorySection?.querySelector('[data-scan-history-compare-toggle]'),
           cancel: scanHistorySection?.querySelector('[data-scan-history-compare-cancel]'),
           run: scanHistorySection?.querySelector('[data-scan-history-compare-run]'),
+          close: scanHistorySection?.querySelector('[data-scan-history-compare-close]'),
           column: scanHistorySection?.querySelector('[data-scan-history-compare-column]'),
           panel: scanHistorySection?.querySelector('[data-scan-history-compare]'),
-          back: scanHistorySection?.querySelector('[data-scan-history-compare-back]'),
+          download: scanHistorySection?.querySelector('[data-scan-history-compare-download]'),
           message: scanHistorySection?.querySelector('[data-scan-history-compare-message]'),
           summary: scanHistorySection?.querySelector('[data-scan-history-compare-summary]'),
           followers: scanHistorySection?.querySelector('[data-scan-history-compare-followers]'),
@@ -836,6 +852,7 @@
         let selectedHistoryScanId = null;
         let historyDetailRequestId = 0;
         let compareMode = false;
+        let compareResultsView = false;
         let selectedCompareScanIds = [];
         let compareLoading = false;
         let compareError = null;
@@ -1556,21 +1573,32 @@
           if (historyCompareElements.toggle) {
             historyCompareElements.toggle.classList.toggle('is-active', compareMode);
             historyCompareElements.toggle.setAttribute('aria-pressed', String(compareMode));
-            setElementVisibility(historyCompareElements.toggle, !compareMode);
+            setElementVisibility(
+              historyCompareElements.toggle,
+              !compareMode && !compareResultsView
+            );
           }
           if (historyCompareElements.cancel) {
-            setElementVisibility(historyCompareElements.cancel, compareMode);
+            setElementVisibility(historyCompareElements.cancel, compareMode && !compareResultsView);
           }
           if (historyCompareElements.run) {
-            setElementVisibility(historyCompareElements.run, compareMode);
+            setElementVisibility(historyCompareElements.run, compareMode && !compareResultsView);
             historyCompareElements.run.disabled = !compareReady;
             historyCompareElements.run.classList.toggle('compare-btn-enabled', compareReady);
             historyCompareElements.run.classList.toggle('compare-btn-disabled', !compareReady);
             historyCompareElements.run.style.pointerEvents = compareReady ? 'auto' : 'none';
             historyCompareElements.run.style.cursor = compareReady ? 'pointer' : 'not-allowed';
           }
+          if (historyCompareElements.close) {
+            setElementVisibility(historyCompareElements.close, compareResultsView);
+          }
           if (historyCompareElements.column) {
-            setElementVisibility(historyCompareElements.column, compareMode);
+            setElementVisibility(historyCompareElements.column, compareMode && !compareResultsView);
+          }
+          if (historyCompareElements.download) {
+            const hasRows = Array.isArray(compareData?.rows) && compareData.rows.length > 0;
+            setElementVisibility(historyCompareElements.download, compareResultsView);
+            historyCompareElements.download.disabled = compareLoading || !hasRows;
           }
         };
 
@@ -1589,6 +1617,7 @@
 
         const resetCompareState = ({ skipScroll = false } = {}) => {
           compareMode = false;
+          compareResultsView = false;
           selectedCompareScanIds = [];
           compareLoading = false;
           compareError = null;
@@ -1613,6 +1642,7 @@
 
         const enterCompareMode = ({ skipScroll = false } = {}) => {
           compareMode = true;
+          compareResultsView = false;
           selectedCompareScanIds = [];
           compareLoading = false;
           compareError = null;
@@ -1670,6 +1700,17 @@
           `;
         };
 
+        const formatSummaryDeltaCount = (value, direction) => {
+          const safeValue = Number.isFinite(value) ? value : 0;
+          if (direction === 'up') {
+            return `<span class="delta-up">↑${safeValue}</span>`;
+          }
+          if (direction === 'down') {
+            return `<span class="delta-down">↓${safeValue}</span>`;
+          }
+          return `<span class="delta-neutral">${safeValue}</span>`;
+        };
+
         const renderCompareOverviewCard = ({
           followersChange,
           improvedCount,
@@ -1684,22 +1725,16 @@
                 <dd>${followersChange}</dd>
               </div>
               <div>
-                <dt>
-                  <span class="delta-up">↑</span>
-                  <span class="delta-up">IMPROVED POSITIONS</span>
-                </dt>
-                <dd>${improvedCount}</dd>
+                <dt>Improved positions</dt>
+                <dd>${formatSummaryDeltaCount(improvedCount, 'up')}</dd>
               </div>
               <div>
-                <dt>
-                  <span class="delta-down">↓</span>
-                  <span class="delta-down">DECLINED POSITIONS</span>
-                </dt>
-                <dd>${worsenedCount}</dd>
+                <dt>Declined positions</dt>
+                <dd>${formatSummaryDeltaCount(worsenedCount, 'down')}</dd>
               </div>
               <div>
                 <dt>Unchanged</dt>
-                <dd>${unchangedCount}</dd>
+                <dd>${formatSummaryDeltaCount(unchangedCount, 'flat')}</dd>
               </div>
             </dl>
           </div>
@@ -1751,6 +1786,94 @@
           return { text: '—', className: 'delta-neutral' };
         };
 
+        const formatPositionChangeCsv = (rankA, rankB) => {
+          if (!Number.isFinite(rankA) || !Number.isFinite(rankB)) {
+            return '';
+          }
+          const delta = rankA - rankB;
+          if (delta < 0) {
+            return `UP ${Math.abs(delta)}`;
+          }
+          if (delta > 0) {
+            return `DOWN ${Math.abs(delta)}`;
+          }
+          return 'UNCHANGED';
+        };
+
+        const escapeCsvValue = (value) => {
+          if (value === null || typeof value === 'undefined') {
+            return '';
+          }
+          const stringValue = String(value);
+          if (/["\n,]/.test(stringValue)) {
+            return `"${stringValue.replace(/"/g, '""')}"`;
+          }
+          return stringValue;
+        };
+
+        const buildComparisonCsv = (comparison) => {
+          if (!comparison?.rows || !Array.isArray(comparison.rows)) {
+            return null;
+          }
+          const followerA = toNumber(comparison.scanA?.follower_snapshot);
+          const followerB = toNumber(comparison.scanB?.follower_snapshot);
+          const followerChange =
+            Number.isFinite(followerA) && Number.isFinite(followerB)
+              ? followerA - followerB
+              : '';
+          const header = [
+            'country',
+            'keyword',
+            'rank_a',
+            'rank_b',
+            'position_change',
+            'followers_a',
+            'followers_b',
+            'followers_change',
+          ];
+          const lines = comparison.rows.map((row) => {
+            const rankA = Number.isFinite(row.rankA) ? row.rankA : '';
+            const rankB = Number.isFinite(row.rankB) ? row.rankB : '';
+            const countryLabel = resolveMarketLabel(row.country) || row.country || '';
+            return [
+              countryLabel,
+              row.keyword || '',
+              rankA,
+              rankB,
+              formatPositionChangeCsv(rankA, rankB),
+              Number.isFinite(followerA) ? followerA : '',
+              Number.isFinite(followerB) ? followerB : '',
+              followerChange,
+            ]
+              .map(escapeCsvValue)
+              .join(',');
+          });
+          return [header.join(','), ...lines].join('\n');
+        };
+
+        const downloadComparisonCsv = () => {
+          if (!compareData) {
+            return;
+          }
+          const csvBody = buildComparisonCsv(compareData);
+          if (!csvBody) {
+            return;
+          }
+          const trackedPlaylistId = resolveTrackedPlaylistId() || 'playlist';
+          const scanAId = compareData.scanA?.scan_id || selectedCompareScanIds[0] || 'scanA';
+          const scanBId = compareData.scanB?.scan_id || selectedCompareScanIds[1] || 'scanB';
+          const filename = `comparison_${trackedPlaylistId}_${scanAId}_vs_${scanBId}.csv`;
+          const blob = new Blob([csvBody], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+        };
+
         const getScanTimestamp = (scan) => {
           const rawTimestamp = scan?.created_at || scan?.started_at || scan?.finished_at;
           const parsed = rawTimestamp ? Date.parse(rawTimestamp) : Number.NaN;
@@ -1759,7 +1882,7 @@
 
         const renderHistoryComparison = (scanA, scanB) => {
           if (!historyCompareElements.summary || !historyCompareElements.body) {
-            return;
+            return [];
           }
           const followerA = toNumber(scanA?.follower_snapshot);
           const followerB = toNumber(scanB?.follower_snapshot);
@@ -1843,7 +1966,7 @@
             if (historyCompareElements.table) {
               historyCompareElements.table.hidden = true;
             }
-            return;
+            return rows;
           }
 
           rows.forEach((row) => {
@@ -1864,6 +1987,7 @@
           if (historyCompareElements.table) {
             historyCompareElements.table.hidden = false;
           }
+          return rows;
         };
 
         resetHistoryDetail = ({ skipScroll = false, scrollTarget = null } = {}) => {
@@ -2186,6 +2310,7 @@
           }
           compareLoading = true;
           compareError = null;
+          compareResultsView = true;
           compareRequestId += 1;
           const requestId = compareRequestId;
           renderCompareControls();
@@ -2222,8 +2347,8 @@
               scanA = secondScan;
               scanB = firstScan;
             }
-            compareData = { scanA, scanB };
-            renderHistoryComparison(scanA, scanB);
+            const rows = renderHistoryComparison(scanA, scanB);
+            compareData = { scanA, scanB, rows };
             setHistoryCompareMessage('');
           } catch (error) {
             if (requestId !== compareRequestId) {
@@ -2406,10 +2531,18 @@
           openHistoryCompare();
         });
 
-        historyCompareElements.back?.addEventListener('click', (event) => {
+        historyCompareElements.close?.addEventListener('click', (event) => {
           event.preventDefault();
           resetCompareState({ skipScroll: true });
           renderCompareControls();
+        });
+
+        historyCompareElements.download?.addEventListener('click', (event) => {
+          event.preventDefault();
+          if (historyCompareElements.download?.disabled) {
+            return;
+          }
+          downloadComparisonCsv();
         });
 
         runButton?.addEventListener('click', (event) => {
