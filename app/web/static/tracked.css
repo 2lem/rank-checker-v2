@@ -788,6 +788,12 @@
   -webkit-overflow-scrolling: touch;
 }
 
+.comparison-metrics-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .results-table {
   width: 100%;
   min-width: 720px;
@@ -833,6 +839,39 @@
   margin-left: auto;
 }
 
+.scan-history-table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 0;
+}
+
+.scan-history-col-country,
+.scan-history-col-keyword,
+.scan-history-col-status,
+.scan-history-col-date {
+  overflow: hidden;
+}
+
+.scan-history-col-country {
+  width: 22%;
+}
+
+.scan-history-col-keyword {
+  width: 44%;
+}
+
+.scan-history-col-status {
+  width: 14%;
+}
+
+.scan-history-col-date {
+  width: 20%;
+}
+
+.scan-history-compare-column {
+  width: 40px;
+}
+
 .scan-history-compare-run.compare-btn-disabled {
   background: #d7d7d7;
   cursor: not-allowed;
@@ -850,6 +889,13 @@
 
 .scan-history-checkbox {
   cursor: pointer;
+}
+
+.scan-history-ellipsis {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .scan-history-row {
@@ -1005,6 +1051,17 @@
   .results-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .latest-scan-download-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .latest-scan-download-actions .btn {
+    width: 100%;
+    justify-content: center;
   }
 
   .scan-history-compare-header-actions {
